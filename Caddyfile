@@ -1,0 +1,19 @@
+understand.local {
+    handle {
+        reverse_proxy frontend:80
+    }
+
+    handle /api/* {
+        reverse_proxy api:8501
+    }
+
+    handle /api/v1/* {
+        reverse_proxy api-customer:8501
+    }
+
+    handle /api/v2/* {
+        reverse_proxy api-customer:8501
+    }
+
+    tls internal
+}
