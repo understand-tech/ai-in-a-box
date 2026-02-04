@@ -106,13 +106,58 @@ services:
         reservations:
           memory: 1G
 
+  mongodb-backup:
+    image: tiredofit/db-backup:latest
+    container_name: ut-mongodb-backup
+    restart: unless-stopped
+    environment:
+      TIMEZONE: ${TIMEZONE:-UTC}
+      CONTAINER_ENABLE_MONITORING: FALSE
+      DEFAULT_LOG_LEVEL: INFO
+
+      DB01_TYPE: mongo
+      DB01_HOST: mongodb
+      DB01_PORT: ${MONGODB_PORT:-}
+      DB01_NAME: ${MONGODB_DATABASE:-}
+      DB01_USER: ${MONGODB_USERNAME:-}
+      DB01_PASS: ${MONGODB_PASSWORD:-}
+      DB01_AUTH: admin
+
+      DB01_BACKUP_BEGIN: ${BACKUP_BEGIN:-0200}
+      DB01_BACKUP_INTERVAL: ${BACKUP_INTERVAL:-1440}
+
+      # Retention: delete backups older than 30 days
+      DB01_CLEANUP_TIME: ${BACKUP_CLEANUP_TIME:-43200}
+
+      # Compression
+      DB01_COMPRESSION: ${BACKUP_COMPRESSION:-GZ}
+      DB01_COMPRESSION_LEVEL: ${BACKUP_COMPRESSION_LEVEL:-6}
+    volumes:
+      - mongodb-backups:/backup
+    networks:
+      - ut-backend-network
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 128M
+
   llm:
-    image: ${LLM_IMAGE:-ghcr.io/understand-tech/ut-llm-customer:latest-arm64}
+    image: ${LLM_IMAGE:-}
     container_name: ut-llm
     restart: unless-stopped
     expose:
       - "8000"
     environment:
+      LOCAL_STORAGE_BASE: ${LOCAL_STORAGE_BASE:-}
+      DB_PROVIDER: ${DB_PROVIDER:-}
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-}
       GPU_VM_API_TOKEN: ${GPU_VM_API_TOKEN:-}
       OA_KEY: ${OA_KEY:-}
       UT_KEY: ${UT_KEY:-}
@@ -155,6 +200,7 @@ services:
     volumes:
       - llm-ollama:/root/.ollama
       - llm-models:/root/models
+      - /home/ut/understand-tech/app-data:/app/storage
     networks:
       - ut-backend-network
       - ut-frontend-network # Add the frontend network during first-time installation
@@ -173,12 +219,15 @@ services:
               capabilities: [gpu]
 
   api:
-    image: ${API_IMAGE:-ghcr.io/understand-tech/ut-api-customer:1.0.1-arm64}
+    image: ${API_IMAGE:-}
     container_name: ut-api
     restart: unless-stopped
     expose:
       - "8501"
     environment:
+      LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+
+      LOCAL_STORAGE_BASE: ${LOCAL_STORAGE_BASE:-}
       DB_PROVIDER: ${DB_PROVIDER:-}
       STORAGE_PROVIDER: ${STORAGE_PROVIDER:-}
       openid_scope: ${openid_scope:-}
@@ -263,6 +312,7 @@ services:
       HUBSPOT_REDIRECT_URI: ${HUBSPOT_REDIRECT_URI:-}
     volumes:
       - uploads-data:/tmp/uploads
+      - /home/ut/understand-tech/app-data:/app/storage
     networks:
       - ut-backend-network
       - ut-frontend-network
@@ -288,10 +338,11 @@ services:
           memory: 1G
 
   workers:
-    image: ${WORKER_IMAGE:-ghcr.io/understand-tech/ut-worker-customer:1.0.1-arm64}
+    image: ${WORKER_IMAGE:-}
     restart: unless-stopped
     command: ["sh", "-c", "rq worker --url redis://redis:6379 ut-api"]
     environment:
+      LOCAL_STORAGE_BASE: ${LOCAL_STORAGE_BASE:-}
       DB_PROVIDER: ${DB_PROVIDER:-}
       STORAGE_PROVIDER: ${STORAGE_PROVIDER:-}
       REDIS_HOST: ${REDIS_HOST:-}
@@ -301,7 +352,7 @@ services:
       MONGODB_USERNAME: ${MONGODB_USERNAME:-}
       MONGODB_PASSWORD: ${MONGODB_PASSWORD:-}
       MONGODB_DATABASE: ${MONGODB_DATABASE:-}
-      GPU_VM_URL: ${GPU_VM_URL:-
+      GPU_VM_URL: ${GPU_VM_URL:-}
       GPU_VM_API_TOKEN: ${GPU_VM_API_TOKEN:-}
       DOMAIN_URL: ${DOMAIN_URL:-https://understand.local/}
       S3_REGION: ${S3_REGION:-}
@@ -351,6 +402,7 @@ services:
       ADMIN_MAIL: ${ADMIN_MAIL:-}
     volumes:
       - uploads-data:/tmp/uploads
+      - /home/ut/understand-tech/app-data:/app/storage
     networks:
       - ut-backend-network
       - ut-frontend-network
@@ -365,7 +417,7 @@ services:
     #stop_grace_period: 30s
     deploy:
       mode: replicated
-      replicas: ${WORKER_REPLICAS:-2}
+      replicas: ${WORKER_REPLICAS:-}
       resources:
         limits:
           memory: 2G
@@ -374,7 +426,7 @@ services:
           memory: 512M
 
   frontend:
-    image: ${FRONTEND_IMAGE:-ghcr.io/understand-tech/ut-frontend-customer:7b8fecea903fd6e12bec0cc4d3a52cdf5e5ba813@sha256:4718492dfedab2a1a30546a299da6617b52b1a5e75dbf35007228adb6e0e51c1}
+    image: ${FRONTEND_IMAGE:-}
     container_name: ut-frontend
     restart: unless-stopped
     expose:
@@ -409,7 +461,7 @@ services:
           memory: 128M
 
   api-customer:
-    image: ${API_CUSTOMER_IMAGE:-ghcr.io/understand-tech/ut-api-rest-customer:latest-arm64}
+    image: ${API_CUSTOMER_IMAGE:-}
     container_name: ut-api-customer
     restart: unless-stopped
     expose:
@@ -436,7 +488,7 @@ services:
       REDIS_PORT: ${REDIS_PORT:-}
       REDIS_HOST: ${REDIS_HOST:-}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
-      REDIRECT_PATH: ${REDIRECT_PATH:-
+      REDIRECT_PATH: ${REDIRECT_PATH:-}
       REDIRECT_URI: ${REDIRECT_URI:-}
       STATE_SECRET: ${STATE_SECRET:-SECRET}
       GPU_VM_API_TOKEN: ${GPU_VM_API_TOKEN:-}
@@ -523,7 +575,7 @@ services:
           memory: 2G
 
   workers-customer:
-    image: ${WORKER_CUSTOMER_IMAGE:-ghcr.io/understand-tech/ut-worker-rest-customer:latest-arm64}
+    image: ${WORKER_CUSTOMER_IMAGE:-}
     restart: unless-stopped
     command: ["sh", "-c", "rq worker --url redis://redis:6379 ut-api-partners"]
     environment:
@@ -596,7 +648,7 @@ services:
     logging: *default-logging
     deploy:
       mode: replicated
-      replicas: ${WORKER_CUSTOMER_REPLICAS:-2}
+      replicas: ${WORKER_CUSTOMER_REPLICAS:-}
       resources:
         limits:
           memory: 8G
@@ -624,6 +676,8 @@ volumes:
     name: ut-uploads-data
   mongodb-data:
     name: ut-mongodb-data
+  mongodb-backups:
+    name: ut-mongodb-backup
   llm-ollama:
     name: ut-llm-ollama
   llm-models:
