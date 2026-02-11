@@ -1,4 +1,3 @@
-# ai-in-a-box
 # UnderstandTech — AI in a Box
 
 Deploy the UnderstandTech platform on NVIDIA DGX Spark systems using Docker Compose.
