@@ -9,10 +9,8 @@
 #   ./ut-logs-archive --cleanup    # Manual cleanup of old archives
 #
 # In order to run this script, turn it into an executable by running:
-#   chmod +x ./ut-logs
+#   chmod +x ./ut-logs-archive
 #
-
-set -e
 
 # =============================================================================
 # CONFIGURATION - Edit these as needed
@@ -21,6 +19,7 @@ set -e
 ARCHIVE_DIR="/var/log/understandtech"     # Where to store archived logs
 RETENTION_DAYS=365                        # How long to keep archives (1 year)
 CONTAINER_PREFIX="ut-"                    # Only archive containers starting with this
+WORKER_PREFIX="understandtech-workers"    # Also archive worker containers
 ARCHIVE_HOUR="02:00"                      # When daily cron runs (24h format)
 
 # =============================================================================
@@ -35,15 +34,14 @@ NC='\033[0m'
 
 TODAY=$(date +%Y-%m-%d)
 MONTH=$(date +%Y-%m)
-MONTH_DIR="${ARCHIVE_DIR}/${MONTH}"
 
 log_info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
 log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-# Get all UT containers
+# Get all UT containers (main services + workers)
 get_containers() {
-    docker ps --format '{{.Names}}' | grep "^${CONTAINER_PREFIX}" | sort
+    docker ps --format '{{.Names}}' | grep -E "^(${CONTAINER_PREFIX}|${WORKER_PREFIX})" | sort
 }
 
 # Main archive function - exports last 24h of logs for each container
@@ -68,9 +66,12 @@ do_archive() {
         fi
         
         # Export and compress
-        if docker logs --since 24h "$container" 2>&1 | gzip > "$archive_file" 2>/dev/null; then
-            # Check if file has content (more than just gzip header)
-            if [[ $(stat -c%s "$archive_file" 2>/dev/null || stat -f%z "$archive_file") -gt 20 ]]; then
+        if docker logs --since 24h "$container" 2>&1 | gzip > "$archive_file"; then
+            # Check if file has content (more than just gzip header ~20 bytes)
+            local filesize
+            filesize=$(stat -c%s "$archive_file" 2>/dev/null || echo "0")
+            
+            if [[ "$filesize" -gt 20 ]]; then
                 ((archived++))
             else
                 # Empty log, remove the file
@@ -95,13 +96,14 @@ do_archive() {
 do_cleanup() {
     log_info "Cleaning archives older than ${RETENTION_DAYS} days"
     
-    local deleted=$(find "$ARCHIVE_DIR" -name "*.log.gz" -mtime +${RETENTION_DAYS} -delete -print 2>/dev/null | wc -l)
+    local deleted
+    deleted=$(find "$ARCHIVE_DIR" -name "*.log.gz" -mtime +${RETENTION_DAYS} -delete -print 2>/dev/null | wc -l)
     
     if [[ $deleted -gt 0 ]]; then
         log_info "Deleted ${deleted} old archive files"
     fi
     
-    # Remove empty month directories
+    # Remove empty directories
     find "$ARCHIVE_DIR" -type d -empty -delete 2>/dev/null || true
 }
 
@@ -112,7 +114,7 @@ do_status() {
     echo ""
     echo "Archive location:  ${ARCHIVE_DIR}"
     echo "Retention period:  ${RETENTION_DAYS} days"
-    echo "Container prefix:  ${CONTAINER_PREFIX}*"
+    echo "Containers:        ${CONTAINER_PREFIX}* and ${WORKER_PREFIX}*"
     echo ""
     
     if [[ ! -d "$ARCHIVE_DIR" ]]; then
@@ -212,6 +214,41 @@ do_install() {
     fi
 }
 
+# Uninstall cron job
+do_uninstall() {
+    echo -e "${CYAN}Uninstall Log Archive Cron Job${NC}"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    
+    if ! crontab -l 2>/dev/null | grep -q "ut-logs-archive"; then
+        log_warn "No cron job found for ut-logs-archive"
+        return
+    fi
+    
+    echo "Current cron entry:"
+    crontab -l | grep ut-logs-archive | sed 's/^/  /'
+    echo ""
+    
+    read -p "Remove this cron job? (y/N): " confirm
+    if [[ "$confirm" =~ ^[Yy]$ ]]; then
+        local temp_cron=$(mktemp)
+        crontab -l 2>/dev/null | grep -v "ut-logs-archive" > "$temp_cron"
+        crontab "$temp_cron"
+        rm -f "$temp_cron"
+        
+        if crontab -l 2>/dev/null | grep -q "ut-logs-archive"; then
+            log_error "Failed to remove cron job"
+        else
+            log_info "Cron job removed successfully!"
+            echo ""
+            echo "Note: Existing archives in ${ARCHIVE_DIR} are preserved."
+            echo "To delete archives: rm -rf ${ARCHIVE_DIR}"
+        fi
+    else
+        echo "Cancelled."
+    fi
+}
+
 # Manual cleanup command
 do_manual_cleanup() {
     echo -e "${CYAN}Manual Archive Cleanup${NC}"
@@ -258,6 +295,7 @@ do_help() {
     echo "  ARCHIVE_DIR       ${ARCHIVE_DIR}"
     echo "  RETENTION_DAYS    ${RETENTION_DAYS} days"
     echo "  CONTAINER_PREFIX  ${CONTAINER_PREFIX}*"
+    echo "  WORKER_PREFIX     ${WORKER_PREFIX}*"
     echo "  ARCHIVE_HOUR      ${ARCHIVE_HOUR}"
     echo ""
     echo -e "${GREEN}Archive Structure:${NC}"
@@ -287,41 +325,6 @@ do_help() {
     echo "  # Extract a day's logs"
     echo "  mkdir export && gunzip -c ${ARCHIVE_DIR}/2026-01/2026-01-15/*.log.gz > export/"
     echo ""
-}
-
-# Uninstall cron job
-do_uninstall() {
-    echo -e "${CYAN}Uninstall Log Archive Cron Job${NC}"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo ""
-    
-    if ! crontab -l 2>/dev/null | grep -q "ut-logs-archive"; then
-        log_warn "No cron job found for ut-logs-archive"
-        return
-    fi
-    
-    echo "Current cron entry:"
-    crontab -l | grep ut-logs-archive | sed 's/^/  /'
-    echo ""
-    
-    read -p "Remove this cron job? (y/N): " confirm
-    if [[ "$confirm" =~ ^[Yy]$ ]]; then
-        local temp_cron=$(mktemp)
-        crontab -l 2>/dev/null | grep -v "ut-logs-archive" > "$temp_cron"
-        crontab "$temp_cron"
-        rm -f "$temp_cron"
-        
-        if crontab -l 2>/dev/null | grep -q "ut-logs-archive"; then
-            log_error "Failed to remove cron job"
-        else
-            log_info "Cron job removed successfully!"
-            echo ""
-            echo "Note: Existing archives in ${ARCHIVE_DIR} are preserved."
-            echo "To delete archives: rm -rf ${ARCHIVE_DIR}"
-        fi
-    else
-        echo "Cancelled."
-    fi
 }
 
 # =============================================================================
