@@ -106,7 +106,6 @@ Full setup and administration guides can be found at https://docs.understand.tec
 - **Portainer Guide** — Web-based container management
 - **Logging Guide** — Real-time logs, automated archival, log analysis
 - **MongoDB & Backups** — Database operations, backup/restore procedures
-- **Auto-Start** — systemd service configuration
 
 ## Requirements
 
