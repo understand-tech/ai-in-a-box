@@ -349,13 +349,12 @@ services:
     expose:
       - "8501"
     environment:
+      LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+      TYPE_DEPLOIEMENT: ${TYPE_DEPLOIEMENT:-}
+      LOCAL_STORAGE_BASE: ${LOCAL_STORAGE_BASE:-}
       DB_PROVIDER: ${DB_PROVIDER:-}
       STORAGE_PROVIDER: ${STORAGE_PROVIDER:-}
       openid_scope: ${openid_scope:-}
-      OPENID_CLIENT_ID: ${OPENID_CLIENT_ID:-}
-      OPENID_CLIENT_SECRET: ${OPENID_CLIENT_SECRET:-}
-      OPENID_SECRET_KEY: ${OPENID_SECRET_KEY:-}
-      OPENID_FRONTEND_REDIRECT_URI: ${OPENID_FRONTEND_REDIRECT_URI:-}
       DOMAIN_URL: ${DOMAIN_URL:-}
       MONGODB_HOST: ${MONGODB_HOST:-}
       MONGODB_PORT: ${MONGODB_PORT:-}
@@ -367,30 +366,9 @@ services:
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
       REDIRECT_PATH: ${REDIRECT_PATH:-}
       REDIRECT_URI: ${REDIRECT_URI:-}
-      STATE_SECRET: ${STATE_SECRET:-SECRET}
+      STATE_SECRET: ${STATE_SECRET:-}
       GPU_VM_API_TOKEN: ${GPU_VM_API_TOKEN:-}
       GPU_VM_URL: ${GPU_VM_URL:-}
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
-      XAI_API_KEY: ${XAI_API_KEY:-}
-      PERPLEXITY_API_KEY: ${PERPLEXITY_API_KEY:-}
-      OA_KEY: ${OA_KEY:-}
-      SENDGRID_API_KEY: ${SENDGRID_API_KEY:-}
-      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
-      CLAUDE_API_KEY: ${CLAUDE_API_KEY:-}
-      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
-      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
-      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
-      MICROSOFT_AUTHORITY: ${MICROSOFT_AUTHORITY:-}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
-      ZOHO_CLIENT_ID: ${ZOHO_CLIENT_ID:-}
-      ZOHO_CLIENT_SECRET: ${ZOHO_CLIENT_SECRET:-}
-      ZOHO_AUTH_URL: ${ZOHO_AUTH_URL:-}
-      ZOHO_TOKEN_URL: ${ZOHO_TOKEN_URL:-}
-      server_metadata_url: ${server_metadata_url:-}
-      token_endpoint: ${token_endpoint:-}
-      jwks_endpoint: ${jwks_endpoint:-}
-      expected_issuer: ${expected_issuer:-}
       OLLAMA_MODEL_LLM: ${OLLAMA_MODEL_LLM:-}
       OLLAMA_MODEL_CONDENSE_LLM: ${OLLAMA_MODEL_CONDENSE_LLM:-}
       OLLAMA_HOST_PORT: ${OLLAMA_HOST_PORT:-}
@@ -403,15 +381,7 @@ services:
       ADMIN_MAIL: ${ADMIN_MAIL:-}
       BACKEND_URL: ${BACKEND_URL:-}
       OLLAMA_MODEL_VLM: ${OLLAMA_MODEL_VLM:-}
-      GROQ_API_KEY: ${GROQ_API_KEY:-}
-      ZOHO_REDIRECT_URI: ${ZOHO_REDIRECT_URI:-}
-      Google_REDIRECT_URI: ${Google_REDIRECT_URI:-}
-      MICROSOFT_REDIRECT_URI: ${MICROSOFT_REDIRECT_URI:-}
       FRONTEND_URL_AUTH: ${FRONTEND_URL_AUTH:-}
-      HUBSPOT_CLIENT_ID: ${HUBSPOT_CLIENT_ID:-}
-      HUBSPOT_CLIENT_SECRET: ${HUBSPOT_CLIENT_SECRET:-}
-      HUBSPOT_APP_ID: ${HUBSPOT_APP_ID:-}
-      HUBSPOT_REDIRECT_URI: ${HUBSPOT_REDIRECT_URI:-}
     volumes:
       - uploads-data:/tmp/uploads
       - /home/ut/understand-tech/app-data:/app/storage
@@ -425,10 +395,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    #healthcheck:
-      #test: ["CMD", "curl", "-f", "http://localhost:8501/api/v2/docs"]
-      #<<: *healthcheck-defaults
-      #start_period: 60s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/api/v3/docs"]
+      <<: *healthcheck-defaults
+      start_period: 60s
     logging: *default-logging
     deploy:
       resources:
@@ -456,40 +426,14 @@ services:
       GPU_VM_API_TOKEN: ${GPU_VM_API_TOKEN:-}
       DOMAIN_URL: ${DOMAIN_URL:-}
       FRONTEND_URL_AUTH: ${FRONTEND_URL_AUTH:-}
-      OA_KEY: ${OA_KEY:-}
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
-      XAI_API_KEY: ${XAI_API_KEY:-}
-      PERPLEXITY_API_KEY: ${PERPLEXITY_API_KEY:-}
-      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
-      CLAUDE_API_KEY: ${CLAUDE_API_KEY:-}
-      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
-      SENDGRID_API_KEY: ${SENDGRID_API_KEY:-}
-      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
-      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
-      MICROSOFT_AUTHORITY: ${MICROSOFT_AUTHORITY:-}
-      MICROSOFT_REDIRECT_URI: ${MICROSOFT_REDIRECT_URI:-}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
-      Google_REDIRECT_URI: ${Google_REDIRECT_URI:-}
-      ZOHO_CLIENT_ID: ${ZOHO_CLIENT_ID:-}
-      ZOHO_CLIENT_SECRET: ${ZOHO_CLIENT_SECRET:-}
-      ZOHO_AUTH_URL: ${ZOHO_AUTH_URL:-}
-      ZOHO_TOKEN_URL: ${ZOHO_TOKEN_URL:-}
-      ZOHO_REDIRECT_URI: ${ZOHO_REDIRECT_URI:-}
-      HUBSPOT_CLIENT_ID: ${HUBSPOT_CLIENT_ID:-}
-      HUBSPOT_CLIENT_SECRET: ${HUBSPOT_CLIENT_SECRET:-}
-      HUBSPOT_REDIRECT_URI: ${HUBSPOT_REDIRECT_URI:-}
-      server_metadata_url: ${server_metadata_url:-}
-      token_endpoint: ${token_endpoint:-}
-      jwks_endpoint: ${jwks_endpoint:-}
-      expected_issuer: ${expected_issuer:-}
       ADMIN_MAIL: ${ADMIN_MAIL:-}
     volumes:
       - uploads-data:/tmp/uploads
       - /home/ut/understand-tech/app-data:/app/storage
     networks:
       - ut-backend-network
+      - ut-frontend-network
     depends_on:
       redis:
         condition: service_healthy
