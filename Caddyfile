@@ -11,7 +11,7 @@ understand.local {
         reverse_proxy api-customer:8501
     }
 
-    handle /api/v2/* {
+    handle /api/v3/* {
         reverse_proxy api-customer:8501
     }
 

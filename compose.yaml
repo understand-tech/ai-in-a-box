@@ -177,8 +177,24 @@ services:
       MONGODB_DATABASE: ${MONGODB_DATABASE:-}
       RERANKER_HF_PATH: ${RERANKER_HF_PATH:-}
       RERANKER_MODEL_NAME: ${RERANKER_MODEL_NAME:-}
-      RERANKER_DIR: ${RERANKER_DIR:-}
+      VLLM_LLM_MODEL: ${VLLM_LLM_MODEL:-}
+      VLLM_CONDENSE_MODEL: ${VLLM_CONDENSE_MODEL:-}
+      VLLM_VLM_MODEL: ${VLLM_VLM_MODEL:-}
+      VLLM_LLM_BASE_URL: ${VLLM_LLM_BASE_URL:-}                                                                                                                                  
+      VLLM_VLM_BASE_URL: ${VLLM_VLM_BASE_URL:-}
+      VLLM_LLM_GPU_MEM_UTIL: ${VLLM_LLM_GPU_MEM_UTIL:-}
+      VLLM_VLM_GPU_MEM_UTIL: ${VLLM_VLM_GPU_MEM_UTIL:-}
+      VLLM_LLM_EXTRA_ARGS: ${VLLM_LLM_EXTRA_ARGS:-}
+      VLLM_VLM_EXTRA_ARGS: ${VLLM_VLM_EXTRA_ARGS:-}
+      VLLM_API_KEY: ${VLLM_API_KEY:-}
+      LLM_BACKEND: ${LLM_BACKEND:-}
+      DOWNLOAD_ONNX_EMBED: ${DOWNLOAD_ONNX_EMBED:-}
+      ONNX_EMBED_HF_REPO: ${ONNX_EMBED_HF_REPO:-}
+      EMBED_MODEL_BACKEND: ${EMBED_MODEL_BACKEND:-}
+      LLM_MAX_CONTEXT_LEN: ${LLM_MAX_CONTEXT_LEN:-}
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-}
     volumes:
+      - vllm-models:/root/.cache/huggingface
       - llm-ollama:/root/.ollama
       - llm-models:/root/models
       - /home/ut/understand-tech/app-data:/app/storage
@@ -226,18 +242,8 @@ services:
       STATE_SECRET: ${STATE_SECRET:-}
       GPU_VM_API_TOKEN: ${GPU_VM_API_TOKEN:-}
       GPU_VM_URL: ${GPU_VM_URL:-}
-      OLLAMA_MODEL_LLM: ${OLLAMA_MODEL_LLM:-}
-      OLLAMA_MODEL_CONDENSE_LLM: ${OLLAMA_MODEL_CONDENSE_LLM:-}
-      OLLAMA_HOST_PORT: ${OLLAMA_HOST_PORT:-}
-      MODELS_DIR: ${MODELS_DIR:-}
-      EMBED_URL: ${EMBED_URL:-}
-      EMBED_MODEL_NAME: ${EMBED_MODEL_NAME:-}
-      RERANKER_HF_PATH: ${RERANKER_HF_PATH:-}
-      RERANKER_MODEL_NAME: ${RERANKER_MODEL_NAME:-}
-      RERANKER_DIR: ${RERANKER_DIR:-}
       ADMIN_MAIL: ${ADMIN_MAIL:-}
       BACKEND_URL: ${BACKEND_URL:-}
-      OLLAMA_MODEL_VLM: ${OLLAMA_MODEL_VLM:-}
       FRONTEND_URL_AUTH: ${FRONTEND_URL_AUTH:-}
     volumes:
       - uploads-data:/tmp/uploads
@@ -369,18 +375,8 @@ services:
       STATE_SECRET: ${STATE_SECRET:-}
       GPU_VM_API_TOKEN: ${GPU_VM_API_TOKEN:-}
       GPU_VM_URL: ${GPU_VM_URL:-}
-      OLLAMA_MODEL_LLM: ${OLLAMA_MODEL_LLM:-}
-      OLLAMA_MODEL_CONDENSE_LLM: ${OLLAMA_MODEL_CONDENSE_LLM:-}
-      OLLAMA_HOST_PORT: ${OLLAMA_HOST_PORT:-}
-      MODELS_DIR: ${MODELS_DIR:-}
-      EMBED_URL: ${EMBED_URL:-}
-      EMBED_MODEL_NAME: ${EMBED_MODEL_NAME:-}
-      RERANKER_HF_PATH: ${RERANKER_HF_PATH:-}
-      RERANKER_MODEL_NAME: ${RERANKER_MODEL_NAME:-}
-      RERANKER_DIR: ${RERANKER_DIR:-}
       ADMIN_MAIL: ${ADMIN_MAIL:-}
       BACKEND_URL: ${BACKEND_URL:-}
-      OLLAMA_MODEL_VLM: ${OLLAMA_MODEL_VLM:-}
       FRONTEND_URL_AUTH: ${FRONTEND_URL_AUTH:-}
     volumes:
       - uploads-data:/tmp/uploads
@@ -476,3 +472,5 @@ volumes:
     name: ut-llm-ollama
   llm-models:
     name: ut-llm-models
+  vllm-models:
+    name: ut-vllm-models
