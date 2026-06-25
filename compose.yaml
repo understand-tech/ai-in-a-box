@@ -330,6 +330,7 @@ services:
       VITE_URL_API_REST: ${VITE_URL_API_REST:-}
       VITE_AUTH_TYPE: ${VITE_AUTH_TYPE:-}
       VITE_DEPLOYMENT_TYPE: ${VITE_DEPLOYMENT_TYPE:-}
+      VITE_DB_PROVIDER: ${VITE_DB_PROVIDER:-}
     networks:
       - ut-frontend-network
     depends_on:
