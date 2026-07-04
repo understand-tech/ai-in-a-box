@@ -197,7 +197,7 @@ services:
       - vllm-models:/root/.cache/huggingface
       - llm-ollama:/root/.ollama
       - llm-models:/root/models
-      - /home/ut/understand-tech/app-data:/app/storage
+      - /var/lib/understandtech/app-data:/app/storage
     networks:
       - ut-backend-network
       - ut-frontend-network # Add the frontend network during first-time installation
@@ -245,9 +245,10 @@ services:
       ADMIN_MAIL: ${ADMIN_MAIL:-}
       BACKEND_URL: ${BACKEND_URL:-}
       FRONTEND_URL_AUTH: ${FRONTEND_URL_AUTH:-}
+      ADMIN_SETUP_PASSWORD: ${ADMIN_SETUP_PASSWORD:-}
     volumes:
       - uploads-data:/tmp/uploads
-      - /home/ut/understand-tech/app-data:/app/storage
+      - /var/lib/understandtech/app-data:/app/storage
     networks:
       - ut-backend-network
       - ut-frontend-network
@@ -296,7 +297,7 @@ services:
       ADMIN_MAIL: ${ADMIN_MAIL:-}
     volumes:
       - uploads-data:/tmp/uploads
-      - /home/ut/understand-tech/app-data:/app/storage
+      - /var/lib/understandtech/app-data:/app/storage
     networks:
       - ut-backend-network
       - ut-frontend-network
@@ -384,7 +385,7 @@ services:
       DEPLOY_ENV: ${DEPLOY_ENV:-}
     volumes:
       - uploads-data:/tmp/uploads
-      - /home/ut/understand-tech/app-data:/app/storage
+      - /var/lib/understandtech/app-data:/app/storage
     networks:
       - ut-backend-network
       - ut-frontend-network
@@ -430,7 +431,7 @@ services:
       ADMIN_MAIL: ${ADMIN_MAIL:-}
     volumes:
       - uploads-data:/tmp/uploads
-      - /home/ut/understand-tech/app-data:/app/storage
+      - /var/lib/understandtech/app-data:/app/storage
     networks:
       - ut-backend-network
       - ut-frontend-network
