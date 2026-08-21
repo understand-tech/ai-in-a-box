@@ -246,6 +246,12 @@ services:
       BACKEND_URL: ${BACKEND_URL:-}
       FRONTEND_URL_AUTH: ${FRONTEND_URL_AUTH:-}
       ADMIN_SETUP_PASSWORD: ${ADMIN_SETUP_PASSWORD:-}
+      # Bootstrap trust for the admin dashboard origin: before the first
+      # configuration document exists this is the only way its browser
+      # calls pass CORS / the SSO handoff. Afterwards the origin lives in
+      # allowed_app_origins (dashboard Configuration page); keep this as
+      # the lock-out rescue hatch.
+      EXTRA_ALLOWED_ORIGINS: ${EXTRA_ALLOWED_ORIGINS:-}
     volumes:
       - uploads-data:/tmp/uploads
       - /var/lib/understandtech/app-data:/app/storage
@@ -339,6 +345,41 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:80 || exit 1"]
+      <<: *healthcheck-defaults
+      start_period: 30s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 128M
+
+  # Admin dashboard (ut-admin-dashboard) — served on its own hostname.
+  # Routing is done at the Caddy level (like `frontend`): Caddy must send
+  # /api/* to api:8501 and everything else to admin-dashboard:8080.
+  admin-dashboard:
+    image: ${ADMIN_DASHBOARD_IMAGE:-}
+    container_name: ut-admin-dashboard
+    restart: unless-stopped
+    expose:
+      - "8080"
+    environment:
+      # Read by the image's internal nginx /api proxy (envsubst template).
+      # On the appliance Caddy routes /api/* to api:8501 before that proxy
+      # ever sees a request, so this stays inert — set anyway so a Caddy
+      # misroute can never leak API calls to the SaaS default baked into
+      # the image (https://app.understand.tech).
+      VITE_API_URL: http://api:8501
+    networks:
+      - ut-frontend-network
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      # busybox wget: curl is not guaranteed in nginx:alpine
+      test: ["CMD-SHELL", "wget -qO /dev/null http://localhost:8080 || exit 1"]
       <<: *healthcheck-defaults
       start_period: 30s
     logging: *default-logging
