@@ -42,3 +42,26 @@ assistants.understand.local {
 
     tls internal
 }
+
+# ---- App Builder (optional add-on, see compose.appbuilder.yaml) ----------
+# Both blocks are inert unless COMPOSE_FILE in .env enables that overlay.
+
+builder.understand.local {
+    # The image serves the SPA and the API from one origin, so no path
+    # splitting here. WebSocket upgrades (/ws) pass through untouched.
+    reverse_proxy app-builder:8001
+
+    tls internal
+}
+
+# Every generated app, on one wildcard: <project>.apps.understand.local,
+# plus its --staging and --prod surfaces. Caddy keeps the original Host
+# header, which is what traefik routes on; traefik then maps the name to
+# that project's container. New apps need no change here — but each name
+# does need publishing over mDNS (setup-autostart.sh --mdns), because mDNS
+# has no wildcards.
+*.apps.understand.local {
+    reverse_proxy app-builder-traefik:80
+
+    tls internal
+}

@@ -4,7 +4,7 @@
 #
 # Usage: sudo ./setup-autostart.sh [OPTIONS]
 #   --install    Install and enable the service (default)
-#   --mdns       Install only the mDNS aliases for the satellite apps
+#   --mdns       Install only the mDNS aliases (satellite + generated apps)
 #   --uninstall  Remove the service
 #   --status     Show service status
 
@@ -86,11 +86,25 @@ install_mdns_alias() {
 #
 # The address is re-derived on every start, so when it changes we exit and let
 # systemd restart us — the restart is the republish.
+#
+# App Builder installs get one extra name per generated app. mDNS has no
+# wildcards, so *.apps.understand.local cannot resolve on its own — every
+# app hostname has to be announced individually. The App Builder writes one
+# traefik file per app, which makes that directory the list of names to
+# publish: it is rescanned every SCAN_INTERVAL seconds, so a new app becomes
+# resolvable within that window and a deleted one stops resolving.
 set -eu
 
 # Fixed routes of the appliance, not per-install configuration — edit this
 # list to add a name, then: sudo systemctl restart ut-mdns-alias
-ALIASES="llms.understand.local assistants.understand.local admin.understand.local"
+ALIASES="llms.understand.local assistants.understand.local admin.understand.local builder.understand.local"
+
+# Generated apps (App Builder add-on). A missing directory just means the
+# add-on is not installed, and the scan is a no-op.
+APPS_DIR="/var/lib/understandtech/appbuilder/traefik-dynamic"
+APPS_SUFFIX="apps.understand.local"
+APPS_PID_DIR="/run/ut-mdns-apps"
+SCAN_INTERVAL=10
 
 primary_ip() {
     ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p'
@@ -117,16 +131,61 @@ for alias in $ALIASES; do
     pids="$pids $!"
 done
 
+# Pidfiles live in /run (cleared on reboot), but a crash can leave entries
+# behind pointing at dead processes. Drop them so this run republishes.
+mkdir -p "$APPS_PID_DIR"
+rm -f "$APPS_PID_DIR"/*.pid
+
+# Dots are regex wildcards, so escape them before matching hostnames.
+apps_suffix_re="$(printf '%s' "$APPS_SUFFIX" | sed 's/\./\\./g')"
+
+scan_apps() {
+    [ -d "$APPS_DIR" ] || return 0
+
+    # The traefik router rules are the source of truth: one Host(`...`) per
+    # surface, so an app's preview, --staging and --prod names all appear.
+    names="$(grep -rhoE "Host\(\`[A-Za-z0-9-]+\.${apps_suffix_re}\`\)" "$APPS_DIR" 2>/dev/null \
+        | sed -e 's/^Host(`//' -e 's/`)$//' | sort -u || true)"
+
+    for name in $names; do
+        pidfile="$APPS_PID_DIR/$name.pid"
+        if [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+            continue
+        fi
+        echo "publishing $name -> $ip_addr"
+        avahi-publish -a -f $no_reverse "$name" "$ip_addr" &
+        echo "$!" > "$pidfile"
+    done
+
+    # An alias only exists while its publisher runs, so killing the process
+    # is how a deleted app's name leaves the network.
+    for pidfile in "$APPS_PID_DIR"/*.pid; do
+        [ -f "$pidfile" ] || continue
+        name="$(basename "$pidfile" .pid)"
+        if ! printf '%s\n' "$names" | grep -qxF "$name"; then
+            echo "withdrawing $name"
+            kill "$(cat "$pidfile")" 2>/dev/null || true
+            rm -f "$pidfile"
+        fi
+    done
+}
+
 terminate() {
     for pid in $pids; do kill "$pid" 2>/dev/null || true; done
+    for pidfile in "$APPS_PID_DIR"/*.pid; do
+        [ -f "$pidfile" ] || continue
+        kill "$(cat "$pidfile")" 2>/dev/null || true
+        rm -f "$pidfile"
+    done
     exit 0
 }
 trap terminate TERM INT
 
 # Watch for an address change or a dead publisher; either way, exit and let
-# systemd start us again.
+# systemd start us again. Generated-app names are reconciled on the same pass.
 while :; do
-    sleep 30
+    scan_apps
+    sleep "$SCAN_INTERVAL"
     if [ "$(primary_ip)" != "$ip_addr" ]; then
         echo "primary address changed — republishing"
         terminate
@@ -144,7 +203,7 @@ HELPER_EOF
 
     cat > "$MDNS_SERVICE_FILE" << 'SYSTEMD_EOF'
 [Unit]
-Description=UnderstandTech mDNS aliases for satellite apps
+Description=UnderstandTech mDNS aliases for satellite and generated apps
 Documentation=https://github.com/understand-tech
 After=avahi-daemon.service network-online.target
 Wants=avahi-daemon.service network-online.target
@@ -181,6 +240,8 @@ SYSTEMD_EOF
     echo "  https://llms.understand.local"
     echo "  https://assistants.understand.local"
     echo "  https://admin.understand.local"
+    echo "  https://builder.understand.local        (App Builder, if installed)"
+    echo "  https://<app>.apps.understand.local     (one per generated app, rescanned every 10s)"
 }
 
 do_install() {
@@ -340,7 +401,7 @@ show_help() {
     echo ""
     echo "Options:"
     echo "  --install    Install and enable auto-start (default)"
-    echo "  --mdns       Install only the mDNS aliases for the satellite apps"
+    echo "  --mdns       Install only the mDNS aliases (satellite apps + generated apps)"
     echo "  --uninstall  Remove the auto-start service"
     echo "  --status     Show service and container status"
     echo "  --help       Show this help message"

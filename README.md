@@ -16,6 +16,8 @@ Deploy the UnderstandTech platform on NVIDIA DGX Spark systems using Docker Comp
 | `env.example` | Template for `.env` — credentials, API keys, model config |
 | `setup-autostart.sh` | Installs a systemd service so the stack starts on boot |
 | `ut-logs.sh` | Automated daily log archival with compression and retention |
+| `compose.appbuilder.yaml` | Optional App Builder add-on — off unless enabled in `.env` |
+| `appbuilder/traefik/` | Static routing config for the App Builder's per-app router |
 
 ## Quick Start
 
@@ -51,6 +53,8 @@ Access the platform at `https://understand.local` once all services are healthy.
 | MongoDB | `ut-mongodb` | 27017 (localhost) | Document database |
 | Redis | `ut-redis` | 6379 (internal) | Task queue and cache |
 | MongoDB Backup | `ut-mongodb-backup` | — | Automated daily backups |
+| App Builder | `ut-app-builder` | 8001 | Builds and hosts generated apps (add-on) |
+| App Builder Router | `ut-app-builder-traefik` | 80 (internal) | Per-app routing for generated apps (add-on) |
 
 ## Networks
 
@@ -71,6 +75,12 @@ The stack uses two isolated Docker bridge networks:
 | `ut-uploads-data` | Shared file uploads (API + Workers) |
 | `ut-llm-ollama` | Ollama configuration |
 | `ut-llm-models` | LLM model files |
+| `ut-app-builder-claude-state` | App Builder agent session state (add-on) |
+
+The App Builder also keeps its projects on the host, not in a volume, because
+it starts each generated app as its own compose project and the docker daemon
+has to resolve those paths: `/var/lib/understandtech/appbuilder/`
+(`workspaces/`, `prod-workspaces/`, `traefik-dynamic/`).
 
 ## Common Operations
 
@@ -116,3 +126,33 @@ Full setup and administration guides can be found at https://docs.understand.tec
 - Docker Engine 24.0+ with Compose V2
 - NVIDIA Container Toolkit (pre-installed on DGX)
 - GitHub Container Registry access (provided by UnderstandTech)
+
+## App Builder Add-On
+
+Lets users describe an app and have it built, then serves the result on the
+same box. It runs in the same compose project as everything else and talks to
+`api-customer` for models and UT API v3 — nothing leaves the network.
+
+```bash
+# 1. Enable the overlay (uncomment in .env) and set the gateway key
+#    COMPOSE_FILE="compose.yaml:compose.appbuilder.yaml"
+#    APP_BUILDER_GATEWAY_API_KEY="..."   # platform UI: Account -> API keys
+
+# 2. Create the state directory the generated apps live in
+sudo mkdir -p /var/lib/understandtech/appbuilder/traefik-dynamic
+
+# 3. Start it, and publish the mDNS names
+docker compose up -d
+sudo ./setup-autostart.sh --mdns
+```
+
+The builder is at `https://builder.understand.local`; each generated app gets
+`https://<project>.apps.understand.local` plus `--staging` and `--prod`
+surfaces. Caddy serves those from one wildcard, so no config changes per app,
+but each hostname is announced over mDNS individually (mDNS has no wildcards)
+— the alias service rescans every 10 seconds, so a new app resolves within
+about that long.
+
+`APP_BUILDER_HOST_PORT` is published on the host because generated apps run in
+their own compose projects and reach the builder's model proxy at
+`host.docker.internal:<port>` — docker DNS cannot get them there.

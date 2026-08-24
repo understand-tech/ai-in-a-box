@@ -1,0 +1,33 @@
+# Static traefik config for the App Builder's per-app router. Mounted into
+# the watched dynamic dir by compose.appbuilder.yaml, alongside the
+# per-project files the orchestrator writes there at runtime.
+#
+# Underscore prefix by convention: the orchestrator only ever writes and
+# prunes files named after a project, so this one is never touched.
+http:
+  routers:
+    # Generated apps and the orchestrator both call UT API v3 through here
+    # (UNDERSTAND_API_URL=http://ut-api, and the v3 client appends /api/v3).
+    # `ut-api` is a network alias of this traefik container on both the
+    # apps' `proxy` network and ut-frontend-network, so one URL works from
+    # either side while api-customer itself stays off the apps' network.
+    ut-api:
+      rule: "Host(`ut-api`)"
+      entryPoints:
+        - web
+      service: ut-api-customer
+
+  services:
+    # Referenced by every per-project router's sleep-page errors middleware
+    # (ORCHESTRATOR_TRAEFIK_SERVICE=builder-api). If this name and that
+    # setting disagree, traefik logs `the service "X@file" does not exist`
+    # and EVERY generated app's route fails to register.
+    builder-api:
+      loadBalancer:
+        servers:
+          - url: "http://app-builder:8001"
+
+    ut-api-customer:
+      loadBalancer:
+        servers:
+          - url: "http://api-customer:8501"
