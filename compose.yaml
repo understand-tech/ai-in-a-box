@@ -505,7 +505,7 @@ services:
       MONGODB_PORT: ${MONGODB_PORT:-}
       MONGODB_USERNAME: ${MONGODB_USERNAME:-}
       MONGODB_PASSWORD: ${MONGODB_PASSWORD:-}
-      MONGODB_DB: ${APP_ASSISTANTS_MONGODB_DB:-ut-app-assistants}
+      MONGO_DB: ${APP_ASSISTANTS_MONGODB_DB:-ut-app-assistants}
       VITE_DB_PROVIDER: ${DB_PROVIDER:-}
       VITE_API_BASE_URL: ${VITE_API_BASE_URL:-https://understand.local/api}
       VITE_UT_APP_URL: ${VITE_UT_APP_URL:-https://understand.local}
@@ -515,6 +515,8 @@ services:
       UT_JWT_SECRET: ${JWT_SECRET:-}
       UT_APP_ASSISTANTS_BASE_URL: ${APP_ASSISTANTS_BASE_URL:-https://assistants.understand.local}
       CORS_ORIGINS: ${APP_ASSISTANTS_CORS_ORIGINS:-https://assistants.understand.local}
+    volumes:
+      - /var/lib/understandtech/app-data:/app/storage
     networks:
       - ut-frontend-network
       - ut-backend-network
@@ -549,7 +551,7 @@ services:
       api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:80 || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/ || exit 1"]
       <<: *healthcheck-defaults
       start_period: 30s
     logging: *default-logging
