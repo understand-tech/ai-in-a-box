@@ -180,7 +180,7 @@ services:
       VLLM_LLM_MODEL: ${VLLM_LLM_MODEL:-}
       VLLM_CONDENSE_MODEL: ${VLLM_CONDENSE_MODEL:-}
       VLLM_VLM_MODEL: ${VLLM_VLM_MODEL:-}
-      VLLM_LLM_BASE_URL: ${VLLM_LLM_BASE_URL:-}                                                                                                                                  
+      VLLM_LLM_BASE_URL: ${VLLM_LLM_BASE_URL:-}
       VLLM_VLM_BASE_URL: ${VLLM_VLM_BASE_URL:-}
       VLLM_LLM_GPU_MEM_UTIL: ${VLLM_LLM_GPU_MEM_UTIL:-}
       VLLM_VLM_GPU_MEM_UTIL: ${VLLM_VLM_GPU_MEM_UTIL:-}
@@ -246,6 +246,10 @@ services:
       BACKEND_URL: ${BACKEND_URL:-}
       FRONTEND_URL_AUTH: ${FRONTEND_URL_AUTH:-}
       ADMIN_SETUP_PASSWORD: ${ADMIN_SETUP_PASSWORD:-}
+      OA_KEY: ${OA_KEY:-}
+      DEPLOY_ENV: ${DEPLOY_ENV:-}
+      EXTRA_ALLOWED_ORIGINS: ${EXTRA_ALLOWED_ORIGINS:-}
+      JWT_SECRET: ${JWT_SECRET}
     volumes:
       - uploads-data:/tmp/uploads
       - /var/lib/understandtech/app-data:/app/storage
@@ -450,6 +454,112 @@ services:
           cpus: '4'
         reservations:
           memory: 2G
+
+  app-llms:
+    image: ${LLMS_APP_IMAGE:-}
+    container_name: ut-app-llms
+    restart: unless-stopped
+    expose:
+      - "80"
+    environment:
+      MONGODB_HOST: ${MONGODB_HOST:-}
+      MONGODB_PORT: ${MONGODB_PORT:-}
+      MONGODB_USERNAME: ${MONGODB_USERNAME:-}
+      MONGODB_PASSWORD: ${MONGODB_PASSWORD:-}
+      MONGODB_DB: ${APP_LLMS_MONGODB_DB:-ut-app-llms}
+      VITE_DB_PROVIDER: ${DB_PROVIDER:-}
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-https://understand.local/api}
+      VITE_UT_APP_URL: ${VITE_UT_APP_URL:-https://understand.local}
+      UT_APP_BASE_URL: http://api:8501/api
+      UT_CUSTOMER_URL: http://api-customer:8501
+      UNDERSTAND_API_VERSION: ${UNDERSTAND_API_VERSION:-v3}
+      UT_JWT_SECRET: ${JWT_SECRET:-}
+      UT_APP_LLMS_BASE_URL: ${APP_LLMS_BASE_URL:-https://llms.understand.local}
+      CORS_ORIGINS: ${APP_LLMS_CORS_ORIGINS:-https://llms.understand.local}
+    networks:
+      - ut-frontend-network
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/api/health"]
+      <<: *healthcheck-defaults
+      start_period: 30s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 128M
+
+  app-assistants:
+    image: ${ASSISTANTS_APP_IMAGE:-}
+    container_name: ut-app-assistants
+    restart: unless-stopped
+    expose:
+      - "80"
+    environment:
+      MONGODB_HOST: ${MONGODB_HOST:-}
+      MONGODB_PORT: ${MONGODB_PORT:-}
+      MONGODB_USERNAME: ${MONGODB_USERNAME:-}
+      MONGODB_PASSWORD: ${MONGODB_PASSWORD:-}
+      MONGODB_DB: ${APP_LLMS_MONGODB_DB:-ut-app-llms}
+      VITE_DB_PROVIDER: ${DB_PROVIDER:-}
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-https://understand.local/api}
+      VITE_UT_APP_URL: ${VITE_UT_APP_URL:-https://understand.local}
+      UT_APP_BASE_URL: http://api:8501/api
+      UT_CUSTOMER_URL: http://api-customer:8501
+      UNDERSTAND_API_VERSION: ${UNDERSTAND_API_VERSION:-v3}
+      UT_JWT_SECRET: ${JWT_SECRET:-}
+      UT_APP_LLMS_BASE_URL: ${APP_LLMS_BASE_URL:-https://llms.understand.local}
+      CORS_ORIGINS: ${APP_LLMS_CORS_ORIGINS:-https://llms.understand.local}
+    networks:
+      - ut-frontend-network
+      - ut-backend-network
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/api/health"]
+      <<: *healthcheck-defaults
+      start_period: 30s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 128M
+
+  admin-portal:
+    image: ${ADMIN_PORTAL_IMAGE:-}
+    container_name: ut-admin-portal
+    restart: unless-stopped
+    expose:
+      - "8080"
+    environment:
+      VITE_API_URL: http://api:8501
+    networks:
+      - ut-frontend-network
+      - ut-backend-network
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80 || exit 1"]
+      <<: *healthcheck-defaults
+      start_period: 30s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 128M
 
 networks:
   ut-backend-network:

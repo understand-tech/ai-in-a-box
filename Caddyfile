@@ -7,13 +7,38 @@ understand.local {
         reverse_proxy api:8501
     }
 
-    handle /api/v1/* {
-        reverse_proxy api-customer:8501
-    }
-
     handle /api/v3/* {
         reverse_proxy api-customer:8501
     }
+
+    handle /api/llm/* {
+        reverse_proxy api-customer:8501
+    }
+
+    tls internal
+
+}
+
+llms.understand.local {
+    reverse_proxy app-llms:80
+
+    tls internal
+}
+
+admin.understand.local {
+    handle {
+        reverse_proxy admin-portal:8080
+    }
+
+    handle /api/* {
+        reverse_proxy api:8501
+    }
+
+    tls internal
+}
+
+assistants.understand.local {
+    reverse_proxy app-assistants:80
 
     tls internal
 }
