@@ -505,7 +505,7 @@ services:
       MONGODB_PORT: ${MONGODB_PORT:-}
       MONGODB_USERNAME: ${MONGODB_USERNAME:-}
       MONGODB_PASSWORD: ${MONGODB_PASSWORD:-}
-      MONGODB_DB: ${APP_LLMS_MONGODB_DB:-ut-app-llms}
+      MONGODB_DB: ${APP_ASSISTANTS_MONGODB_DB:-ut-app-assistants}
       VITE_DB_PROVIDER: ${DB_PROVIDER:-}
       VITE_API_BASE_URL: ${VITE_API_BASE_URL:-https://understand.local/api}
       VITE_UT_APP_URL: ${VITE_UT_APP_URL:-https://understand.local}
@@ -513,8 +513,8 @@ services:
       UT_CUSTOMER_URL: http://api-customer:8501
       UNDERSTAND_API_VERSION: ${UNDERSTAND_API_VERSION:-v3}
       UT_JWT_SECRET: ${JWT_SECRET:-}
-      UT_APP_LLMS_BASE_URL: ${APP_LLMS_BASE_URL:-https://llms.understand.local}
-      CORS_ORIGINS: ${APP_LLMS_CORS_ORIGINS:-https://llms.understand.local}
+      UT_APP_ASSISTANTS_BASE_URL: ${APP_ASSISTANTS_BASE_URL:-https://assistants.understand.local}
+      CORS_ORIGINS: ${APP_ASSISTANTS_CORS_ORIGINS:-https://assistants.understand.local}
     networks:
       - ut-frontend-network
       - ut-backend-network

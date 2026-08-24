@@ -90,8 +90,11 @@ git pull
 docker compose pull
 docker compose up -d
 
-# Enable auto-start on boot
+# Enable auto-start on boot (also publishes the satellite apps' mDNS names)
 sudo ./setup-autostart.sh
+
+# Publish only the mDNS names (llms / assistants / admin .understand.local)
+sudo ./setup-autostart.sh --mdns
 
 # Install log archival cron job
 chmod +x ut-logs.sh
