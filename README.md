@@ -138,8 +138,9 @@ same box. It runs in the same compose project as everything else and talks to
 #    COMPOSE_FILE="compose.yaml:compose.appbuilder.yaml"
 #    APP_BUILDER_GATEWAY_API_KEY="..."   # platform UI: Account -> API keys
 
-# 2. Create the state directory the generated apps live in
-sudo mkdir -p /var/lib/understandtech/appbuilder/traefik-dynamic
+# 2. Create the network generated apps attach to (once per box; it is
+#    shared with their compose projects, so no single project owns it)
+docker network create proxy
 
 # 3. Start it, and publish the mDNS names
 docker compose up -d

@@ -163,8 +163,16 @@ services:
       - "--ping=true"
     volumes:
       # Per-project files, written at runtime by the orchestrator.
-      - /var/lib/understandtech/appbuilder/traefik-dynamic:/etc/traefik/dynamic:ro
-      # Static config, shipped with this repo, mounted INTO the dir above:
+      #
+      # NOT read-only, even though traefik never writes here: the file below
+      # is mounted INTO this directory, and runc has to create its mountpoint
+      # inside this mount before it can mount over it — which fails with
+      # "read-only file system" if this one is :ro. The file itself stays
+      # read-only. Expect a 0-byte `_orchestrator.yml` to appear in the host
+      # directory: that is the mountpoint stub, and the real file is mounted
+      # over it inside the container.
+      - /var/lib/understandtech/appbuilder/traefik-dynamic:/etc/traefik/dynamic
+      # Static config, shipped with this repo so a `git pull` updates it:
       # the builder-api service every per-project sleep-page middleware
       # refers to, plus the `ut-api` route generated apps use for UT v3.
       - ./appbuilder/traefik/_orchestrator.yml:/etc/traefik/dynamic/_orchestrator.yml:ro
@@ -174,7 +182,7 @@ services:
         # orchestrator resolves the same name on this network.
         aliases:
           - ut-api
-      appbuilder-proxy:
+      proxy:
         aliases:
           - ut-api
     healthcheck:
@@ -191,12 +199,20 @@ services:
           memory: 128M
 
 networks:
-  # Generated apps join this by the literal name `proxy` (external, declared
-  # in each app's own compose file) with a service alias of the project id,
-  # which is how traefik reaches them. The name is baked into the templates.
-  appbuilder-proxy:
+  # Shared bus between this stack and every generated app, which joins it by
+  # the literal name `proxy` with a service alias of its project id — that is
+  # how traefik reaches them, and the name is baked into the app templates.
+  #
+  # External on purpose, in both places. The network outlives any single
+  # compose project: `docker compose down` must not try to delete one that
+  # running apps are still attached to, and compose must not refuse to adopt
+  # one that another project created (it compares its own bookkeeping labels
+  # and errors on a mismatch). Create it once per box:
+  #
+  #     docker network create proxy
+  proxy:
+    external: true
     name: proxy
-    driver: bridge
 
 volumes:
   app-builder-claude-state:
