@@ -13,10 +13,10 @@
 #
 # Three rails connect this to the platform, all inside docker:
 #   1. Builder's own LLM calls   app-builder -> api-customer:8501/api/llm
-#   2. Generated apps' FM calls  app -> host.docker.internal:8011 (the
+#   2. Generated apps' FM calls  app -> host.docker.internal:8001 (the
 #                                builder's proxy) -> the same gateway
-#   3. Generated apps' UT v3     app -> ut-api-v3 (alias of
-#                                app-builder-traefik) -> api-customer:8501
+#   3. Generated apps' UT v3     app -> ut-api (alias of app-builder-traefik)
+#                                -> api-customer:8501
 #
 # Routing: caddy owns 80/443 and serves builder.understand.local and the
 # generated apps' wildcard; app-builder-traefik does per-app routing behind
@@ -46,11 +46,10 @@ services:
       # Generated apps run in their own compose projects on their own
       # networks, so they cannot resolve this container by docker DNS. They
       # reach the builder's LLM proxy at host.docker.internal:<this port>,
-      # which is why a host port is published at all.
-      #
-      # 8011, not the 8001 the App Builder uses elsewhere: NIM holds 8001 on
-      # DGX Spark hosts. If you move it, move APP_BUILDER_LLM_PROXY_PORT in
-      # .env to match — they must agree.
+      # which is why a host port is published at all. Keep it at 8001 unless
+      # something else on the host owns it; if you move it, move
+      # APP_BUILDER_LLM_PROXY_PORT in .env to match (they must agree, and
+      # apps created before the change keep the old value in their .env).
       - "${APP_BUILDER_HOST_PORT:-8011}:8001"
     environment:
       # ---- deployment mode ----
@@ -63,11 +62,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
 
       # ---- platform wiring (in-cluster HTTP: no caddy hop, no TLS, no CA) ----
-      # The MAIN api container (ut-api), not api-customer: every consumer of
-      # this var hits /api/authentication/login, /api/account/apikey,
-      # /api/apps/set, /api/admin/configuration or
-      # /api/auth/handoff/exchange, all of which caddy routes to api:8501.
-      # No /api suffix — the code appends the full path.
+      # Cookie-auth ut-api the orchestrator calls for login and API-key mint.
       UNDERSTAND_APP_URL: ${APP_BUILDER_UT_API_URL:-http://api:8501}
       # Main frontend origin — hosts /dashboard-sso, the SSO login target.
       # A BROWSER url, so it must be the public one.
@@ -76,23 +71,16 @@ services:
       # This app's own public origin — used for OAuth callback redirects.
       # Without it the orchestrator falls back to builder.localhost.
       APPBUILDER_BASE_URL: ${APP_BUILDER_BASE_URL:-https://builder.understand.local}
-      # /api/v3 lives ONLY on api-customer (ut-api-customer) — the main api
-      # container does not serve it. This value is written into every
-      # generated app's .env as well as read here, so it has to resolve from
-      # the apps' network too: `ut-api-v3` is an alias of the traefik below,
-      # which forwards to api-customer. NOT named `ut-api` — that already
-      # resolves to the main api container (its container_name), and a
-      # duplicate would round-robin between them and 404 half the time.
-      # Base only: the v3 client appends /api/v3 itself.
-      UNDERSTAND_API_URL: ${APP_BUILDER_UT_V3_URL:-http://ut-api-v3}
-      # Orchestrator-only (the OpenAPI spec behind discover_resources), so it
-      # takes the direct in-cluster route with no traefik hop.
+      # UT API v3 base for the orchestrator AND for every generated app's
+      # .env, so it must resolve on both networks — hence the `ut-api` alias
+      # on app-builder-traefik below rather than api-customer directly.
+      # The v3 client appends /api/v3.
+      UNDERSTAND_API_URL: ${APP_BUILDER_UT_V3_URL:-http:ut-api-v3}
       API_V3_OPENAPI_URL: ${APP_BUILDER_UT_CUSTOMER_URL:-http://api-customer:8501}/api/v3/openapi.json
 
       # ---- LLM rails ----
       # The builder's own helpers (planner, classifier, naming, clarifier)
-      # and, with AGENT_BACKEND=deepagents, the build agent itself. The LLM
-      # gateway is on api-customer (caddy sends /api/llm/* there too).
+      # and, with AGENT_BACKEND=deepagents, the build agent itself.
       UT_GATEWAY_BASE_URL: ${APP_BUILDER_GATEWAY_URL:-http://api-customer:8501/api/llm}
       UT_GATEWAY_API_KEY: ${APP_BUILDER_GATEWAY_API_KEY:-}
       UT_GATEWAY_MODEL: ${APP_BUILDER_GATEWAY_MODEL:-uai-large}
@@ -175,23 +163,15 @@ services:
       - "--ping=true"
     volumes:
       # Per-project files, written at runtime by the orchestrator.
-      #
-      # NOT read-only, even though traefik never writes here: the file below
-      # is mounted INTO this directory, and runc has to create its mountpoint
-      # inside this mount before it can mount over it — which fails with
-      # "read-only file system" if this one is :ro. The file itself stays
-      # read-only. Expect a 0-byte `_orchestrator.yml` to appear in the host
-      # directory: that is the mountpoint stub, and the real file is mounted
-      # over it inside the container.
       - /var/lib/understandtech/appbuilder/traefik-dynamic:/etc/traefik/dynamic
-      # Static config, shipped with this repo so a `git pull` updates it:
+      # Static config, shipped with this repo, mounted INTO the dir above:
       # the builder-api service every per-project sleep-page middleware
       # refers to, plus the `ut-api` route generated apps use for UT v3.
       - ./appbuilder/traefik/_orchestrator.yml:/etc/traefik/dynamic/_orchestrator.yml:ro
     networks:
-      # Same alias on both networks so ONE UNDERSTAND_API_URL value works
-      # from the orchestrator (here) and from generated apps (on proxy).
       ut-frontend-network:
+        # Generated apps get UNDERSTAND_API_URL=http://ut-api; the
+        # orchestrator resolves the same name on this network.
         aliases:
           - ut-api-v3
       proxy:
@@ -211,20 +191,12 @@ services:
           memory: 128M
 
 networks:
-  # Shared bus between this stack and every generated app, which joins it by
-  # the literal name `proxy` with a service alias of its project id — that is
-  # how traefik reaches them, and the name is baked into the app templates.
-  #
-  # External on purpose, in both places. The network outlives any single
-  # compose project: `docker compose down` must not try to delete one that
-  # running apps are still attached to, and compose must not refuse to adopt
-  # one that another project created (it compares its own bookkeeping labels
-  # and errors on a mismatch). Create it once per box:
-  #
-  #     docker network create proxy
+  # Generated apps join this by the literal name `proxy` (external, declared
+  # in each app's own compose file) with a service alias of the project id,
+  # which is how traefik reaches them. The name is baked into the templates.
   proxy:
-    external: true
     name: proxy
+    external: true
 
 volumes:
   app-builder-claude-state:

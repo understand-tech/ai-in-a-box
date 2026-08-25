@@ -7,14 +7,10 @@
 http:
   routers:
     # Generated apps and the orchestrator both call UT API v3 through here
-    # (UNDERSTAND_API_URL=http://ut-api-v3; the client appends /api/v3).
-    # `ut-api-v3` is a network alias of this traefik container on both the
+    # (UNDERSTAND_API_URL=http://ut-api, and the v3 client appends /api/v3).
+    # `ut-api` is a network alias of this traefik container on both the
     # apps' `proxy` network and ut-frontend-network, so one URL works from
     # either side while api-customer itself stays off the apps' network.
-    #
-    # Deliberately not `ut-api`: that is the main api container's name and
-    # already resolves on ut-frontend-network. It also does not serve
-    # /api/v3 — only api-customer does.
     ut-api-v3:
       rule: "Host(`ut-api-v3`)"
       entryPoints:
