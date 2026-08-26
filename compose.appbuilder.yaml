@@ -30,7 +30,7 @@ services:
       UNDERSTAND_FRONTEND_URL: ${VITE_UT_APP_URL:-https://understand.local}
       ADMIN_DASHBOARD_URL: ${APP_BUILDER_ADMIN_URL:-https://admin.understand.local}
       APPBUILDER_BASE_URL: ${APP_BUILDER_BASE_URL:-https://builder.understand.local}
-      UNDERSTAND_API_URL: ${APP_BUILDER_UT_V3_URL:-http:ut-api-v3}
+      UNDERSTAND_API_URL: ${APP_BUILDER_UT_V3_URL:-http://ut-api-v3}
       API_V3_OPENAPI_URL: ${APP_BUILDER_UT_CUSTOMER_URL:-http://api-customer:8501}/api/v3/openapi.json
       UT_GATEWAY_BASE_URL: ${APP_BUILDER_GATEWAY_URL:-http://api-customer:8501/api/llm}
       UT_GATEWAY_API_KEY: ${APP_BUILDER_GATEWAY_API_KEY:-}

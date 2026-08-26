@@ -108,7 +108,7 @@ services:
           memory: 1G
 
   mongodb-backup:
-    image: tiredofit/db-backup:latest
+    image: tiredofit/db-backup:4.1.100
     container_name: ut-mongodb-backup
     restart: unless-stopped
     environment:
@@ -119,7 +119,8 @@ services:
       DB01_TYPE: mongo
       DB01_HOST: mongodb
       DB01_PORT: ${MONGODB_PORT:-27017}
-      DB01_NAME: ${MONGODB_DATABASE:-ut-db}
+      # Restore one database out of the archive with:
+      #   mongorestore --archive=<file> --gzip --nsInclude='ut-app-llms.*'
       DB01_USER: ${MONGODB_USERNAME:-mongoadmin}
       DB01_PASS: ${MONGODB_PASSWORD:-12345678}
       DB01_AUTH: admin
