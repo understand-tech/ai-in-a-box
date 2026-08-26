@@ -123,28 +123,25 @@ check_prerequisites() {
         exit 1
     fi
 
-    # Without .env every image reference resolves to an empty string, so the
-    # stack fails on boot rather than at install time. Catch it here.
-    if [[ ! -f "$INSTALL_DIR/.env" ]]; then
-        log_error ".env not found in $INSTALL_DIR"
-        echo ""
-        echo "Create it first:"
-        echo "  cd $INSTALL_DIR && cp .env.example .env && chmod 600 .env"
-        exit 1
-    fi
-
     if [[ ! -f "$INSTALL_DIR/Caddyfile" ]]; then
         log_warn "Caddyfile not found in $INSTALL_DIR — the proxy will not start"
     fi
 
-    # A broken .env or COMPOSE_FILE should fail here, not silently at 3am on
-    # the next reboot.
-    if ! compose config -q; then
-        log_error "'docker compose config' failed in $INSTALL_DIR — fix the errors above first"
-        exit 1
+    # .env is not required to install the units — it is only read when the
+    # stack is started, which this script never does. Installing auto-start
+    # before configuring the environment is a legitimate order, so this is a
+    # warning, not an error. When .env is there, validate it: a broken one
+    # should surface now rather than on the next reboot.
+    if [[ -f "$INSTALL_DIR/.env" ]]; then
+        if ! compose config -q; then
+            log_error "'docker compose config' failed in $INSTALL_DIR — fix the errors above first"
+            exit 1
+        fi
+        log_info "Prerequisites satisfied (install directory: $INSTALL_DIR)"
+    else
+        log_warn "No .env in $INSTALL_DIR yet — units installed anyway."
+        log_warn "The stack will boot once you create it: cp .env.example .env"
     fi
-
-    log_info "Prerequisites satisfied (install directory: $INSTALL_DIR)"
 }
 
 install_mdns_defaults() {

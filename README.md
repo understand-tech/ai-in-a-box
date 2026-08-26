@@ -221,6 +221,40 @@ for the App Builder:
 | `ut-nim-llm-cache` | NIM chat-model weights (survives updates — do not prune casually) |
 | `ut-nim-vlm-cache` | NIM vision-model weights (idem) |
 
+Every volume carries an explicit `name:`, so the names are fixed rather than
+prefixed with the compose project. Data therefore survives a project rename or
+a move to a different directory.
+
+The trade-off is that compose warns if a volume was originally created under a
+different project name:
+
+```
+WARN volume "ut-mongodb-data" already exists but was created for project "ut"
+     (expected "understandtech")
+```
+
+That is a label mismatch, not a data problem — compose still mounts the right
+volume, and the stack runs normally. It means the volume was created by a
+compose run whose project name was not `understandtech` (this repo has pinned
+`name: understandtech` since its first commit, so the usual cause is a run from
+a directory of another name, an explicit `-p`, or volumes copied in from
+another machine). Check with:
+
+```bash
+docker volume ls -q | while read -r v; do
+  printf '%-28s %-18s %s\n' "$v" \
+    "$(docker volume inspect -f '{{index .Labels "com.docker.compose.project"}}' "$v")" \
+    "$(docker volume inspect -f '{{.CreatedAt}}' "$v")"
+done
+```
+
+Do not "fix" it by marking the volumes `external: true` — compose would then
+refuse to create them, breaking every fresh install. Either leave the warning
+alone, or, on a box with no data worth keeping, stop the stack and delete the
+mislabelled volumes so compose recreates them cleanly. Deleting
+`ut-mongodb-data` destroys the database and deleting `ut-nim-*-cache` forces a
+full model re-download, so check what is in them first.
+
 Two host paths are bind-mounted rather than kept in volumes:
 
 | Host path | Mounted by | Purpose |
@@ -340,9 +374,11 @@ sudo ./setup-autostart.sh --uninstall
 holding the script, so a plain `sudo ./setup-autostart.sh` from the checkout is
 already correct.
 
-The preflight is read-only: Docker and Compose V2 present, `.env` and
-`compose.yaml` in place, and `docker compose config` parsing cleanly — so a
-broken `.env` fails here rather than at the next reboot.
+The preflight is read-only: Docker and Compose V2 present, `compose.yaml` in
+place, and — if `.env` already exists — `docker compose config` parsing
+cleanly, so a broken `.env` surfaces here rather than at the next reboot. A
+missing `.env` is only a warning: the units are valid without it, so
+auto-start can be installed before the environment is configured.
 
 The boot service starts from local images only (`up -d --pull never`). An
 offline or air-gapped box therefore still comes up, and boot never stalls on a
