@@ -542,6 +542,7 @@ services:
       timeout: 10s
       retries: 10
       start_period: 45m
+    logging: *default-logging
     deploy:
       resources:
         reservations:
@@ -575,6 +576,7 @@ services:
       timeout: 10s
       retries: 10
       start_period: 45m
+    logging: *default-logging
     deploy:
       resources:
         reservations:

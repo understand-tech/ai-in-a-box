@@ -317,6 +317,11 @@ It does not pull images, create stack resources, or start anything. Deploying
 the stack stays a separate, manual step; this script only makes it survive a
 reboot, and is safe to run at any point.
 
+Re-running it is a no-op. `--install` includes the mDNS step, so running
+`--mdns` first and `--install` after is fine: files are compared before being
+replaced, and the publisher is only bounced when its config actually changed or
+it is not running. Nothing is disturbed that was already correct.
+
 ```bash
 # Install both, using this checkout as the install directory
 sudo ./setup-autostart.sh

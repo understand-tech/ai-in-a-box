@@ -5,6 +5,7 @@
 # Usage:
 #   ./ut-logs-archive              # Run archive (call from cron)
 #   ./ut-logs-archive --install    # Install daily cron job
+#   ./ut-logs-archive --uninstall  # Remove the cron job
 #   ./ut-logs-archive --status     # Show archive status
 #   ./ut-logs-archive --cleanup    # Manual cleanup of old archives
 #
@@ -18,9 +19,14 @@
 
 ARCHIVE_DIR="/var/log/understandtech"     # Where to store archived logs
 RETENTION_DAYS=365                        # How long to keep archives (1 year)
-CONTAINER_PREFIX="ut-"                    # Only archive containers starting with this
-WORKER_PREFIX="understandtech-workers"    # Also archive worker containers
+COMPOSE_PROJECT="understandtech"          # Archive every container in this compose project
+CONTAINER_PREFIX="ut-"                    # Plus anything named like this...
+WORKER_PREFIX="understandtech-workers"    # ...or like this (belt and braces)
 ARCHIVE_HOUR="02:00"                      # When daily cron runs (24h format)
+
+# App Builder generated apps are deliberately NOT archived: each runs as its
+# own compose project, they come and go, and their logs belong to whoever
+# built them. Add their project names to the filter below if you want them.
 
 # =============================================================================
 # Don't edit below unless you know what you're doing
@@ -39,9 +45,21 @@ log_info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
 log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-# Get all UT containers (main services + workers)
+# Get all UT containers.
+#
+# The compose project label is the primary source: it catches every service in
+# the stack including the scaled workers and the NIM inference containers,
+# whose names ("nim-llm", "nim-vlm") match no ut- prefix, and it keeps picking
+# up services added to compose.yaml later without another edit here.
+#
+# The name prefixes stay as a fallback for anything started outside compose.
 get_containers() {
-    docker ps --format '{{.Names}}' | grep -E "^(${CONTAINER_PREFIX}|${WORKER_PREFIX})" | sort
+    {
+        docker ps --format '{{.Names}}' \
+            --filter "label=com.docker.compose.project=${COMPOSE_PROJECT}"
+        docker ps --format '{{.Names}}' \
+            | grep -E "^(${CONTAINER_PREFIX}|${WORKER_PREFIX})"
+    } 2>/dev/null | sort -u
 }
 
 # Main archive function - exports last 24h of logs for each container
@@ -114,7 +132,7 @@ do_status() {
     echo ""
     echo "Archive location:  ${ARCHIVE_DIR}"
     echo "Retention period:  ${RETENTION_DAYS} days"
-    echo "Containers:        ${CONTAINER_PREFIX}* and ${WORKER_PREFIX}*"
+    echo "Containers:        compose project '${COMPOSE_PROJECT}', plus ${CONTAINER_PREFIX}* and ${WORKER_PREFIX}*"
     echo ""
     
     if [[ ! -d "$ARCHIVE_DIR" ]]; then
@@ -304,7 +322,8 @@ do_help() {
     echo "  │   ├── 2026-01-01/"
     echo "  │   │   ├── ut-api.log.gz"
     echo "  │   │   ├── ut-mongodb.log.gz"
-    echo "  │   │   └── ut-llm.log.gz"
+    echo "  │   │   ├── ut-llm.log.gz"
+    echo "  │   │   └── nim-llm.log.gz"
     echo "  │   ├── 2026-01-02/"
     echo "  │   │   └── ..."
     echo "  │   └── ..."

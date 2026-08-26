@@ -1,7 +1,7 @@
 #!/bin/bash
 # UnderstandTech Auto-Start Setup Script
 #
-# Installs two systemd units and nothing else:
+# Installs two systemd units:
 #   understandtech.service  - brings the compose stack up on boot
 #   ut-mdns-alias.service   - publishes the .local names over mDNS
 #
@@ -63,13 +63,21 @@ INSTALL_DIR="${UT_INSTALL_DIR:-$(resolve_script_dir)}"
 # Write via a temp file in the same directory and rename into place. The mDNS
 # helper is a running process's script file: truncating it in place makes the
 # live /bin/sh read the rest of its program from the wrong offset.
+#
+# Returns 0 if the file changed, 1 if the content was already identical, so
+# callers can skip the work that only a change makes necessary.
 write_file_atomic() {
     local path="$1" mode="$2" tmp
     mkdir -p "$(dirname "$path")"
     tmp="$(mktemp "${path}.XXXXXX")"
     cat > "$tmp"
     chmod "$mode" "$tmp"
+    if [[ -f "$path" ]] && cmp -s "$tmp" "$path"; then
+        rm -f "$tmp"
+        return 1
+    fi
     mv -f "$tmp" "$path"
+    return 0
 }
 
 check_root() {
@@ -147,7 +155,7 @@ install_mdns_defaults() {
         return 0
     fi
 
-    write_file_atomic "$MDNS_DEFAULTS" 644 << 'DEFAULTS_EOF'
+    if write_file_atomic "$MDNS_DEFAULTS" 644 << 'DEFAULTS_EOF'
 # Extra mDNS names published for this appliance, space separated.
 # setup-autostart.sh creates this file once and never overwrites it, so edits
 # made here survive re-running the installer. Apply changes with:
@@ -161,8 +169,9 @@ UT_MDNS_APPS_SUFFIX="apps.understand.local"
 # How often the generated-app list is rescanned, in seconds.
 UT_MDNS_SCAN_INTERVAL="10"
 DEFAULTS_EOF
-
-    log_info "Defaults written: $MDNS_DEFAULTS"
+    then
+        log_info "Defaults written: $MDNS_DEFAULTS"
+    fi
 }
 
 install_mdns_alias() {
@@ -170,7 +179,9 @@ install_mdns_alias() {
 
     install_mdns_defaults
 
-    write_file_atomic "$MDNS_HELPER" 755 << 'HELPER_EOF'
+    local mdns_changed=false
+
+    if write_file_atomic "$MDNS_HELPER" 755 << 'HELPER_EOF'
 #!/bin/sh
 # Publish extra mDNS names for the satellite apps behind Caddy.
 #
@@ -314,10 +325,14 @@ while :; do
     done
 done
 HELPER_EOF
+    then
+        mdns_changed=true
+        log_info "Helper installed: $MDNS_HELPER"
+    else
+        log_info "Helper already up to date: $MDNS_HELPER"
+    fi
 
-    log_info "Helper installed: $MDNS_HELPER"
-
-    write_file_atomic "$MDNS_SERVICE_FILE" 644 << 'SYSTEMD_EOF'
+    if write_file_atomic "$MDNS_SERVICE_FILE" 644 << 'SYSTEMD_EOF'
 [Unit]
 Description=UnderstandTech mDNS aliases for satellite and generated apps
 Documentation=https://docs.understand.tech
@@ -335,10 +350,14 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 SYSTEMD_EOF
+    then
+        mdns_changed=true
+        log_info "Service file created: $MDNS_SERVICE_FILE"
+        systemctl daemon-reload
+    else
+        log_info "Service file already up to date: $MDNS_SERVICE_FILE"
+    fi
 
-    log_info "Service file created: $MDNS_SERVICE_FILE"
-
-    systemctl daemon-reload
     if ! systemctl enable "$MDNS_SERVICE_NAME" >/dev/null 2>&1; then
         log_warn "Could not enable $MDNS_SERVICE_NAME — it will not start on boot"
     fi
@@ -348,6 +367,15 @@ SYSTEMD_EOF
         log_warn "Install it, then start the service:"
         echo "  sudo apt-get install -y avahi-daemon avahi-utils"
         echo "  sudo systemctl start $MDNS_SERVICE_NAME"
+        return 0
+    fi
+
+    # A restart withdraws every .local name for a moment while the old
+    # publishers are reaped and the new ones re-register. Re-running the
+    # installer should not disturb names that are already correct, so only
+    # bounce it when something changed or it is not running.
+    if [[ "$mdns_changed" != true ]] && systemctl is-active --quiet "$MDNS_SERVICE_NAME"; then
+        log_info "mDNS publisher already running with this config — left alone"
         return 0
     fi
 
@@ -373,7 +401,7 @@ install_service() {
 
     # The unit is templated rather than hardcoded so WorkingDirectory and the
     # docker binary always match what was checked at install time.
-    {
+    if {
         cat << 'UNIT_EOF'
 [Unit]
 Description=UnderstandTech Docker Compose Stack
@@ -421,11 +449,13 @@ WantedBy=multi-user.target
 UNIT_EOF
     } | sed -e "s|@INSTALL_DIR@|${INSTALL_DIR}|g" -e "s|@DOCKER@|${DOCKER_BIN}|g" \
       | write_file_atomic "$SERVICE_FILE" 644
-
-    log_info "Service file created: $SERVICE_FILE"
-
-    log_step "Reloading systemd daemon..."
-    systemctl daemon-reload
+    then
+        log_info "Service file created: $SERVICE_FILE"
+        log_step "Reloading systemd daemon..."
+        systemctl daemon-reload
+    else
+        log_info "Service file already up to date: $SERVICE_FILE"
+    fi
 
     log_step "Enabling service for boot..."
     systemctl enable "$SERVICE_NAME"
