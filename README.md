@@ -126,6 +126,9 @@ docker compose up -d
 
 # 4. Verify
 docker compose ps
+
+# 5. Make it survive a reboot (installs the systemd units and the mDNS names)
+sudo ./setup-autostart.sh
 ```
 
 Access the platform at `https://understand.local` once all services are healthy.
@@ -293,7 +296,7 @@ docker compose restart api
 # Scale workers
 docker compose up -d --scale workers=4
 
-# Update to latest
+# Update to latest (pull first — the boot service never pulls)
 git pull
 docker compose pull
 docker compose up -d
@@ -305,9 +308,14 @@ chmod +x ut-logs-archive
 
 ## Auto-Start on Boot
 
-`setup-autostart.sh` installs two systemd units: `understandtech.service`, which
-brings the compose stack up at boot, and `ut-mdns-alias.service`, which publishes
-the satellite and generated-app hostnames over mDNS.
+`setup-autostart.sh` installs two systemd units and nothing else:
+
+- **`understandtech.service`** — runs `docker compose up -d` in this directory at boot
+- **`ut-mdns-alias.service`** — publishes the satellite and generated-app hostnames over mDNS
+
+It does not pull images, create stack resources, or start anything. Deploying
+the stack stays a separate, manual step; this script only makes it survive a
+reboot, and is safe to run at any point.
 
 ```bash
 # Install both, using this checkout as the install directory
@@ -323,15 +331,21 @@ sudo ./setup-autostart.sh --status
 sudo ./setup-autostart.sh --uninstall
 ```
 
-| Flag | Effect |
-|---|---|
-| `--dir PATH` | Install directory. Defaults to the directory holding the script, so a normal `sudo ./setup-autostart.sh` from the checkout is correct. |
-| `--yes` | Never prompt. Also assumed when stdin is not a terminal, so the script is safe to call from provisioning. |
+`--dir PATH` overrides the install directory. It defaults to the directory
+holding the script, so a plain `sudo ./setup-autostart.sh` from the checkout is
+already correct.
 
-The install runs a preflight first — Docker and Compose V2 present, `.env` and
-`compose.yaml` in place, `docker compose config` parsing cleanly — and creates
-the host directories and the `proxy` network when the App Builder overlay is
-enabled.
+The preflight is read-only: Docker and Compose V2 present, `.env` and
+`compose.yaml` in place, and `docker compose config` parsing cleanly — so a
+broken `.env` fails here rather than at the next reboot.
+
+The boot service starts from local images only (`up -d --pull never`). An
+offline or air-gapped box therefore still comes up, and boot never stalls on a
+registry timeout. It also keeps the boot path away from a credential trap: the
+unit runs as root, but the install guide's `docker login ghcr.io` runs without
+sudo, so root's credential store has no ghcr.io entry and any pull it attempted
+would 401 on the private images. Pull as your normal user before the first
+`docker compose up -d`, and after every image-tag change.
 
 The service unit sets `WorkingDirectory` and lets `docker compose` read `.env`
 itself. It deliberately does not use `EnvironmentFile`: systemd's parser strips

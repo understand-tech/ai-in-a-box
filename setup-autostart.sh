@@ -1,14 +1,20 @@
 #!/bin/bash
 # UnderstandTech Auto-Start Setup Script
-# Run this script with sudo to configure automatic startup on boot
+#
+# Installs two systemd units and nothing else:
+#   understandtech.service  - brings the compose stack up on boot
+#   ut-mdns-alias.service   - publishes the .local names over mDNS
+#
+# It does not pull images, create stack resources, or start anything. Deploy
+# the stack the normal way (docker compose pull && docker compose up -d); this
+# script only makes it survive a reboot.
 #
 # Usage: sudo ./setup-autostart.sh [OPTIONS]
-#   --install     Install and enable the service (default)
+#   --install     Install and enable both units (default)
 #   --mdns        Install only the mDNS aliases (satellite + generated apps)
-#   --uninstall   Remove the service
-#   --status      Show service status
+#   --uninstall   Remove the units
+#   --status      Show unit status
 #   --dir PATH    Install directory (default: the directory holding this script)
-#   --yes         Never prompt; assume yes
 
 set -euo pipefail
 
@@ -18,11 +24,7 @@ MDNS_SERVICE_NAME="ut-mdns-alias"
 MDNS_SERVICE_FILE="/etc/systemd/system/${MDNS_SERVICE_NAME}.service"
 MDNS_HELPER="/usr/local/bin/ut-mdns-alias"
 MDNS_DEFAULTS="/etc/default/ut-mdns-alias"
-STATE_DIR="/var/lib/understandtech"
-APPBUILDER_DIR="${STATE_DIR}/appbuilder"
-
 DOCKER_BIN=""
-ASSUME_YES=false
 
 if [[ -t 1 ]]; then
     RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -95,10 +97,6 @@ compose() {
     ( cd "$INSTALL_DIR" && "$DOCKER_BIN" compose "$@" )
 }
 
-appbuilder_enabled() {
-    compose config --services 2>/dev/null | grep -qx "app-builder"
-}
-
 check_prerequisites() {
     log_step "Checking prerequisites..."
 
@@ -139,30 +137,6 @@ check_prerequisites() {
     fi
 
     log_info "Prerequisites satisfied (install directory: $INSTALL_DIR)"
-}
-
-prepare_host_dirs() {
-    log_step "Preparing host directories..."
-
-    # Bind-mount targets. Docker would create these as root anyway, but doing
-    # it here keeps the first boot from racing the daemon.
-    mkdir -p "${STATE_DIR}/app-data"
-
-    if appbuilder_enabled; then
-        mkdir -p "${APPBUILDER_DIR}/workspaces" \
-                 "${APPBUILDER_DIR}/prod-workspaces" \
-                 "${APPBUILDER_DIR}/traefik-dynamic"
-
-        # Generated apps run as their own compose projects and attach to this
-        # network, so no single project owns it and compose declares it
-        # external — meaning compose will never create it. Without it the
-        # boot service fails outright.
-        if ! "$DOCKER_BIN" network inspect proxy &>/dev/null; then
-            log_info "Creating the 'proxy' network for generated apps"
-            "$DOCKER_BIN" network create proxy >/dev/null
-        fi
-        log_info "App Builder detected — host directories and 'proxy' network ready"
-    fi
 }
 
 install_mdns_defaults() {
@@ -426,7 +400,13 @@ WorkingDirectory=@INSTALL_DIR@
 # TimeoutStartSec below bounds the wait.
 ExecStartPre=/bin/sh -c 'until @DOCKER@ info >/dev/null 2>&1; do sleep 2; done'
 
-ExecStart=@DOCKER@ compose up -d --remove-orphans
+# --pull never: boot from local images only. `up` would otherwise pull anything
+# missing, which on an air-gapped box stalls on registry timeouts, and as root
+# hits a different credential store than the operator's `docker login` — the
+# guide runs that without sudo. Images are installed with `docker compose pull`
+# before this unit ever runs.
+
+ExecStart=@DOCKER@ compose up -d --pull never --remove-orphans
 ExecStop=@DOCKER@ compose down
 
 Restart=on-failure
@@ -456,12 +436,18 @@ do_install() {
 
     check_root
     check_prerequisites
-    prepare_host_dirs
     install_service
     install_mdns_alias
 
     echo ""
     log_info "Installation complete!"
+    echo ""
+    echo -e "${GREEN}The stack will start automatically on every boot.${NC}"
+    echo "Nothing was started just now — deploy the stack the usual way:"
+    echo ""
+    echo "  cd $INSTALL_DIR"
+    echo "  docker compose pull      # as the user that ran 'docker login ghcr.io', not with sudo"
+    echo "  docker compose up -d"
     echo ""
     echo -e "${GREEN}Service Commands:${NC}"
     echo "  Start now:     sudo systemctl start $SERVICE_NAME"
@@ -470,25 +456,6 @@ do_install() {
     echo "  Status:        sudo systemctl status $SERVICE_NAME"
     echo "  View logs:     sudo journalctl -u $SERVICE_NAME -f"
     echo ""
-    echo -e "${GREEN}The stack will now start automatically on every boot.${NC}"
-    echo ""
-
-    local start_now="y"
-    if [[ "$ASSUME_YES" != true && -t 0 ]]; then
-        read -r -p "Start the service now? (Y/n): " start_now || start_now="y"
-    fi
-
-    if [[ ! "$start_now" =~ ^[Nn]$ ]]; then
-        log_step "Starting UnderstandTech..."
-        if systemctl start "$SERVICE_NAME"; then
-            echo ""
-            systemctl status "$SERVICE_NAME" --no-pager || true
-        else
-            log_error "Service failed to start"
-            log_error "Check: journalctl -u $SERVICE_NAME -n 50"
-            exit 1
-        fi
-    fi
 }
 
 do_uninstall() {
@@ -573,13 +540,15 @@ show_help() {
     echo ""
     echo "Usage: sudo $0 [OPTION]"
     echo ""
+    echo "Installs the boot service and the mDNS alias publisher. It does not"
+    echo "pull images or start the stack."
+    echo ""
     echo "Options:"
-    echo "  --install     Install and enable auto-start (default)"
+    echo "  --install     Install and enable both units (default)"
     echo "  --mdns        Install only the mDNS aliases (satellite apps + generated apps)"
-    echo "  --uninstall   Remove the auto-start service"
-    echo "  --status      Show service and container status"
+    echo "  --uninstall   Remove both units"
+    echo "  --status      Show unit and container status"
     echo "  --dir PATH    Install directory (default: the directory holding this script)"
-    echo "  --yes         Never prompt; assume yes"
     echo "  --help        Show this help message"
     echo ""
 }
@@ -592,7 +561,6 @@ while [[ $# -gt 0 ]]; do
         --mdns|-m)               ACTION="mdns" ;;
         --uninstall|-u|--remove) ACTION="uninstall" ;;
         --status|-s)             ACTION="status" ;;
-        --yes|-y)                ASSUME_YES=true ;;
         --dir)
             shift
             if [[ $# -eq 0 || -z "$1" ]]; then
