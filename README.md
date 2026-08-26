@@ -50,10 +50,12 @@ Access the platform at `https://understand.local` once all services are healthy.
 | Workers | `understandtech-workers-*` | — | RQ background job processing |
 | Workers-Customer | `understandtech-workers-customer-*` | — | Partner background job processing |
 | LLM | `ut-llm` | 8000 (internal) | GPU-accelerated model inference |
+| NIM LLM | `nim-llm` | 8001 | NVIDIA NIM serving the chat model |
+| NIM VLM | `nim-vlm` | 8002 | NVIDIA NIM serving the vision model |
 | MongoDB | `ut-mongodb` | 27017 (localhost) | Document database |
 | Redis | `ut-redis` | 6379 (internal) | Task queue and cache |
 | MongoDB Backup | `ut-mongodb-backup` | — | Automated daily backups |
-| App Builder | `ut-app-builder` | 8001 | Builds and hosts generated apps (add-on) |
+| App Builder | `ut-app-builder` | 8011 (`APP_BUILDER_HOST_PORT`) | Builds and hosts generated apps (add-on) |
 | App Builder Router | `ut-app-builder-traefik` | 80 (internal) | Per-app routing for generated apps (add-on) |
 
 ## Networks
@@ -75,6 +77,8 @@ The stack uses two isolated Docker bridge networks:
 | `ut-uploads-data` | Shared file uploads (API + Workers) |
 | `ut-llm-ollama` | Ollama configuration |
 | `ut-llm-models` | LLM model files |
+| `ut-nim-llm-cache` | NIM chat-model weights (survives updates — do not prune casually) |
+| `ut-nim-vlm-cache` | NIM vision-model weights (idem) |
 | `ut-app-builder-claude-state` | App Builder agent session state (add-on) |
 
 The App Builder also keeps its projects on the host, not in a volume, because
@@ -125,7 +129,10 @@ Full setup and administration guides can be found at https://docs.understand.tec
 - NVIDIA DGX Spark (ARM64) with DGX OS
 - Docker Engine 24.0+ with Compose V2
 - NVIDIA Container Toolkit (pre-installed on DGX)
-- GitHub Container Registry access (provided by UnderstandTech)
+- GitHub Container Registry access (provided by UnderstandTech) — this covers
+  the NVIDIA NIM inference containers too. They are re-hosted on the
+  UnderstandTech GHCR, so `docker compose pull` fetches them like any other
+  image and **no NVIDIA NGC account or API key is required on the box**.
 
 ## App Builder Add-On
 

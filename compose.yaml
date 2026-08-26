@@ -79,8 +79,8 @@ services:
     image: mongo:8.2
     container_name: ut-mongodb
     restart: unless-stopped
-    expose:
-      - "27017"
+    ports:
+      - "27018:27017"
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGODB_USERNAME:-}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_PASSWORD:-}
@@ -184,7 +184,6 @@ services:
       DEPLOY_ENV: ${DEPLOY_ENV:-}
       EXTRA_ALLOWED_ORIGINS: ${EXTRA_ALLOWED_ORIGINS:-}
       JWT_SECRET: ${JWT_SECRET}
-
       VLLM_LLM_BASE_URL: ${VLLM_LLM_BASE_URL:-}
       VLLM_VLM_BASE_URL: ${VLLM_VLM_BASE_URL:-}
       VLLM_API_KEY: ${VLLM_API_KEY:-}
@@ -205,8 +204,8 @@ services:
     depends_on:
       mongodb:
         condition: service_healthy
-      llm:
-        condition: service_healthy
+      #llm:
+        #condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
@@ -336,14 +335,11 @@ services:
       VLLM_LLM_BASE_URL: ${VLLM_LLM_BASE_URL:-}
       VLLM_VLM_BASE_URL: ${VLLM_VLM_BASE_URL:-}
       VLLM_API_KEY: ${VLLM_API_KEY:-}
-      # Model registry: alias uai-large → upstream served name; VLM for the
-      # screenshot describe-and-splice; public URL baked into install kits.
       GATEWAY_DEFAULT_MODEL: ${GATEWAY_DEFAULT_MODEL:-}
       GATEWAY_LLM_SERVED_NAME: ${GATEWAY_LLM_SERVED_NAME:-}
       GATEWAY_VLM_MODEL: ${GATEWAY_VLM_MODEL:-}
       GATEWAY_PUBLIC_URL: ${GATEWAY_PUBLIC_URL:-}
       GATEWAY_RPM_PER_KEY: ${GATEWAY_RPM_PER_KEY:-}
-      # API-key hash-at-rest (D9) — defaults ON; flags kept for rollback.
       API_KEY_HASH_NEW_KEYS: ${API_KEY_HASH_NEW_KEYS:-}
       API_KEY_HASH_LAZY_MIGRATION: ${API_KEY_HASH_LAZY_MIGRATION:-}
       GATEWAY_MODELS: ${GATEWAY_MODELS:-}
@@ -356,8 +352,8 @@ services:
     depends_on:
       mongodb:
         condition: service_healthy
-      llm:
-        condition: service_healthy
+      #llm:
+        #condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
@@ -525,30 +521,17 @@ services:
 
   nim-llm:
     profiles:  ["nim", "nim-llm"]
-    # Model-specific NIM for gpt-oss-20b (multi-arch: amd64 + arm64/GB10).
-    # Pin the tag — `latest` can move under you.
-    image: ${NIM_LLM_IMAGE:-nvcr.io/nim/nvidia/model-free-nim:2.0.9}
+    image: ${NIM_IMAGE:-}
     container_name: nim-llm
     restart: unless-stopped
     shm_size: "16gb"
     environment:
-      # - NIM_MODEL_NAME=${NIM_MODEL_NAME}
-      - NGC_API_KEY=${NGC_API_KEY:-${NVIDIA_API_KEY:-}}
-      # HF_API_TOKEN accepted as an alias (team .env convention). Must be a
-      # real HF token (hf_...) — an invalid value breaks downloads with 401s.
+      #- NGC_API_KEY=${NGC_API_KEY:-${NVIDIA_API_KEY:-}}
       - HF_TOKEN=${HF_TOKEN:-${HF_API_TOKEN:-}}
-      # Model-free NIM only: external weights to serve (hf://... or local path).
-      # ⚠ COMMENT THIS OUT when NIM_LLM_IMAGE is a model-specific NIM (e.g. the
-      # nemotron lightning rollback) — those must resolve their baked-in manifest.
       - NIM_MODEL_PATH=${NIM_LLM_MODEL_PATH:-}
-      # Serve under the same model id the app already uses (LLM_MODEL), so
-      # /v1/models matches without renaming anything app-side.
       - NIM_SERVED_MODEL_NAME=${LLM_MODEL:-openai/gpt-oss-20b}
-      # vLLM flags pass through; same memory-fraction contract as today's
-      # entrypoint (DGX Spark guidance: LLM 0.50 / VLM 0.30).
       - NIM_PASSTHROUGH_ARGS=${NIM_LLM_PASSTHROUGH_ARGS:---gpu-memory-utilization 0.55 --max-model-len 32768 --enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser nemotron_v3}
     ports:
-      # Host mapping kept on the legacy LLM port for curl-debugging parity.
       - "8001:8000"
     volumes:
       - nim-llm-cache:/opt/nim/.cache
@@ -557,7 +540,6 @@ services:
       interval: 30s
       timeout: 10s
       retries: 10
-      # First boot = image pull + weight download; don't let Docker flap it.
       start_period: 45m
     deploy:
       resources:
@@ -567,21 +549,17 @@ services:
               count: all
               capabilities: [gpu]
     networks:
-      - ut-backend-network     # so ut-llm can reach it
-      - ut-frontend-network    # ⚠ REQUIRED: egress for weight downloads
+      - ut-backend-network
+      - ut-frontend-network
 
   nim-vlm:
     profiles: ["nim", "nim-vlm"]
-    # Model-free NIM (multi-arch) loading Qwen3-VL from Hugging Face — the
-    # dedicated VLM NIM image (vllm-model-free-nim) is amd64-only as of 2.1.0,
-    # so on DGX Spark (arm64) we use the universal LLM container instead.
-    # ⚠ First pilot task: verify multimodal (image_url) works through it.
-    image: ${NIM_VLM_IMAGE:-nvcr.io/nim/nvidia/model-free-nim:2.0.9}
+    image: ${NIM_IMAGE:-}
     container_name: nim-vlm
     restart: unless-stopped
     shm_size: "16gb"
     environment:
-      - NGC_API_KEY=${NGC_API_KEY:-${NVIDIA_API_KEY:-}}
+      #- NGC_API_KEY=${NGC_API_KEY:-${NVIDIA_API_KEY:-}}
       - HF_TOKEN=${HF_TOKEN:-${HF_API_TOKEN:-}}
       - NIM_MODEL_PATH=${NIM_VLM_MODEL_PATH:-hf://Qwen/Qwen3-VL-4B-Instruct}
       - NIM_SERVED_MODEL_NAME=${VLM_MODEL:-Qwen/Qwen3-VL-4B-Instruct}
@@ -604,8 +582,8 @@ services:
               count: all
               capabilities: [gpu]
     networks:
-      - ut-backend-network     # so ut-llm can reach it
-      - ut-frontend-network    # ⚠ REQUIRED: egress for weight downloads
+      - ut-backend-network
+      - ut-frontend-network
 
   llm:
     image: ${LLM_IMAGE:-}
