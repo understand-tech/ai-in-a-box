@@ -196,6 +196,7 @@ services:
       API_KEY_HASH_NEW_KEYS: ${API_KEY_HASH_NEW_KEYS:-}
       API_KEY_HASH_LAZY_MIGRATION: ${API_KEY_HASH_LAZY_MIGRATION:-}
       GATEWAY_MODELS: ${GATEWAY_MODELS:-}
+      APP_BUILDER_BASE_URL: ${APP_BUILDER_BASE_URL:-}
     volumes:
       - uploads-data:/tmp/uploads
       - /var/lib/understandtech/app-data:/app/storage
