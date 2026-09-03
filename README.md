@@ -7,92 +7,13 @@ gateway, and GPU inference. Nothing leaves the network.
 
 ## Architecture
 
-### Ingress and surfaces
+<img alt="UnderstandTech AI in a Box — container architecture on a DGX Spark" src="docs/architecture.svg" width="1440">
 
 Caddy terminates TLS for every hostname and is the only container publishing
 80/443. Each `.local` name is announced separately over mDNS by the
-`ut-mdns-alias` service, because mDNS has no wildcards.
-
-```mermaid
-flowchart TD
-    client(["Browser / REST client"])
-    client -->|https| caddy
-
-    caddy["Caddy — ut-caddy<br/>:80 :443 · tls internal"]
-    mdns["ut-mdns-alias<br/>publishes each .local name via avahi"]
-    mdns -.->|A records| client
-
-    caddy -->|"understand.local"| frontend["Frontend<br/>ut-frontend"]
-    caddy -->|"understand.local/api/*"| api["Main API<br/>ut-api"]
-    caddy -->|"understand.local/api/v3/*<br/>understand.local/api/llm/*"| apicust["Partner API + model gateway<br/>ut-api-customer"]
-    caddy -->|"llms.understand.local"| appllms["LLMs app<br/>ut-app-llms"]
-    caddy -->|"assistants.understand.local"| appasst["Assistants app<br/>ut-app-assistants"]
-    caddy -->|"admin.understand.local"| admin["Admin portal<br/>ut-admin-portal"]
-    caddy -->|"builder.understand.local"| builder["App Builder<br/>ut-app-builder"]
-    caddy -->|"*.apps.understand.local"| traefik["App Builder router<br/>ut-app-builder-traefik"]
-
-    traefik --> gen["Generated apps<br/>own compose projects on the proxy network"]
-    gen -->|"host.docker.internal:8011"| builder
-```
-
-### Data and inference
-
-```mermaid
-flowchart LR
-    subgraph clients["Application tier"]
-        frontend["ut-frontend"]
-        api["ut-api"]
-        apicust["ut-api-customer"]
-        workers["workers ×N"]
-        workerscust["workers-customer ×N"]
-        appllms["ut-app-llms"]
-        appasst["ut-app-assistants"]
-        admin["ut-admin-portal"]
-        builder["ut-app-builder"]
-    end
-
-    subgraph data["State"]
-        mongo[("MongoDB — ut-mongodb<br/>ut-db · ut-app-llms<br/>ut-app-assistants · app-builder")]
-        redis[("Redis — ut-redis<br/>RQ queues + cache")]
-        storage["/var/lib/understandtech/app-data<br/>uploaded documents"]
-        backup["ut-mongodb-backup<br/>daily full-server dump"]
-    end
-
-    subgraph gpu["GPU inference"]
-        llm["ut-llm<br/>RAG, embeddings, reranking"]
-        nimllm["nim-llm<br/>chat model"]
-        nimvlm["nim-vlm<br/>vision model"]
-    end
-
-    frontend --> api
-    appllms --> api
-    appasst --> api
-    admin --> api
-    builder --> apicust
-    api --> redis
-    apicust --> redis
-    redis --> workers
-    redis --> workerscust
-
-    api --> mongo
-    apicust --> mongo
-    workers --> mongo
-    workerscust --> mongo
-    appllms --> mongo
-    appasst --> mongo
-    builder --> mongo
-    mongo --> backup
-
-    api --> storage
-    workers --> storage
-    appasst --> storage
-
-    api --> llm
-    apicust --> llm
-    llm --> nimllm
-    llm --> nimvlm
-    apicust -->|model gateway| nimllm
-```
+`ut-mdns-alias` systemd unit, because mDNS has no wildcards. Everything the
+platform stores or infers on sits on `ut-backend-network`, which is
+`internal: true` — those containers have no route off the box.
 
 ## What's in This Repo
 
@@ -105,6 +26,7 @@ flowchart LR
 | `setup-autostart.sh` | Installs the systemd boot service and the mDNS alias publisher |
 | `ut-logs-archive` | Automated daily log archival with compression and retention |
 | `appbuilder/traefik/` | Static routing config for the App Builder's per-app router |
+| `docs/architecture.svg` | Source of the architecture diagram above |
 
 ## Quick Start
 
