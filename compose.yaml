@@ -79,8 +79,8 @@ services:
     image: mongo:8.2
     container_name: ut-mongodb
     restart: unless-stopped
-    expose:
-      - "27017"
+    ports:
+      - "27018:27017"
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGODB_USERNAME:-}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_PASSWORD:-}
@@ -108,7 +108,7 @@ services:
           memory: 1G
 
   mongodb-backup:
-    image: tiredofit/db-backup:latest
+    image: tiredofit/db-backup:4.1.100
     container_name: ut-mongodb-backup
     restart: unless-stopped
     environment:
@@ -119,7 +119,8 @@ services:
       DB01_TYPE: mongo
       DB01_HOST: mongodb
       DB01_PORT: ${MONGODB_PORT:-27017}
-      DB01_NAME: ${MONGODB_DATABASE:-ut-db}
+      # Restore one database out of the archive with:
+      #   mongorestore --archive=<file> --gzip --nsInclude='ut-app-llms.*'
       DB01_USER: ${MONGODB_USERNAME:-mongoadmin}
       DB01_PASS: ${MONGODB_PASSWORD:-12345678}
       DB01_AUTH: admin
@@ -148,72 +149,6 @@ services:
           cpus: '0.5'
         reservations:
           memory: 128M
-
-  llm:
-    image: ${LLM_IMAGE:-}
-    container_name: ut-llm
-    restart: unless-stopped
-    expose:
-      - "8000"
-    environment:
-      LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
-      LOCAL_STORAGE_BASE: ${LOCAL_STORAGE_BASE:-}
-      DB_PROVIDER: ${DB_PROVIDER:-}
-      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-}
-      GPU_VM_API_TOKEN: ${GPU_VM_API_TOKEN:-}
-      GROQ_API_KEY: ${GROQ_API_KEY:-}
-      SENDGRID_API_KEY: ${SENDGRID_API_KEY:-}
-      OLLAMA_MODEL_LLM: ${OLLAMA_MODEL_LLM:-}
-      OLLAMA_MODEL_CONDENSE_LLM: ${OLLAMA_MODEL_CONDENSE_LLM:-}
-      OLLAMA_MODEL_VLM: ${OLLAMA_MODEL_VLM:-}
-      OLLAMA_HOST_PORT: ${OLLAMA_HOST_PORT:-}
-      MODELS_DIR: ${MODELS_DIR:-}
-      EMBED_URL: ${EMBED_URL:-}
-      EMBED_MODEL_NAME: ${EMBED_MODEL_NAME:-}
-      MONGODB_HOST: ${MONGODB_HOST:-}
-      MONGODB_PORT: ${MONGODB_PORT:-}
-      MONGODB_USERNAME: ${MONGODB_USERNAME:-}
-      MONGODB_PASSWORD: ${MONGODB_PASSWORD:-}
-      MONGODB_DATABASE: ${MONGODB_DATABASE:-}
-      RERANKER_HF_PATH: ${RERANKER_HF_PATH:-}
-      RERANKER_MODEL_NAME: ${RERANKER_MODEL_NAME:-}
-      VLLM_LLM_MODEL: ${VLLM_LLM_MODEL:-}
-      VLLM_CONDENSE_MODEL: ${VLLM_CONDENSE_MODEL:-}
-      VLLM_VLM_MODEL: ${VLLM_VLM_MODEL:-}
-      VLLM_LLM_BASE_URL: ${VLLM_LLM_BASE_URL:-}                                                                                                                                  
-      VLLM_VLM_BASE_URL: ${VLLM_VLM_BASE_URL:-}
-      VLLM_LLM_GPU_MEM_UTIL: ${VLLM_LLM_GPU_MEM_UTIL:-}
-      VLLM_VLM_GPU_MEM_UTIL: ${VLLM_VLM_GPU_MEM_UTIL:-}
-      VLLM_LLM_EXTRA_ARGS: ${VLLM_LLM_EXTRA_ARGS:-}
-      VLLM_VLM_EXTRA_ARGS: ${VLLM_VLM_EXTRA_ARGS:-}
-      VLLM_API_KEY: ${VLLM_API_KEY:-}
-      LLM_BACKEND: ${LLM_BACKEND:-}
-      DOWNLOAD_ONNX_EMBED: ${DOWNLOAD_ONNX_EMBED:-}
-      ONNX_EMBED_HF_REPO: ${ONNX_EMBED_HF_REPO:-}
-      EMBED_MODEL_BACKEND: ${EMBED_MODEL_BACKEND:-}
-      LLM_MAX_CONTEXT_LEN: ${LLM_MAX_CONTEXT_LEN:-}
-      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-}
-    volumes:
-      - vllm-models:/root/.cache/huggingface
-      - llm-ollama:/root/.ollama
-      - llm-models:/root/models
-      - /var/lib/understandtech/app-data:/app/storage
-    networks:
-      - ut-backend-network
-      - ut-frontend-network # Add the frontend network during first-time installation
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      <<: *healthcheck-defaults
-      start_period: 120s
-    logging: *default-logging
-    stop_grace_period: 10s
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
 
   api:
     image: ${API_IMAGE:-}
@@ -246,6 +181,22 @@ services:
       BACKEND_URL: ${BACKEND_URL:-}
       FRONTEND_URL_AUTH: ${FRONTEND_URL_AUTH:-}
       ADMIN_SETUP_PASSWORD: ${ADMIN_SETUP_PASSWORD:-}
+      OA_KEY: ${OA_KEY:-}
+      DEPLOY_ENV: ${DEPLOY_ENV:-}
+      EXTRA_ALLOWED_ORIGINS: ${EXTRA_ALLOWED_ORIGINS:-}
+      JWT_SECRET: ${JWT_SECRET}
+      VLLM_LLM_BASE_URL: ${VLLM_LLM_BASE_URL:-}
+      VLLM_VLM_BASE_URL: ${VLLM_VLM_BASE_URL:-}
+      VLLM_API_KEY: ${VLLM_API_KEY:-}
+      GATEWAY_DEFAULT_MODEL: ${GATEWAY_DEFAULT_MODEL:-}
+      GATEWAY_LLM_SERVED_NAME: ${GATEWAY_LLM_SERVED_NAME:-}
+      GATEWAY_VLM_MODEL: ${GATEWAY_VLM_MODEL:-}
+      GATEWAY_PUBLIC_URL: ${GATEWAY_PUBLIC_URL:-}
+      GATEWAY_RPM_PER_KEY: ${GATEWAY_RPM_PER_KEY:-}
+      API_KEY_HASH_NEW_KEYS: ${API_KEY_HASH_NEW_KEYS:-}
+      API_KEY_HASH_LAZY_MIGRATION: ${API_KEY_HASH_LAZY_MIGRATION:-}
+      GATEWAY_MODELS: ${GATEWAY_MODELS:-}
+      APP_BUILDER_BASE_URL: ${APP_BUILDER_BASE_URL:-}
     volumes:
       - uploads-data:/tmp/uploads
       - /var/lib/understandtech/app-data:/app/storage
@@ -255,8 +206,8 @@ services:
     depends_on:
       mongodb:
         condition: service_healthy
-      llm:
-        condition: service_healthy
+      #llm:
+        #condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
@@ -383,6 +334,17 @@ services:
       OA_KEY: ${OA_KEY:-}
       SENDGRID_API_KEY: ${SENDGRID_API_KEY:-}
       DEPLOY_ENV: ${DEPLOY_ENV:-}
+      VLLM_LLM_BASE_URL: ${VLLM_LLM_BASE_URL:-}
+      VLLM_VLM_BASE_URL: ${VLLM_VLM_BASE_URL:-}
+      VLLM_API_KEY: ${VLLM_API_KEY:-}
+      GATEWAY_DEFAULT_MODEL: ${GATEWAY_DEFAULT_MODEL:-}
+      GATEWAY_LLM_SERVED_NAME: ${GATEWAY_LLM_SERVED_NAME:-}
+      GATEWAY_VLM_MODEL: ${GATEWAY_VLM_MODEL:-}
+      GATEWAY_PUBLIC_URL: ${GATEWAY_PUBLIC_URL:-}
+      GATEWAY_RPM_PER_KEY: ${GATEWAY_RPM_PER_KEY:-}
+      API_KEY_HASH_NEW_KEYS: ${API_KEY_HASH_NEW_KEYS:-}
+      API_KEY_HASH_LAZY_MIGRATION: ${API_KEY_HASH_LAZY_MIGRATION:-}
+      GATEWAY_MODELS: ${GATEWAY_MODELS:-}
     volumes:
       - uploads-data:/tmp/uploads
       - /var/lib/understandtech/app-data:/app/storage
@@ -392,8 +354,8 @@ services:
     depends_on:
       mongodb:
         condition: service_healthy
-      llm:
-        condition: service_healthy
+      #llm:
+        #condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
@@ -451,6 +413,248 @@ services:
         reservations:
           memory: 2G
 
+  app-llms:
+    image: ${LLMS_APP_IMAGE:-}
+    container_name: ut-app-llms
+    restart: unless-stopped
+    expose:
+      - "80"
+    environment:
+      MONGODB_HOST: ${MONGODB_HOST:-}
+      MONGODB_PORT: ${MONGODB_PORT:-}
+      MONGODB_USERNAME: ${MONGODB_USERNAME:-}
+      MONGODB_PASSWORD: ${MONGODB_PASSWORD:-}
+      MONGODB_DB: ${APP_LLMS_MONGODB_DB:-ut-app-llms}
+      VITE_DB_PROVIDER: ${DB_PROVIDER:-}
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-https://understand.local/api}
+      VITE_UT_APP_URL: ${VITE_UT_APP_URL:-https://understand.local}
+      UT_APP_BASE_URL: http://api:8501/api
+      UT_CUSTOMER_URL: http://api-customer:8501
+      UNDERSTAND_API_VERSION: ${UNDERSTAND_API_VERSION:-v3}
+      UT_JWT_SECRET: ${JWT_SECRET:-}
+      UT_APP_LLMS_BASE_URL: ${APP_LLMS_BASE_URL:-https://llms.understand.local}
+      CORS_ORIGINS: ${APP_LLMS_CORS_ORIGINS:-https://llms.understand.local}
+    networks:
+      - ut-frontend-network
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/api/health"]
+      <<: *healthcheck-defaults
+      start_period: 30s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 128M
+
+  app-assistants:
+    image: ${ASSISTANTS_APP_IMAGE:-}
+    container_name: ut-app-assistants
+    restart: unless-stopped
+    expose:
+      - "80"
+    environment:
+      MONGODB_HOST: ${MONGODB_HOST:-}
+      MONGODB_PORT: ${MONGODB_PORT:-}
+      MONGODB_USERNAME: ${MONGODB_USERNAME:-}
+      MONGODB_PASSWORD: ${MONGODB_PASSWORD:-}
+      MONGO_DB: ${APP_ASSISTANTS_MONGODB_DB:-ut-app-assistants}
+      VITE_DB_PROVIDER: ${DB_PROVIDER:-}
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-https://understand.local/api}
+      VITE_UT_APP_URL: ${VITE_UT_APP_URL:-https://understand.local}
+      UT_APP_BASE_URL: http://api:8501/api
+      UT_CUSTOMER_URL: http://api-customer:8501
+      UNDERSTAND_API_VERSION: ${UNDERSTAND_API_VERSION:-v3}
+      UT_JWT_SECRET: ${JWT_SECRET:-}
+      UT_APP_ASSISTANTS_BASE_URL: ${APP_ASSISTANTS_BASE_URL:-https://assistants.understand.local}
+      CORS_ORIGINS: ${APP_ASSISTANTS_CORS_ORIGINS:-https://assistants.understand.local}
+    volumes:
+      - /var/lib/understandtech/app-data:/app/storage
+    networks:
+      - ut-frontend-network
+      - ut-backend-network
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/api/health"]
+      <<: *healthcheck-defaults
+      start_period: 30s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 128M
+
+  admin-portal:
+    image: ${ADMIN_PORTAL_IMAGE:-}
+    container_name: ut-admin-portal
+    restart: unless-stopped
+    expose:
+      - "8080"
+    environment:
+      VITE_API_URL: http://api:8501
+    networks:
+      - ut-frontend-network
+      - ut-backend-network
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/ || exit 1"]
+      <<: *healthcheck-defaults
+      start_period: 30s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 128M
+
+  nim-llm:
+    profiles:  ["nim", "nim-llm"]
+    image: ${NIM_IMAGE:-}
+    container_name: nim-llm
+    restart: unless-stopped
+    shm_size: "16gb"
+    environment:
+      #- NGC_API_KEY=${NGC_API_KEY:-${NVIDIA_API_KEY:-}}
+      - HF_TOKEN=${HF_TOKEN:-${HF_API_TOKEN:-}}
+      - NIM_MODEL_PATH=${NIM_LLM_MODEL_PATH:-}
+      - NIM_SERVED_MODEL_NAME=${LLM_MODEL:-openai/gpt-oss-20b}
+      - NIM_PASSTHROUGH_ARGS=${NIM_LLM_PASSTHROUGH_ARGS:---gpu-memory-utilization 0.55 --max-model-len 32768 --enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser nemotron_v3}
+    ports:
+      - "8001:8000"
+    volumes:
+      - nim-llm-cache:/opt/nim/.cache
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/health/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 45m
+    logging: *default-logging
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - ut-backend-network
+      - ut-frontend-network
+
+  nim-vlm:
+    profiles: ["nim", "nim-vlm"]
+    image: ${NIM_IMAGE:-}
+    container_name: nim-vlm
+    restart: unless-stopped
+    shm_size: "16gb"
+    environment:
+      #- NGC_API_KEY=${NGC_API_KEY:-${NVIDIA_API_KEY:-}}
+      - HF_TOKEN=${HF_TOKEN:-${HF_API_TOKEN:-}}
+      - NIM_MODEL_PATH=${NIM_VLM_MODEL_PATH:-hf://Qwen/Qwen3-VL-4B-Instruct}
+      - NIM_SERVED_MODEL_NAME=${VLM_MODEL:-Qwen/Qwen3-VL-4B-Instruct}
+      - NIM_PASSTHROUGH_ARGS=${NIM_VLM_PASSTHROUGH_ARGS:---gpu-memory-utilization 0.25 --max-model-len 8192}
+    ports:
+      - "8002:8000"
+    volumes:
+      - nim-vlm-cache:/opt/nim/.cache
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/health/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 45m
+    logging: *default-logging
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - ut-backend-network
+      - ut-frontend-network
+
+  llm:
+    image: ${LLM_IMAGE:-}
+    container_name: ut-llm
+    restart: unless-stopped
+    expose:
+      - "8000"
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+      LOCAL_STORAGE_BASE: ${LOCAL_STORAGE_BASE:-}
+      DB_PROVIDER: ${DB_PROVIDER:-}
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-}
+      GPU_VM_API_TOKEN: ${GPU_VM_API_TOKEN:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY:-}
+      OLLAMA_MODEL_LLM: ${OLLAMA_MODEL_LLM:-}
+      OLLAMA_MODEL_CONDENSE_LLM: ${OLLAMA_MODEL_CONDENSE_LLM:-}
+      OLLAMA_MODEL_VLM: ${OLLAMA_MODEL_VLM:-}
+      OLLAMA_HOST_PORT: ${OLLAMA_HOST_PORT:-}
+      MODELS_DIR: ${MODELS_DIR:-}
+      EMBED_URL: ${EMBED_URL:-}
+      EMBED_MODEL_NAME: ${EMBED_MODEL_NAME:-}
+      MONGODB_HOST: ${MONGODB_HOST:-}
+      MONGODB_PORT: ${MONGODB_PORT:-}
+      MONGODB_USERNAME: ${MONGODB_USERNAME:-}
+      MONGODB_PASSWORD: ${MONGODB_PASSWORD:-}
+      MONGODB_DATABASE: ${MONGODB_DATABASE:-}
+      RERANKER_HF_PATH: ${RERANKER_HF_PATH:-}
+      RERANKER_MODEL_NAME: ${RERANKER_MODEL_NAME:-}
+      VLLM_LLM_MODEL: ${VLLM_LLM_MODEL:-}
+      VLLM_CONDENSE_MODEL: ${VLLM_CONDENSE_MODEL:-}
+      VLLM_VLM_MODEL: ${VLLM_VLM_MODEL:-}
+      VLLM_LLM_BASE_URL: ${VLLM_LLM_BASE_URL:-}
+      VLLM_VLM_BASE_URL: ${VLLM_VLM_BASE_URL:-}
+      VLLM_LLM_GPU_MEM_UTIL: ${VLLM_LLM_GPU_MEM_UTIL:-}
+      VLLM_VLM_GPU_MEM_UTIL: ${VLLM_VLM_GPU_MEM_UTIL:-}
+      VLLM_LLM_EXTRA_ARGS: ${VLLM_LLM_EXTRA_ARGS:-}
+      VLLM_VLM_EXTRA_ARGS: ${VLLM_VLM_EXTRA_ARGS:-}
+      VLLM_API_KEY: ${VLLM_API_KEY:-}
+      LLM_BACKEND: ${LLM_BACKEND:-}
+      DOWNLOAD_ONNX_EMBED: ${DOWNLOAD_ONNX_EMBED:-}
+      ONNX_EMBED_HF_REPO: ${ONNX_EMBED_HF_REPO:-}
+      EMBED_MODEL_BACKEND: ${EMBED_MODEL_BACKEND:-}
+      LLM_MAX_CONTEXT_LEN: ${LLM_MAX_CONTEXT_LEN:-}
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-}
+    volumes:
+      - vllm-models:/root/.cache/huggingface
+      - llm-ollama:/root/.ollama
+      - llm-models:/root/models
+      - /var/lib/understandtech/app-data:/app/storage
+    networks:
+      - ut-backend-network
+      - ut-frontend-network # Add the frontend network during first-time installation
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      <<: *healthcheck-defaults
+      start_period: 120s
+    logging: *default-logging
+    stop_grace_period: 10s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
 networks:
   ut-backend-network:
     name: ut-backend-network
@@ -479,3 +683,9 @@ volumes:
     name: ut-llm-models
   vllm-models:
     name: ut-vllm-models
+  nim-llm-cache:
+    name: ut-nim-llm-cache
+  nim-vlm-cache:
+    name: ut-nim-vlm-cache
+  vllm-llm-cache:
+    name: ut-vllm-llm-cache

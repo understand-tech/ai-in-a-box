@@ -1,0 +1,119 @@
+name: understandtech
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
+x-healthcheck-defaults: &healthcheck-defaults
+  interval: 30s
+  timeout: 10s
+  retries: 3
+
+services:
+
+  app-builder:
+    image: ${APP_BUILDER_IMAGE:-}
+    container_name: ut-app-builder
+    restart: unless-stopped
+    ports:
+      - "${APP_BUILDER_HOST_PORT:-8011}:8001"
+    environment:
+      # ---- deployment mode ----
+      TYPE_DEPLOIEMENT: ${TYPE_DEPLOIEMENT:-onprem}
+      UPSTREAM_DB_PROVIDER: ${DB_PROVIDER:-mongodb}
+      UT_JWT_SECRET: ${JWT_SECRET}
+      SESSION_COOKIE_SECURE: ${APP_BUILDER_SESSION_COOKIE_SECURE:-1}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      UNDERSTAND_APP_URL: ${APP_BUILDER_UT_API_URL:-http://api:8501}
+      UNDERSTAND_FRONTEND_URL: ${VITE_UT_APP_URL:-https://understand.local}
+      ADMIN_DASHBOARD_URL: ${APP_BUILDER_ADMIN_URL:-https://admin.understand.local}
+      APPBUILDER_BASE_URL: ${APP_BUILDER_BASE_URL:-https://builder.understand.local}
+      UNDERSTAND_API_URL: ${APP_BUILDER_UT_V3_URL:-http://ut-api-v3}
+      API_V3_OPENAPI_URL: ${APP_BUILDER_UT_CUSTOMER_URL:-http://api-customer:8501}/api/v3/openapi.json
+      UT_GATEWAY_BASE_URL: ${APP_BUILDER_GATEWAY_URL:-http://api-customer:8501/api/llm}
+      UT_GATEWAY_API_KEY: ${APP_BUILDER_GATEWAY_API_KEY:-}
+      UT_GATEWAY_MODEL: ${APP_BUILDER_GATEWAY_MODEL:-uai-large}
+      AGENT_BACKEND: ${APP_BUILDER_AGENT_BACKEND:-deepagents}
+      AGENT_MAX_OUTPUT_TOKENS: ${APP_BUILDER_AGENT_MAX_OUTPUT_TOKENS:-8192}
+      AGENT_MODEL_CONTEXT_TOKENS: ${APP_BUILDER_AGENT_CONTEXT_TOKENS:-24576}
+      ANTHROPIC_API_KEY: ${APP_BUILDER_ANTHROPIC_API_KEY:-}
+      UT_LLM_BASE_URL: http://host.docker.internal:${APP_BUILDER_LLM_PROXY_PORT:-8011}/api/llm/anthropic
+      MONGO_HOST: ${MONGODB_HOST:-mongodb}
+      MONGO_PORT: ${MONGODB_PORT:-27017}
+      MONGO_USER: ${MONGODB_USERNAME:-}
+      MONGO_PASSWORD: ${MONGODB_PASSWORD:-}
+      ORCHESTRATOR_DB: ${APP_BUILDER_MONGODB_DB:-app-builder}
+      REPO_ROOT_HOST: /var/lib/understandtech/appbuilder
+      WORKSPACES_DIR: /var/lib/understandtech/appbuilder/workspaces
+      TRAEFIK_DYNAMIC_DIR: /var/lib/understandtech/appbuilder/traefik-dynamic
+      PREVIEW_DOMAIN_SUFFIX: ${APP_BUILDER_PREVIEW_SUFFIX:-apps.understand.local}
+      TRAEFIK_URL: http://app-builder-traefik:80
+      ORCHESTRATOR_INTERNAL_URL: http://app-builder:8001
+      ORCHESTRATOR_TRAEFIK_SERVICE: builder-api
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/understandtech/appbuilder:/var/lib/understandtech/appbuilder
+    networks:
+      - ut-frontend-network
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      api-customer:
+        condition: service_healthy
+      llm:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/api/health"]
+      <<: *healthcheck-defaults
+      start_period: 60s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: ${APP_BUILDER_MEMORY_LIMIT:-4G}
+          cpus: ${APP_BUILDER_CPU_LIMIT:-2}
+        reservations:
+          memory: 1G
+
+  app-builder-traefik:
+    image: traefik:v3.2
+    container_name: ut-app-builder-traefik
+    restart: unless-stopped
+    command:
+      - "--providers.file.directory=/etc/traefik/dynamic"
+      - "--providers.file.watch=true"
+      - "--entrypoints.web.address=:80"
+      - "--ping=true"
+    volumes:
+      - /var/lib/understandtech/appbuilder/traefik-dynamic:/etc/traefik/dynamic
+      - ./appbuilder/traefik/_orchestrator.yml:/etc/traefik/dynamic/_orchestrator.yml:ro
+    networks:
+      ut-frontend-network:
+        aliases:
+          - ut-api-v3
+      proxy:
+        aliases:
+          - ut-api-v3
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      <<: *healthcheck-defaults
+      start_period: 10s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 128M
+
+networks:
+  proxy:
+    name: proxy
+    external: true
+
+volumes:
+  app-builder-claude-state:
+    name: ut-app-builder-claude-state

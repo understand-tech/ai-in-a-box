@@ -1,0 +1,18 @@
+http:
+  routers:
+    ut-api-v3:
+      rule: "Host(`ut-api-v3`)"
+      entryPoints:
+        - web
+      service: ut-api-customer
+
+  services:
+    builder-api:
+      loadBalancer:
+        servers:
+          - url: "http://app-builder:8001"
+
+    ut-api-customer:
+      loadBalancer:
+        servers:
+          - url: "http://api-customer:8501"

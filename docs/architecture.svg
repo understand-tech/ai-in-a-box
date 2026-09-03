@@ -1,0 +1,173 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1248" viewBox="0 0 1440 1248" role="img" aria-label="UnderstandTech AI in a Box container architecture">
+<rect x="0" y="0" width="1440" height="1248" rx="16" ry="16" fill="#ffffff" stroke="#d8dee6" stroke-width="2" />
+<rect x="580" y="24" width="280" height="48" rx="9" ry="9" fill="#3ba3d8" />
+<text x="720" y="54" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="18" fill="#ffffff" font-weight="700" text-anchor="middle">Docker Compose</text>
+<rect x="30" y="96" width="1380" height="1120" rx="14" ry="14" fill="#fff8f1" stroke="#ea7317" stroke-width="2.5" />
+<text x="62" y="158" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="24" fill="#d0610a" font-weight="700" text-anchor="start">Host Machine — DGX Spark (ARM64)</text>
+<rect x="700" y="110" width="500" height="86" rx="8" ry="8" fill="#ffffff" stroke="#ea7317" stroke-width="2" />
+<text x="716" y="132" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#0f172a" font-weight="700" text-anchor="start">Exposed:</text>
+<text x="786" y="132" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" fill="#334155" font-weight="normal" text-anchor="start">80, 443 (Caddy) · 8001, 8002 (NIM) · 8011 · 27018</text>
+<text x="716" y="156" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#0f172a" font-weight="700" text-anchor="start">mDNS:</text>
+<text x="786" y="156" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" fill="#1d6fa5" font-weight="normal" text-anchor="start">understand.local + llms · assistants · admin ·</text>
+<text x="786" y="176" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" fill="#1d6fa5" font-weight="normal" text-anchor="start">builder · *.apps  —  ut-mdns-alias (systemd)</text>
+<rect x="1214" y="110" width="164" height="86" rx="8" ry="8" fill="#fef2f2" stroke="#dc2626" stroke-width="2" />
+<text x="1296" y="138" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="14" fill="#b91c1c" font-weight="700" text-anchor="middle">Secrets</text>
+<text x="1296" y="162" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#7f1d1d" font-weight="normal" text-anchor="middle">.env  (chmod 600)</text>
+<rect x="60" y="216" width="1320" height="340" rx="12" ry="12" fill="#eaf3f9" stroke="#2c6e9b" stroke-width="2" stroke-dasharray="8 6" />
+<text x="88" y="248" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="16" fill="#2c6e9b" font-weight="700" text-anchor="start">ut-frontend-network  (bridge)</text>
+<text x="196.0" y="263" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">:80  :443</text>
+<rect x="88" y="272" width="216" height="106" rx="8" ry="8" fill="#ffffff" stroke="#3ba3d8" stroke-width="2" />
+<path d="M88 282 a10 10 0 0 1 10 -10 h196 a10 10 0 0 1 10 10 v32 h-216 z" fill="#3ba3d8"/>
+<text x="196.0" y="299" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#ffffff" font-weight="700" text-anchor="middle">Caddy</text>
+<text x="196.0" y="339" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#334155" font-weight="normal" text-anchor="middle">Reverse proxy · tls internal</text>
+<text x="196.0" y="359" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">ut-caddy</text>
+<text x="458.0" y="263" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">understand.local</text>
+<rect x="350" y="272" width="216" height="106" rx="8" ry="8" fill="#ffffff" stroke="#ef9021" stroke-width="2" />
+<path d="M350 282 a10 10 0 0 1 10 -10 h196 a10 10 0 0 1 10 10 v32 h-216 z" fill="#ef9021"/>
+<text x="458.0" y="299" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#ffffff" font-weight="700" text-anchor="middle">Frontend</text>
+<text x="458.0" y="339" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#334155" font-weight="normal" text-anchor="middle">Vite / React SPA</text>
+<text x="458.0" y="359" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">ut-frontend</text>
+<text x="720.0" y="263" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">llms.understand.local</text>
+<rect x="612" y="272" width="216" height="106" rx="8" ry="8" fill="#ffffff" stroke="#ef9021" stroke-width="2" />
+<path d="M612 282 a10 10 0 0 1 10 -10 h196 a10 10 0 0 1 10 10 v32 h-216 z" fill="#ef9021"/>
+<text x="720.0" y="299" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#ffffff" font-weight="700" text-anchor="middle">LLMs App</text>
+<text x="720.0" y="339" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#334155" font-weight="normal" text-anchor="middle">Model catalogue UI</text>
+<text x="720.0" y="359" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">ut-app-llms</text>
+<text x="982.0" y="263" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">assistants.understand.local</text>
+<rect x="874" y="272" width="216" height="106" rx="8" ry="8" fill="#ffffff" stroke="#ef9021" stroke-width="2" />
+<path d="M874 282 a10 10 0 0 1 10 -10 h196 a10 10 0 0 1 10 10 v32 h-216 z" fill="#ef9021"/>
+<text x="982.0" y="299" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#ffffff" font-weight="700" text-anchor="middle">Assistants App</text>
+<text x="982.0" y="339" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#334155" font-weight="normal" text-anchor="middle">Assistant workspaces</text>
+<text x="982.0" y="359" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">ut-app-assistants</text>
+<text x="1244.0" y="263" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">admin.understand.local</text>
+<rect x="1136" y="272" width="216" height="106" rx="8" ry="8" fill="#ffffff" stroke="#ef9021" stroke-width="2" />
+<path d="M1136 282 a10 10 0 0 1 10 -10 h196 a10 10 0 0 1 10 10 v32 h-216 z" fill="#ef9021"/>
+<text x="1244.0" y="299" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#ffffff" font-weight="700" text-anchor="middle">Admin Portal</text>
+<text x="1244.0" y="339" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#334155" font-weight="normal" text-anchor="middle">Tenant administration</text>
+<text x="1244.0" y="359" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">ut-admin-portal</text>
+<text x="196.0" y="413" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">/api/*   :8501</text>
+<rect x="88" y="422" width="216" height="106" rx="8" ry="8" fill="#ffffff" stroke="#4f46e5" stroke-width="2" />
+<path d="M88 432 a10 10 0 0 1 10 -10 h196 a10 10 0 0 1 10 10 v32 h-216 z" fill="#4f46e5"/>
+<text x="196.0" y="449" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#ffffff" font-weight="700" text-anchor="middle">Main API</text>
+<text x="196.0" y="489" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#334155" font-weight="normal" text-anchor="middle">FastAPI · platform core</text>
+<text x="196.0" y="509" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">ut-api</text>
+<text x="458.0" y="413" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">/api/v3/*  /api/llm/*</text>
+<rect x="350" y="422" width="216" height="106" rx="8" ry="8" fill="#ffffff" stroke="#4f46e5" stroke-width="2" />
+<path d="M350 432 a10 10 0 0 1 10 -10 h196 a10 10 0 0 1 10 10 v32 h-216 z" fill="#4f46e5"/>
+<text x="458.0" y="449" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#ffffff" font-weight="700" text-anchor="middle">Partner API</text>
+<text x="458.0" y="489" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#334155" font-weight="normal" text-anchor="middle">REST v3 + model gateway</text>
+<text x="458.0" y="509" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">ut-api-customer</text>
+<text x="720.0" y="413" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">builder.understand.local</text>
+<rect x="612" y="422" width="216" height="106" rx="8" ry="8" fill="#ffffff" stroke="#ef9021" stroke-width="2" />
+<path d="M612 432 a10 10 0 0 1 10 -10 h196 a10 10 0 0 1 10 10 v32 h-216 z" fill="#ef9021"/>
+<text x="720.0" y="449" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#ffffff" font-weight="700" text-anchor="middle">App Builder</text>
+<text x="720.0" y="489" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#334155" font-weight="normal" text-anchor="middle">Agentic app generator</text>
+<text x="720.0" y="509" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">ut-app-builder</text>
+<text x="982.0" y="413" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">*.apps.understand.local</text>
+<rect x="874" y="422" width="216" height="106" rx="8" ry="8" fill="#ffffff" stroke="#3ba3d8" stroke-width="2" />
+<path d="M874 432 a10 10 0 0 1 10 -10 h196 a10 10 0 0 1 10 10 v32 h-216 z" fill="#3ba3d8"/>
+<text x="982.0" y="449" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#ffffff" font-weight="700" text-anchor="middle">Apps Router</text>
+<text x="982.0" y="489" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#334155" font-weight="normal" text-anchor="middle">Traefik v3 · alias ut-api-v3</text>
+<text x="982.0" y="509" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">ut-app-builder-traefik</text>
+<text x="1244.0" y="413" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">host.docker.internal:8011</text>
+<rect x="1136" y="422" width="216" height="106" rx="8" ry="8" fill="#ffffff" stroke="#64748b" stroke-width="2" />
+<path d="M1136 432 a10 10 0 0 1 10 -10 h196 a10 10 0 0 1 10 10 v32 h-216 z" fill="#64748b"/>
+<text x="1244.0" y="449" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#ffffff" font-weight="700" text-anchor="middle">Generated Apps</text>
+<text x="1244.0" y="489" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#334155" font-weight="normal" text-anchor="middle">own compose projects</text>
+<text x="1244.0" y="509" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">network: proxy (external)</text>
+<rect x="60" y="580" width="1320" height="386" rx="12" ry="12" fill="#eefaf3" stroke="#34c38f" stroke-width="2" stroke-dasharray="8 6" />
+<text x="88" y="612" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="16" fill="#2f9e6e" font-weight="700" text-anchor="start">ut-backend-network  (internal: true — no egress)</text>
+<text x="196.0" y="629" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">:6379</text>
+<rect x="88" y="638" width="216" height="106" rx="8" ry="8" fill="#ffffff" stroke="#d92b47" stroke-width="2" />
+<path d="M88 648 a10 10 0 0 1 10 -10 h196 a10 10 0 0 1 10 10 v32 h-216 z" fill="#d92b47"/>
+<text x="196.0" y="665" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#ffffff" font-weight="700" text-anchor="middle">Redis</text>
+<text x="196.0" y="705" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#334155" font-weight="normal" text-anchor="middle">RQ queues + cache</text>
+<text x="196.0" y="725" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">ut-redis</text>
+<text x="458.0" y="629" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">:27017  →  :27018</text>
+<rect x="350" y="638" width="216" height="106" rx="8" ry="8" fill="#ffffff" stroke="#3fbf8f" stroke-width="2" />
+<path d="M350 648 a10 10 0 0 1 10 -10 h196 a10 10 0 0 1 10 10 v32 h-216 z" fill="#3fbf8f"/>
+<text x="458.0" y="665" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#ffffff" font-weight="700" text-anchor="middle">MongoDB</text>
+<text x="458.0" y="705" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#334155" font-weight="normal" text-anchor="middle">ut-db · apps · app-builder</text>
+<text x="458.0" y="725" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">ut-mongodb</text>
+<text x="720.0" y="629" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">cron</text>
+<rect x="612" y="638" width="216" height="106" rx="8" ry="8" fill="#ffffff" stroke="#64748b" stroke-width="2" />
+<path d="M612 648 a10 10 0 0 1 10 -10 h196 a10 10 0 0 1 10 10 v32 h-216 z" fill="#64748b"/>
+<text x="720.0" y="665" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#ffffff" font-weight="700" text-anchor="middle">Mongo Backup</text>
+<text x="720.0" y="705" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#334155" font-weight="normal" text-anchor="middle">daily full-server dump</text>
+<text x="720.0" y="725" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">ut-mongodb-backup</text>
+<text x="982.0" y="629" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">×N replicas</text>
+<rect x="874" y="638" width="216" height="106" rx="8" ry="8" fill="#ffffff" stroke="#7c3aed" stroke-width="2" />
+<path d="M874 648 a10 10 0 0 1 10 -10 h196 a10 10 0 0 1 10 10 v32 h-216 z" fill="#7c3aed"/>
+<text x="982.0" y="665" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#ffffff" font-weight="700" text-anchor="middle">Workers</text>
+<text x="982.0" y="705" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#334155" font-weight="normal" text-anchor="middle">RQ · ingestion + indexing</text>
+<text x="982.0" y="725" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">WORKER_REPLICAS</text>
+<text x="1244.0" y="629" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">×N replicas</text>
+<rect x="1136" y="638" width="216" height="106" rx="8" ry="8" fill="#ffffff" stroke="#7c3aed" stroke-width="2" />
+<path d="M1136 648 a10 10 0 0 1 10 -10 h196 a10 10 0 0 1 10 10 v32 h-216 z" fill="#7c3aed"/>
+<text x="1244.0" y="665" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#ffffff" font-weight="700" text-anchor="middle">Partner Workers</text>
+<text x="1244.0" y="705" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#334155" font-weight="normal" text-anchor="middle">RQ · partner pipelines</text>
+<text x="1244.0" y="725" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">WORKER_CUSTOMER_REPLICAS</text>
+<text x="196.0" y="787" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">:8000</text>
+<rect x="88" y="796" width="216" height="106" rx="8" ry="8" fill="#ffffff" stroke="#76b900" stroke-width="2" />
+<path d="M88 806 a10 10 0 0 1 10 -10 h196 a10 10 0 0 1 10 10 v32 h-216 z" fill="#76b900"/>
+<text x="196.0" y="823" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#ffffff" font-weight="700" text-anchor="middle">LLM Service</text>
+<text x="196.0" y="863" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#334155" font-weight="normal" text-anchor="middle">RAG · embeddings · rerank</text>
+<text x="196.0" y="883" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">ut-llm</text>
+<text x="458.0" y="787" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">:8000  →  :8001</text>
+<rect x="350" y="796" width="216" height="106" rx="8" ry="8" fill="#ffffff" stroke="#76b900" stroke-width="2" />
+<path d="M350 806 a10 10 0 0 1 10 -10 h196 a10 10 0 0 1 10 10 v32 h-216 z" fill="#76b900"/>
+<text x="458.0" y="823" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#ffffff" font-weight="700" text-anchor="middle">NIM Chat</text>
+<text x="458.0" y="863" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#334155" font-weight="normal" text-anchor="middle">chat / condense model</text>
+<text x="458.0" y="883" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">nim-llm</text>
+<text x="720.0" y="787" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">:8000  →  :8002</text>
+<rect x="612" y="796" width="216" height="106" rx="8" ry="8" fill="#ffffff" stroke="#76b900" stroke-width="2" />
+<path d="M612 806 a10 10 0 0 1 10 -10 h196 a10 10 0 0 1 10 10 v32 h-216 z" fill="#76b900"/>
+<text x="720.0" y="823" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#ffffff" font-weight="700" text-anchor="middle">NIM Vision</text>
+<text x="720.0" y="863" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#334155" font-weight="normal" text-anchor="middle">vision-language model</text>
+<text x="720.0" y="883" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">nim-vlm</text>
+<rect x="112" y="910" width="168" height="30" rx="7" ry="7" fill="#76b900" />
+<text x="196.0" y="930" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#ffffff" font-weight="700" text-anchor="middle">NVIDIA GPU</text>
+<rect x="374" y="910" width="168" height="30" rx="7" ry="7" fill="#76b900" />
+<text x="458.0" y="930" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#ffffff" font-weight="700" text-anchor="middle">NVIDIA GPU</text>
+<rect x="636" y="910" width="168" height="30" rx="7" ry="7" fill="#76b900" />
+<text x="720.0" y="930" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#ffffff" font-weight="700" text-anchor="middle">NVIDIA GPU</text>
+<rect x="874" y="796" width="478" height="144" rx="8" ry="8" fill="#ffffff" stroke="#34c38f" stroke-width="2" />
+<text x="898" y="822" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="13" fill="#0f172a" font-weight="700" text-anchor="start">Also attached to the backend network</text>
+<text x="898" y="850" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#475569" font-weight="normal" text-anchor="start">ut-api  ·  ut-api-customer  ·  workers  ·  workers-customer</text>
+<text x="898" y="872" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#475569" font-weight="normal" text-anchor="start">ut-app-assistants  ·  ut-admin-portal  ·  ut-mongodb</text>
+<text x="898" y="894" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#475569" font-weight="normal" text-anchor="start">ut-llm  ·  nim-llm  ·  nim-vlm</text>
+<text x="898" y="924" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="11.5" fill="#2f9e6e" font-weight="normal" text-anchor="start">Reached only through Caddy — these containers have no route out.</text>
+<rect x="60" y="990" width="1320" height="200" rx="12" ry="12" fill="#f7f3ff" stroke="#8b5cf6" stroke-width="2" />
+<text x="88" y="1022" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="16" fill="#7c3aed" font-weight="700" text-anchor="start">Persistent Storage</text>
+<rect x="88.0" y="1040" width="196" height="34" rx="7" ry="7" fill="#f1eaff" stroke="#a78bfa" stroke-width="1.5" />
+<text x="186.0" y="1062" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#6d28d9" font-weight="normal" text-anchor="middle">ut-caddy-data</text>
+<rect x="301.6" y="1040" width="196" height="34" rx="7" ry="7" fill="#f1eaff" stroke="#a78bfa" stroke-width="1.5" />
+<text x="399.6" y="1062" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#6d28d9" font-weight="normal" text-anchor="middle">ut-caddy-config</text>
+<rect x="515.2" y="1040" width="196" height="34" rx="7" ry="7" fill="#f1eaff" stroke="#a78bfa" stroke-width="1.5" />
+<text x="613.2" y="1062" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#6d28d9" font-weight="normal" text-anchor="middle">ut-redis-data</text>
+<rect x="728.8" y="1040" width="196" height="34" rx="7" ry="7" fill="#f1eaff" stroke="#a78bfa" stroke-width="1.5" />
+<text x="826.8" y="1062" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#6d28d9" font-weight="normal" text-anchor="middle">ut-uploads-data</text>
+<rect x="942.4" y="1040" width="196" height="34" rx="7" ry="7" fill="#f1eaff" stroke="#a78bfa" stroke-width="1.5" />
+<text x="1040.4" y="1062" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#6d28d9" font-weight="normal" text-anchor="middle">ut-mongodb-data</text>
+<rect x="1156.0" y="1040" width="196" height="34" rx="7" ry="7" fill="#f1eaff" stroke="#a78bfa" stroke-width="1.5" />
+<text x="1254.0" y="1062" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#6d28d9" font-weight="normal" text-anchor="middle">ut-mongodb-backup</text>
+<rect x="88.0" y="1084" width="196" height="34" rx="7" ry="7" fill="#f1eaff" stroke="#a78bfa" stroke-width="1.5" />
+<text x="186.0" y="1106" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#6d28d9" font-weight="normal" text-anchor="middle">ut-llm-ollama</text>
+<rect x="301.6" y="1084" width="196" height="34" rx="7" ry="7" fill="#f1eaff" stroke="#a78bfa" stroke-width="1.5" />
+<text x="399.6" y="1106" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#6d28d9" font-weight="normal" text-anchor="middle">ut-llm-models</text>
+<rect x="515.2" y="1084" width="196" height="34" rx="7" ry="7" fill="#f1eaff" stroke="#a78bfa" stroke-width="1.5" />
+<text x="613.2" y="1106" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#6d28d9" font-weight="normal" text-anchor="middle">ut-vllm-models</text>
+<rect x="728.8" y="1084" width="196" height="34" rx="7" ry="7" fill="#f1eaff" stroke="#a78bfa" stroke-width="1.5" />
+<text x="826.8" y="1106" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#6d28d9" font-weight="normal" text-anchor="middle">ut-nim-llm-cache</text>
+<rect x="942.4" y="1084" width="196" height="34" rx="7" ry="7" fill="#f1eaff" stroke="#a78bfa" stroke-width="1.5" />
+<text x="1040.4" y="1106" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#6d28d9" font-weight="normal" text-anchor="middle">ut-nim-vlm-cache</text>
+<rect x="1156.0" y="1084" width="196" height="34" rx="7" ry="7" fill="#f1eaff" stroke="#a78bfa" stroke-width="1.5" />
+<text x="1254.0" y="1106" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#6d28d9" font-weight="normal" text-anchor="middle">ut-vllm-llm-cache</text>
+<rect x="88" y="1128" width="410" height="34" rx="7" ry="7" fill="#ffffff" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="5 4" />
+<text x="293" y="1150" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#6d28d9" font-weight="normal" text-anchor="middle">/var/lib/understandtech/app-data</text>
+<rect x="515" y="1128" width="410" height="34" rx="7" ry="7" fill="#ffffff" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="5 4" />
+<text x="720" y="1150" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#6d28d9" font-weight="normal" text-anchor="middle">/var/lib/understandtech/appbuilder</text>
+<rect x="942" y="1128" width="410" height="34" rx="7" ry="7" fill="#ffffff" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="5 4" />
+<text x="1147" y="1150" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#6d28d9" font-weight="normal" text-anchor="middle">/var/run/docker.sock  (app-builder)</text>
+<text x="88" y="1180" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="11.5" fill="#7c3aed" font-weight="normal" text-anchor="start">Solid = named Docker volume   ·   Dashed = host bind mount</text>
+</svg>
