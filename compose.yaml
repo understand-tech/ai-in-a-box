@@ -11,17 +11,67 @@ x-healthcheck-defaults: &healthcheck-defaults
   timeout: 10s
   retries: 3
 
+# Public URLs.
+#
+# Every one of them derives from UT_DOMAIN and UT_PUBLIC_SCHEME (.env), and
+# every one stays individually overridable: a value written explicitly in .env
+# wins over the derived default, so a .env from before this change produces
+# exactly the values it did before.
+#
+# UT_PUBLIC_SCHEME is the scheme the applications advertise to the browser. It
+# does not follow UT_CADDY_SCHEME, which is the one Caddy listens on: behind a
+# load balancer that terminates TLS, Caddy speaks http while these public URLs
+# must stay on https.
+x-public-urls:
+  public-base:         &url-public-base         ${PUBLIC_BASE_URL:-${UT_PUBLIC_SCHEME:-https}://${UT_DOMAIN:-understand.local}}
+  domain:              &url-domain              ${DOMAIN_URL:-${UT_PUBLIC_SCHEME:-https}://${UT_DOMAIN:-understand.local}/}
+  backend:             &url-backend             ${BACKEND_URL:-${UT_PUBLIC_SCHEME:-https}://${UT_DOMAIN:-understand.local}/api}
+  redirect-path:       &url-redirect-path       ${REDIRECT_PATH:-/api/auth/callback}
+  redirect-uri:        &url-redirect-uri        ${REDIRECT_URI:-${UT_PUBLIC_SCHEME:-https}://${UT_DOMAIN:-understand.local}${REDIRECT_PATH:-/api/auth/callback}}
+  frontend-auth:       &url-frontend-auth       ${FRONTEND_URL_AUTH:-${UT_PUBLIC_SCHEME:-https}://${UT_DOMAIN:-understand.local}/en/chat}
+  allowed-origins:     &url-allowed-origins     ${EXTRA_ALLOWED_ORIGINS:-${UT_PUBLIC_SCHEME:-https}://admin.${UT_DOMAIN:-understand.local},${UT_PUBLIC_SCHEME:-https}://llms.${UT_DOMAIN:-understand.local},${UT_PUBLIC_SCHEME:-https}://assistants.${UT_DOMAIN:-understand.local},${UT_PUBLIC_SCHEME:-https}://builder.${UT_DOMAIN:-understand.local}}
+  gateway-public:      &url-gateway-public      ${GATEWAY_PUBLIC_URL:-${UT_PUBLIC_SCHEME:-https}://${UT_DOMAIN:-understand.local}}
+  vite-api-rest:       &url-vite-api-rest       ${VITE_URL_API_REST:-${UT_PUBLIC_SCHEME:-https}://${UT_DOMAIN:-understand.local}}
+  vite-api-base:       &url-vite-api-base       ${VITE_API_BASE_URL:-${UT_PUBLIC_SCHEME:-https}://${UT_DOMAIN:-understand.local}/api}
+  vite-ut-app:         &url-vite-ut-app         ${VITE_UT_APP_URL:-${UT_PUBLIC_SCHEME:-https}://${UT_DOMAIN:-understand.local}}
+  app-llms:            &url-app-llms            ${APP_LLMS_BASE_URL:-${UT_PUBLIC_SCHEME:-https}://llms.${UT_DOMAIN:-understand.local}}
+  app-llms-cors:       &url-app-llms-cors       ${APP_LLMS_CORS_ORIGINS:-${UT_PUBLIC_SCHEME:-https}://llms.${UT_DOMAIN:-understand.local}}
+  app-assistants:      &url-app-assistants      ${APP_ASSISTANTS_BASE_URL:-${UT_PUBLIC_SCHEME:-https}://assistants.${UT_DOMAIN:-understand.local}}
+  app-assistants-cors: &url-app-assistants-cors ${APP_ASSISTANTS_CORS_ORIGINS:-${UT_PUBLIC_SCHEME:-https}://assistants.${UT_DOMAIN:-understand.local}}
+  app-builder:         &url-app-builder         ${APP_BUILDER_BASE_URL:-${UT_PUBLIC_SCHEME:-https}://builder.${UT_DOMAIN:-understand.local}}
+
 services:
 
-  caddy:
+  caddy: 
     image: caddy:2-alpine
     container_name: ut-caddy
     restart: unless-stopped
     ports:
-      - "80:80"
-      - "443:443"
+      - "${UT_HTTP_PORT:-80}:80"
+      - "${UT_HTTPS_PORT:-443}:443"
+    environment:
+      # Substituted by Caddy in the Caddyfile and in the mode fragment. Always
+      # a real default, never ${VAR:-}: a placeholder that is set but empty
+      # fails to adapt the Caddyfile, whereas an absent one falls back to the
+      # default written in the file itself.
+      UT_DOMAIN: ${UT_DOMAIN:-understand.local}
+      UT_CADDY_SCHEME: ${UT_CADDY_SCHEME:-https}
+      UT_TRUSTED_PROXIES: ${UT_TRUSTED_PROXIES:-private_ranges}
+      UT_CERT_FILE: ${UT_CERT_FILE:-/etc/caddy/certs/fullchain.pem}
+      UT_KEY_FILE: ${UT_KEY_FILE:-/etc/caddy/certs/privkey.pem}
+      UT_APPS_CERT_FILE: ${UT_APPS_CERT_FILE:-/etc/caddy/certs/fullchain.pem}
+      UT_APPS_KEY_FILE: ${UT_APPS_KEY_FILE:-/etc/caddy/certs/privkey.pem}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Ingress mode fragment: global options plus the (tls)/(tls_apps)
+      # snippets. A typo in UT_INGRESS_MODE does not show up in
+      # `docker compose config` — docker would create a directory in place of
+      # the missing file. `setup-autostart.sh --check` catches it before `up`.
+      - ./caddy/ingress-${UT_INGRESS_MODE:-internal}.caddy:/etc/caddy/ingress.caddy:ro
+      # Operator-supplied certificates (UT_INGRESS_MODE="custom"). Mounted
+      # unconditionally: the directory is empty in the other modes, where the
+      # Caddyfile never refers to it.
+      - ${UT_CERT_DIR:-./caddy/certs}:/etc/caddy/certs:ro
       - caddy-data:/data
       - caddy-config:/config
     networks:
@@ -163,7 +213,7 @@ services:
       DB_PROVIDER: ${DB_PROVIDER:-}
       STORAGE_PROVIDER: ${STORAGE_PROVIDER:-}
       openid_scope: ${openid_scope:-}
-      DOMAIN_URL: ${DOMAIN_URL:-}
+      DOMAIN_URL: *url-domain
       MONGODB_HOST: ${MONGODB_HOST:-}
       MONGODB_PORT: ${MONGODB_PORT:-}
       MONGODB_USERNAME: ${MONGODB_USERNAME:-}
@@ -171,19 +221,19 @@ services:
       MONGODB_DATABASE: ${MONGODB_DATABASE:-}
       REDIS_PORT: ${REDIS_PORT:-}
       REDIS_HOST: ${REDIS_HOST:-}
-      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
-      REDIRECT_PATH: ${REDIRECT_PATH:-}
-      REDIRECT_URI: ${REDIRECT_URI:-}
+      PUBLIC_BASE_URL: *url-public-base
+      REDIRECT_PATH: *url-redirect-path
+      REDIRECT_URI: *url-redirect-uri
       STATE_SECRET: ${STATE_SECRET:-}
       GPU_VM_API_TOKEN: ${GPU_VM_API_TOKEN:-}
       GPU_VM_URL: ${GPU_VM_URL:-}
       ADMIN_MAIL: ${ADMIN_MAIL:-}
-      BACKEND_URL: ${BACKEND_URL:-}
-      FRONTEND_URL_AUTH: ${FRONTEND_URL_AUTH:-}
+      BACKEND_URL: *url-backend
+      FRONTEND_URL_AUTH: *url-frontend-auth
       ADMIN_SETUP_PASSWORD: ${ADMIN_SETUP_PASSWORD:-}
       OA_KEY: ${OA_KEY:-}
       DEPLOY_ENV: ${DEPLOY_ENV:-}
-      EXTRA_ALLOWED_ORIGINS: ${EXTRA_ALLOWED_ORIGINS:-}
+      EXTRA_ALLOWED_ORIGINS: *url-allowed-origins
       JWT_SECRET: ${JWT_SECRET}
       VLLM_LLM_BASE_URL: ${VLLM_LLM_BASE_URL:-}
       VLLM_VLM_BASE_URL: ${VLLM_VLM_BASE_URL:-}
@@ -191,12 +241,12 @@ services:
       GATEWAY_DEFAULT_MODEL: ${GATEWAY_DEFAULT_MODEL:-}
       GATEWAY_LLM_SERVED_NAME: ${GATEWAY_LLM_SERVED_NAME:-}
       GATEWAY_VLM_MODEL: ${GATEWAY_VLM_MODEL:-}
-      GATEWAY_PUBLIC_URL: ${GATEWAY_PUBLIC_URL:-}
+      GATEWAY_PUBLIC_URL: *url-gateway-public
       GATEWAY_RPM_PER_KEY: ${GATEWAY_RPM_PER_KEY:-}
       API_KEY_HASH_NEW_KEYS: ${API_KEY_HASH_NEW_KEYS:-}
       API_KEY_HASH_LAZY_MIGRATION: ${API_KEY_HASH_LAZY_MIGRATION:-}
       GATEWAY_MODELS: ${GATEWAY_MODELS:-}
-      APP_BUILDER_BASE_URL: ${APP_BUILDER_BASE_URL:-}
+      APP_BUILDER_BASE_URL: *url-app-builder
     volumes:
       - uploads-data:/tmp/uploads
       - /var/lib/understandtech/app-data:/app/storage
@@ -230,7 +280,7 @@ services:
     command: ["sh", "-c", "rq worker --url redis://redis:6379 ut-api"]
     environment:
       TYPE_DEPLOIEMENT: ${TYPE_DEPLOIEMENT:-}
-      BACKEND_URL: ${BACKEND_URL:-}
+      BACKEND_URL: *url-backend
       LOCAL_STORAGE_BASE: ${LOCAL_STORAGE_BASE:-}
       DB_PROVIDER: ${DB_PROVIDER:-}
       STORAGE_PROVIDER: ${STORAGE_PROVIDER:-}
@@ -243,8 +293,8 @@ services:
       MONGODB_DATABASE: ${MONGODB_DATABASE:-}
       GPU_VM_URL: ${GPU_VM_URL:-}
       GPU_VM_API_TOKEN: ${GPU_VM_API_TOKEN:-}
-      DOMAIN_URL: ${DOMAIN_URL:-https://understand.local/}
-      FRONTEND_URL_AUTH: ${FRONTEND_URL_AUTH:-}
+      DOMAIN_URL: *url-domain
+      FRONTEND_URL_AUTH: *url-frontend-auth
       ADMIN_MAIL: ${ADMIN_MAIL:-}
     volumes:
       - uploads-data:/tmp/uploads
@@ -278,8 +328,8 @@ services:
     expose:
       - "80"
     environment:
-      BACKEND_URL: ${BACKEND_URL:-}
-      VITE_URL_API_REST: ${VITE_URL_API_REST:-}
+      BACKEND_URL: *url-backend
+      VITE_URL_API_REST: *url-vite-api-rest
       VITE_AUTH_TYPE: ${VITE_AUTH_TYPE:-}
       VITE_DEPLOYMENT_TYPE: ${VITE_DEPLOYMENT_TYPE:-}
       VITE_DB_PROVIDER: ${DB_PROVIDER:-}
@@ -314,7 +364,7 @@ services:
       DB_PROVIDER: ${DB_PROVIDER:-}
       STORAGE_PROVIDER: ${STORAGE_PROVIDER:-}
       openid_scope: ${openid_scope:-}
-      DOMAIN_URL: ${DOMAIN_URL:-}
+      DOMAIN_URL: *url-domain
       MONGODB_HOST: ${MONGODB_HOST:-}
       MONGODB_PORT: ${MONGODB_PORT:-}
       MONGODB_USERNAME: ${MONGODB_USERNAME:-}
@@ -322,15 +372,15 @@ services:
       MONGODB_DATABASE: ${MONGODB_DATABASE:-}
       REDIS_PORT: ${REDIS_PORT:-}
       REDIS_HOST: ${REDIS_HOST:-}
-      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
-      REDIRECT_PATH: ${REDIRECT_PATH:-}
-      REDIRECT_URI: ${REDIRECT_URI:-}
+      PUBLIC_BASE_URL: *url-public-base
+      REDIRECT_PATH: *url-redirect-path
+      REDIRECT_URI: *url-redirect-uri
       STATE_SECRET: ${STATE_SECRET:-}
       GPU_VM_API_TOKEN: ${GPU_VM_API_TOKEN:-}
       GPU_VM_URL: ${GPU_VM_URL:-}
       ADMIN_MAIL: ${ADMIN_MAIL:-}
-      BACKEND_URL: ${BACKEND_URL:-}
-      FRONTEND_URL_AUTH: ${FRONTEND_URL_AUTH:-}
+      BACKEND_URL: *url-backend
+      FRONTEND_URL_AUTH: *url-frontend-auth
       OA_KEY: ${OA_KEY:-}
       SENDGRID_API_KEY: ${SENDGRID_API_KEY:-}
       DEPLOY_ENV: ${DEPLOY_ENV:-}
@@ -340,7 +390,7 @@ services:
       GATEWAY_DEFAULT_MODEL: ${GATEWAY_DEFAULT_MODEL:-}
       GATEWAY_LLM_SERVED_NAME: ${GATEWAY_LLM_SERVED_NAME:-}
       GATEWAY_VLM_MODEL: ${GATEWAY_VLM_MODEL:-}
-      GATEWAY_PUBLIC_URL: ${GATEWAY_PUBLIC_URL:-}
+      GATEWAY_PUBLIC_URL: *url-gateway-public
       GATEWAY_RPM_PER_KEY: ${GATEWAY_RPM_PER_KEY:-}
       API_KEY_HASH_NEW_KEYS: ${API_KEY_HASH_NEW_KEYS:-}
       API_KEY_HASH_LAZY_MIGRATION: ${API_KEY_HASH_LAZY_MIGRATION:-}
@@ -387,8 +437,8 @@ services:
       MONGODB_DATABASE: ${MONGODB_DATABASE:-}
       GPU_VM_URL: ${GPU_VM_URL:-}
       GPU_VM_API_TOKEN: ${GPU_VM_API_TOKEN:-}
-      DOMAIN_URL: ${DOMAIN_URL:-}
-      FRONTEND_URL_AUTH: ${FRONTEND_URL_AUTH:-}
+      DOMAIN_URL: *url-domain
+      FRONTEND_URL_AUTH: *url-frontend-auth
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       ADMIN_MAIL: ${ADMIN_MAIL:-}
     volumes:
@@ -426,14 +476,14 @@ services:
       MONGODB_PASSWORD: ${MONGODB_PASSWORD:-}
       MONGODB_DB: ${APP_LLMS_MONGODB_DB:-ut-app-llms}
       VITE_DB_PROVIDER: ${DB_PROVIDER:-}
-      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-https://understand.local/api}
-      VITE_UT_APP_URL: ${VITE_UT_APP_URL:-https://understand.local}
+      VITE_API_BASE_URL: *url-vite-api-base
+      VITE_UT_APP_URL: *url-vite-ut-app
       UT_APP_BASE_URL: http://api:8501/api
       UT_CUSTOMER_URL: http://api-customer:8501
       UNDERSTAND_API_VERSION: ${UNDERSTAND_API_VERSION:-v3}
       UT_JWT_SECRET: ${JWT_SECRET:-}
-      UT_APP_LLMS_BASE_URL: ${APP_LLMS_BASE_URL:-https://llms.understand.local}
-      CORS_ORIGINS: ${APP_LLMS_CORS_ORIGINS:-https://llms.understand.local}
+      UT_APP_LLMS_BASE_URL: *url-app-llms
+      CORS_ORIGINS: *url-app-llms-cors
     networks:
       - ut-frontend-network
     depends_on:
@@ -465,14 +515,14 @@ services:
       MONGODB_PASSWORD: ${MONGODB_PASSWORD:-}
       MONGO_DB: ${APP_ASSISTANTS_MONGODB_DB:-ut-app-assistants}
       VITE_DB_PROVIDER: ${DB_PROVIDER:-}
-      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-https://understand.local/api}
-      VITE_UT_APP_URL: ${VITE_UT_APP_URL:-https://understand.local}
+      VITE_API_BASE_URL: *url-vite-api-base
+      VITE_UT_APP_URL: *url-vite-ut-app
       UT_APP_BASE_URL: http://api:8501/api
       UT_CUSTOMER_URL: http://api-customer:8501
       UNDERSTAND_API_VERSION: ${UNDERSTAND_API_VERSION:-v3}
       UT_JWT_SECRET: ${JWT_SECRET:-}
-      UT_APP_ASSISTANTS_BASE_URL: ${APP_ASSISTANTS_BASE_URL:-https://assistants.understand.local}
-      CORS_ORIGINS: ${APP_ASSISTANTS_CORS_ORIGINS:-https://assistants.understand.local}
+      UT_APP_ASSISTANTS_BASE_URL: *url-app-assistants
+      CORS_ORIGINS: *url-app-assistants-cors
     volumes:
       - /var/lib/understandtech/app-data:/app/storage
     networks:
