@@ -1,4 +1,16 @@
-understand.local {
+# UnderstandTech ingress.
+#
+# This file holds no hostname of its own. The domain comes from UT_DOMAIN and
+# the listening scheme from UT_CADDY_SCHEME, both set in .env: to move the
+# appliance to another name, edit .env, not this file.
+#
+# ingress.caddy is bind-mounted by compose according to UT_INGRESS_MODE
+# (caddy/ingress-internal.caddy, -custom.caddy or -edge.caddy). It supplies the
+# global options that mode needs and the (tls) and (tls_apps) snippets imported
+# below — it is the one place where the TLS mode is decided.
+import /etc/caddy/ingress.caddy
+
+{$UT_CADDY_SCHEME:https}://{$UT_DOMAIN:understand.local} {
     handle {
         reverse_proxy frontend:80
     }
@@ -15,17 +27,17 @@ understand.local {
         reverse_proxy api-customer:8501
     }
 
-    tls internal
+    import tls
 
 }
 
-llms.understand.local {
+{$UT_CADDY_SCHEME:https}://llms.{$UT_DOMAIN:understand.local} {
     reverse_proxy app-llms:80
 
-    tls internal
+    import tls
 }
 
-admin.understand.local {
+{$UT_CADDY_SCHEME:https}://admin.{$UT_DOMAIN:understand.local} {
     handle {
         reverse_proxy admin-portal:8080
     }
@@ -34,24 +46,26 @@ admin.understand.local {
         reverse_proxy api:8501
     }
 
-    tls internal
+    import tls
 }
 
-assistants.understand.local {
+{$UT_CADDY_SCHEME:https}://assistants.{$UT_DOMAIN:understand.local} {
     reverse_proxy app-assistants:80
 
-    tls internal
+    import tls
 }
 
 
-builder.understand.local {
+{$UT_CADDY_SCHEME:https}://builder.{$UT_DOMAIN:understand.local} {
     reverse_proxy app-builder:8001
 
-    tls internal
+    import tls
 }
 
-*.apps.understand.local {
+# App Builder generated apps sit two levels below the apex, hence a separate
+# TLS snippet: a *.<domain> wildcard does not cover *.apps.<domain>.
+{$UT_CADDY_SCHEME:https}://*.apps.{$UT_DOMAIN:understand.local} {
     reverse_proxy app-builder-traefik:80
 
-    tls internal
+    import tls_apps
 }

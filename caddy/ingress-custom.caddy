@@ -1,0 +1,23 @@
+# Mode "custom" — certificate supplied by the operator.
+#
+# The files are mounted read-only from UT_CERT_DIR (see .env) onto
+# /etc/caddy/certs. The certificate has to cover the apex and the four
+# satellite names llms. assistants. admin. builder.
+#
+# App Builder generated apps live at *.apps.<domain>, two levels below the
+# apex, which a single-level wildcard does NOT match — hence a separate pair.
+# It points at the same file by default; set UT_APPS_CERT_FILE and
+# UT_APPS_KEY_FILE to supply a dedicated wildcard.
+#
+# Note that `caddy validate` provisions certificates for real, so a missing
+# file stops Caddy from starting and turns its healthcheck red rather than
+# degrading quietly. `sudo ./setup-autostart.sh --check` catches that before
+# the first `up`.
+
+(tls) {
+    tls {$UT_CERT_FILE:/etc/caddy/certs/fullchain.pem} {$UT_KEY_FILE:/etc/caddy/certs/privkey.pem}
+}
+
+(tls_apps) {
+    tls {$UT_APPS_CERT_FILE:/etc/caddy/certs/fullchain.pem} {$UT_APPS_KEY_FILE:/etc/caddy/certs/privkey.pem}
+}

@@ -1,0 +1,15 @@
+# Mode "internal" — Caddy's own internal CA, self-signed certificates.
+#
+# This is the default, and the only mode that works on a .local domain: no
+# public authority issues for .local, and an appliance on a flat network has no
+# enterprise certificate to hand over either. The browser warns on first visit;
+# the internal CA lives in the ut-caddy-data volume, so that warning keeps the
+# same fingerprint across restarts instead of changing every time.
+
+(tls) {
+    tls internal
+}
+
+(tls_apps) {
+    tls internal
+}
