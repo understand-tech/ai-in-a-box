@@ -57,6 +57,7 @@ services:
       - /var/lib/understandtech/appbuilder:/var/lib/understandtech/appbuilder
     networks:
       - ut-frontend-network
+      - ut-data-network
     depends_on:
       mongodb:
         condition: service_healthy

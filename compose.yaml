@@ -92,8 +92,7 @@ services:
     volumes:
       - mongodb-data:/data/db
     networks:
-      - ut-frontend-network
-      - ut-backend-network
+      - ut-data-network
     healthcheck:
       test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok", "-u", "${MONGODB_USERNAME:-}", "-p", "${MONGODB_PASSWORD:-}", "--authenticationDatabase", "admin"]
       <<: *healthcheck-defaults
@@ -137,7 +136,7 @@ services:
     volumes:
       - mongodb-backups:/backup
     networks:
-      - ut-backend-network
+      - ut-data-network
     depends_on:
       mongodb:
         condition: service_healthy
@@ -203,6 +202,7 @@ services:
     networks:
       - ut-backend-network
       - ut-frontend-network
+      - ut-data-network
     depends_on:
       mongodb:
         condition: service_healthy
@@ -252,6 +252,7 @@ services:
     networks:
       - ut-backend-network
       - ut-frontend-network
+      - ut-data-network
     depends_on:
       redis:
         condition: service_healthy
@@ -351,6 +352,7 @@ services:
     networks:
       - ut-backend-network
       - ut-frontend-network
+      - ut-data-network
     depends_on:
       mongodb:
         condition: service_healthy
@@ -397,6 +399,7 @@ services:
     networks:
       - ut-backend-network
       - ut-frontend-network
+      - ut-data-network
     depends_on:
       redis:
         condition: service_healthy
@@ -436,6 +439,7 @@ services:
       CORS_ORIGINS: ${APP_LLMS_CORS_ORIGINS:-https://llms.understand.local}
     networks:
       - ut-frontend-network
+      - ut-data-network
     depends_on:
       api:
         condition: service_healthy
@@ -478,6 +482,7 @@ services:
     networks:
       - ut-frontend-network
       - ut-backend-network
+      - ut-data-network
     depends_on:
       api:
         condition: service_healthy
@@ -641,6 +646,7 @@ services:
     networks:
       - ut-backend-network
       - ut-frontend-network # Add the frontend network during first-time installation
+      - ut-data-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       <<: *healthcheck-defaults
@@ -663,6 +669,10 @@ networks:
   ut-frontend-network:
     name: ut-frontend-network
     driver: bridge
+  ut-data-network:
+    name: ut-data-network
+    driver: bridge
+    internal: true
 
 volumes:
   caddy-data:
