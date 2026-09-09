@@ -632,7 +632,7 @@ services:
       ONNX_EMBED_HF_REPO: ${ONNX_EMBED_HF_REPO:-}
       EMBED_MODEL_BACKEND: ${EMBED_MODEL_BACKEND:-}
       LLM_MAX_CONTEXT_LEN: ${LLM_MAX_CONTEXT_LEN:-}
-      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-}
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-1}
     volumes:
       - vllm-models:/root/.cache/huggingface
       - llm-ollama:/root/.ollama
