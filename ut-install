@@ -517,6 +517,64 @@ step_wait_healthy() {
     return 0
 }
 
+step_autostart() {
+    if ! $DO_AUTOSTART; then
+        log_step "Skipping boot service (--no-autostart)"
+        return 0
+    fi
+
+    log_step "Installing the boot service and mDNS names"
+
+    if [[ ! -x "$INSTALL_DIR/setup-autostart.sh" ]]; then
+        log_warn "setup-autostart.sh not found — the stack will NOT restart after a reboot,"
+        log_warn "and the satellite hostnames will not be published."
+        return 0
+    fi
+
+    "$INSTALL_DIR/setup-autostart.sh" --install --dir "$INSTALL_DIR" \
+        || log_warn "setup-autostart.sh reported a problem; re-run it manually"
+    log_info "Boot service and mDNS publisher installed"
+}
+
+print_admin_password_out_of_band() {
+    local env_file=$1 admin_password
+    admin_password=$(env_get "$env_file" ADMIN_SETUP_PASSWORD 2>/dev/null || true)
+    [[ -n "$admin_password" && -w /dev/tty ]] || return 0
+
+    printf '  %sInitial admin password%s  %s\n' "$BOLD" "$NC" "$admin_password" > /dev/tty
+    printf '  (shown here only — it is stored in %s, not in the install log)\n\n' "$env_file" > /dev/tty
+}
+
+print_summary() {
+    local env_file="$INSTALL_DIR/.env"
+
+    cat <<EOF
+
+${BOLD}Installation complete${NC}
+
+  Address        https://${DOMAIN}
+  Directory      ${INSTALL_DIR}
+  Configuration  ${env_file}   (0600, contains generated secrets)
+
+  Satellite apps  https://llms.${DOMAIN}
+                  https://assistants.${DOMAIN}
+                  https://admin.${DOMAIN}
+
+  Your browser will warn about the certificate: it is issued by the
+  appliance's own authority. To remove the warning on a machine, export
+  and trust the root certificate:
+
+    docker exec ut-caddy cat /data/caddy/pki/authorities/local/root.crt > ut-root-ca.crt
+
+  Status         cd ${INSTALL_DIR} && docker compose ps
+  Logs           cd ${INSTALL_DIR} && docker compose logs -f api
+  Install log    ${LOG_FILE}
+
+EOF
+
+    print_admin_password_out_of_band "$env_file"
+}
+
 start_logging() {
     mkdir -p "$(dirname "$LOG_FILE")"
     touch "$LOG_FILE"
@@ -565,6 +623,8 @@ main() {
     step_pull
     step_start
     step_wait_healthy
+    step_autostart
+    print_summary
 }
 
 [[ "${BASH_SOURCE[0]}" == "${0}" ]] && main "$@"
