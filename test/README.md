@@ -21,15 +21,18 @@ repository — not because it is good practice. Each one is listed below with th
 defect it catches. A check that cannot name one does not belong here: it will
 produce a false positive eventually, and the whole thing gets switched off.
 
-| Check | Catches |
-|---|---|
-| `plaintext-secret` | `.env.example` shipped a real `JWT_SECRET`, shared by four services — a token minted at one customer was accepted at another. Plus seven other values that read as configured and were therefore never changed. |
-| `undeclared-variable` | A compose file referencing `${VAR}` with no default, where `.env.example` does not define it — the stack starts with the value empty. Only variables without a default are checked; a `${VAR:-default}` needs no entry. |
-| `unlisted-port` | MongoDB and both NIM containers published their ports on every interface. Publications bound to `127.0.0.1` are ignored: they expose nothing, so they need no authorisation. |
-| `unpinned-image` | Mutable tags like `2.0-arm64`, so two boxes on "the same version" could differ and a diagnosis on one did not transfer to another. |
-| `verbose-log-level` | `LOG_LEVEL=DEBUG` shipped as the default, on a customer's appliance. |
-| `queue-eviction` | Redis holding the RQ queues while running `allkeys-lru`, so tasks could be evicted under memory pressure. |
-| `missing-documented-path` | Preventive, and the only one here that has caught nothing yet: a file renamed without updating the README. |
+| Check | Idea | Defect it addresses |
+|---|---|---|
+| `plaintext-secret` | A shipped secret is a shared secret | `JWT_SECRET` identical at every customer: a token minted at one is accepted at another |
+| `undeclared-variable` | A variable with no default must be declared | Compose substitutes an empty string, so the stack starts misconfigured instead of refusing to start |
+| `unlisted-port` | Reaching the network must be deliberate | Database and inference engines reachable from the LAN, inference without authentication |
+| `unpinned-image` | A tag moves, a digest does not | Two boxes reporting the same version run different software, and a diagnosis on one no longer transfers |
+| `verbose-log-level` | The shipped default is the installed default | `LOG_LEVEL=DEBUG` in production, with sensitive content in the logs |
+| `queue-eviction` | A queue is not a cache | Redis on `allkeys-lru` drops tasks under memory pressure, with no error |
+| `missing-documented-path` | A wrong document costs an installation | Preventive: a file renamed without updating the README |
+
+Longer version of each, with the exact mechanism and its limits, in the v2
+documentation (`22-reference-tests.md`, `21-tests-et-ci.md`).
 
 ## How the baseline works
 
@@ -66,6 +69,19 @@ line number is not.
 The message is read by whoever gets the failure, months from now, on a change
 that has nothing to do with the check. Say what is wrong and why it matters, not
 which rule fired.
+
+## Coming next
+
+Not implemented yet. Listed so the gap is visible rather than assumed covered.
+
+| Check | Idea | Defect it addresses |
+|---|---|---|
+| `compose config` | A configuration that does not parse installs nothing | The App Builder overlay enabled by default over a network nothing creates: `up -d` fails on a fresh install |
+| `caddy validate` × 3 | Three TLS modes, three paths to exercise | A broken ingress mode discovered by the customer who uses it |
+| `caddy adapt` | Either the domain is configurable or it is not | A broken interpolation: the six hostnames no longer match the real address |
+| `shellcheck` | Shell fails quietly | Unknown — it has never been run against these three scripts |
+| unit tests | Pure functions test without a machine | `env_set` does not recognise a commented-out variable and appends a duplicate |
+| stubbed installer | Idempotence is proven, not promised | A leaking token, a second run that is not a no-op, a missing terminal |
 
 ## What this does not prove
 
