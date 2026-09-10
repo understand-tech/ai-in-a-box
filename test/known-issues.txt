@@ -52,3 +52,11 @@ unpinned-image:ADMIN_PORTAL_IMAGE
 unpinned-image:APP_BUILDER_IMAGE
 unpinned-image:NIM_IMAGE
 unpinned-image:VLLM_LLM_IMAGE
+
+# --- Production defaults ---------------------------------------------------
+# Verbose logging on a customer appliance, and sensitive content in the logs.
+verbose-log-level:LOG_LEVEL
+
+# Redis holds the RQ queues while running allkeys-lru, so tasks can be evicted
+# under memory pressure. 'noeviction' fixes it in one line.
+queue-eviction:redis

@@ -107,6 +107,20 @@ check_images_are_pinned() {
     done <<< "$(env_keys)"
 }
 
+check_production_defaults() {
+    local log_level
+    log_level=$(env_raw_value LOG_LEVEL 2>/dev/null || true)
+    if [[ "$log_level" == "DEBUG" || "$log_level" == "TRACE" ]]; then
+        report "verbose-log-level:LOG_LEVEL" \
+            "LOG_LEVEL=${log_level} in .env.example — verbose logs on a customer's appliance"
+    fi
+
+    if grep -q 'maxmemory-policy allkeys-lru' "$REPO_ROOT/compose.yaml"; then
+        report "queue-eviction:redis" \
+            "redis runs allkeys-lru while holding the RQ queues — tasks can be evicted under memory pressure"
+    fi
+}
+
 read_baseline() {
     [[ -f "$BASELINE_FILE" ]] || return 0
     grep -vE '^\s*(#|$)' "$BASELINE_FILE" || true
@@ -161,6 +175,7 @@ main() {
     check_variables_without_default_are_declared
     check_published_ports_are_allowed
     check_images_are_pinned
+    check_production_defaults
     compare_with_baseline
 }
 
