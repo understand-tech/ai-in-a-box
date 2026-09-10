@@ -191,6 +191,10 @@ services:
     depends_on:
       mongodb:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "find /backup -name 'mongo_*.archive.gz' -mtime -2 | grep -q ."]
+      <<: *healthcheck-defaults
+      start_period: 25h
     logging: *default-logging
     deploy:
       resources:
@@ -199,6 +203,43 @@ services:
           cpus: '0.5'
         reservations:
           memory: 128M
+
+  files-backup:
+    image: restic/restic:0.18.1
+    container_name: ${CONTAINER_PREFIX:-ut}-files-backup
+    restart: unless-stopped
+    environment:
+      RESTIC_REPOSITORY: ${BACKUP_FILES_REPOSITORY:-/backup/restic}
+      RESTIC_PASSWORD: ${BACKUP_FILES_PASSWORD:?set BACKUP_FILES_PASSWORD - losing it makes every snapshot unreadable}
+      BACKUP_FILES_AT: ${BACKUP_FILES_AT:-0 3 * * *}
+      BACKUP_FILES_KEEP_DAILY: ${BACKUP_FILES_KEEP_DAILY:-7}
+      BACKUP_FILES_KEEP_WEEKLY: ${BACKUP_FILES_KEEP_WEEKLY:-4}
+      BACKUP_FILES_KEEP_MONTHLY: ${BACKUP_FILES_KEEP_MONTHLY:-6}
+      AWS_ACCESS_KEY_ID: ${BACKUP_FILES_S3_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${BACKUP_FILES_S3_SECRET:-}
+    volumes:
+      - ${DATA_ROOT:-/var/lib/understandtech}:/data:ro
+      - mongodb-backups:/backup
+      - ./backup-files.sh:/usr/local/bin/backup-files:ro
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        echo "$$BACKUP_FILES_AT /usr/local/bin/backup-files >> /proc/1/fd/1 2>&1" > /etc/crontabs/root
+        /usr/local/bin/backup-files || true
+        exec crond -f -l 8
+    healthcheck:
+      test: ["CMD-SHELL", "restic snapshots --tag files --latest 1 --json | grep -q '\"time\"'"]
+      <<: *healthcheck-defaults
+      start_period: 10m
+    networks:
+      - ut-backend-network
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '2'
 
   api:
     image: ${API_IMAGE:-}
