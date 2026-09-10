@@ -31,8 +31,8 @@ produce a false positive eventually, and the whole thing gets switched off.
 | `queue-eviction` | A queue is not a cache | Redis on `allkeys-lru` drops tasks under memory pressure, with no error |
 | `missing-documented-path` | A wrong document costs an installation | Preventive: a file renamed without updating the README |
 
-Longer version of each, with the exact mechanism and its limits, in the v2
-documentation (`22-reference-tests.md`, `21-tests-et-ci.md`).
+How each one decides is the `check_*` function of the same name in
+`invariants.sh`. They are short and read top to bottom.
 
 ## How the baseline works
 
@@ -91,5 +91,6 @@ They say nothing about whether the images pull, the containers start, the
 inference serves, or the platform works. A green run means no known class of
 defect was reintroduced — nothing more.
 
-The tests that would prove more are described in the v2 documentation, and most
-of them need a real GPU machine.
+Proving more takes a machine with a GPU, a registry it can pull from, and the
+time for a cold start. None of that belongs in CI, so the first real install
+stays the test that counts.
