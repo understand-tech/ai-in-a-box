@@ -54,6 +54,20 @@ check_plaintext_secrets() {
     done
 }
 
+# .env.example is not the only place a secret can ship from: a compose file
+# writing ${JWT_SECRET:-something} carries that something into every deployment
+# whose .env leaves the variable out. MONGODB_PASSWORD defaulted to 12345678
+# here, which emptying .env.example would not have touched.
+check_compose_declares_no_secret_default() {
+    local key default
+    for key in "${SENSITIVE_KEYS[@]}"; do
+        default=$(grep -ohE "\\\$\{${key}:-[^\\\${}]+\}" "${COMPOSE_FILES[@]}" 2>/dev/null | head -1) || continue
+        [[ -n "$default" ]] || continue
+        report "compose-secret-default:${key}" \
+            "a compose file falls back to a value for ${key} (${default}) — it ships from here too"
+    done
+}
+
 check_variables_without_default_are_declared() {
     local declared required var
     declared=$(env_keys | sort -u)
@@ -193,6 +207,7 @@ compare_with_baseline() {
 
 main() {
     check_plaintext_secrets
+    check_compose_declares_no_secret_default
     check_variables_without_default_are_declared
     check_published_ports_are_allowed
     check_images_are_pinned
