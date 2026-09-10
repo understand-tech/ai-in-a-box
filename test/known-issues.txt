@@ -1,0 +1,44 @@
+# Problems that already exist and are accepted for now.
+#
+# test/invariants.sh fails on any problem NOT listed here, and also on any line
+# here whose problem has been fixed. The second half matters: a baseline nobody
+# prunes stops protecting anything.
+#
+# One identifier per line. Keep the reason next to it.
+
+# --- Secrets shipped in .env.example ---------------------------------------
+# VLLM_API_KEY="EMPTY" is vLLM's convention for "no authentication", not a
+# placeholder: it is why inference answers without credentials. Turning
+# authentication on needs a real key here and --api-key through
+# NIM_LLM_PASSTHROUGH_ARGS, so it is a behaviour change rather than a secret to
+# fill in. The ports stay bound to loopback until then.
+plaintext-secret:VLLM_API_KEY
+
+# --- Ports on every interface ----------------------------------------------
+# Being fixed by the open pull requests that bind them to loopback. Once merged,
+# these lines become stale and the script will ask for their removal.
+unlisted-port:mongodb:27018:27017
+unlisted-port:nim-llm:8001:8000
+unlisted-port:nim-vlm:8002:8000
+
+# --- Mutable image references ----------------------------------------------
+# Tags like 2.0-arm64 move, so two boxes on "the same version" can differ and a
+# diagnosis on one does not transfer to another. Pinning by digest is a build
+# chain change, not a one-line edit.
+unpinned-image:LLM_IMAGE
+unpinned-image:API_IMAGE
+unpinned-image:API_CUSTOMER_IMAGE
+unpinned-image:WORKER_IMAGE
+unpinned-image:WORKER_CUSTOMER_IMAGE
+unpinned-image:FRONTEND_IMAGE
+unpinned-image:LLMS_APP_IMAGE
+unpinned-image:ASSISTANTS_APP_IMAGE
+unpinned-image:ADMIN_PORTAL_IMAGE
+unpinned-image:APP_BUILDER_IMAGE
+unpinned-image:NIM_IMAGE
+unpinned-image:VLLM_LLM_IMAGE
+
+# --- Production defaults ---------------------------------------------------
+# Redis holds the RQ queues while running allkeys-lru, so tasks can be evicted
+# under memory pressure. 'noeviction' fixes it in one line.
+queue-eviction:redis

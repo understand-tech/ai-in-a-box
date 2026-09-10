@@ -1,0 +1,7 @@
+Mount point for the certificate used by UT_INGRESS_MODE="custom".
+
+Drop these here, or in whichever directory UT_CERT_DIR names:
+  fullchain.pem   certificate followed by its intermediate chain
+  privkey.pem     the matching private key
+
+Never commit them: .gitignore excludes everything in this directory.

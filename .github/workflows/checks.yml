@@ -1,0 +1,24 @@
+name: checks
+
+on:
+  push:
+    branches: [main, "hotfix/**", "2026-**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  invariants:
+    name: repository invariants
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: ./test/invariants.sh
+
+  capabilities:
+    name: capabilities
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: ./test/capabilities.sh
