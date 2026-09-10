@@ -10,6 +10,13 @@ ALLOWED_PORTS_FILE="$SCRIPT_DIR/allowed-ports.txt"
 ENV_EXAMPLE="$REPO_ROOT/.env.example"
 COMPOSE_FILES=("$REPO_ROOT/compose.yaml" "$REPO_ROOT/compose.appbuilder.yaml")
 
+SENSITIVE_KEYS=(
+    MONGODB_PASSWORD JWT_SECRET ADMIN_SETUP_PASSWORD STATE_SECRET
+    OPENID_SECRET_KEY OA_KEY SENDGRID_API_KEY GROQ_API_KEY HF_TOKEN
+    VLLM_API_KEY GPU_VM_API_TOKEN APP_BUILDER_ANTHROPIC_API_KEY
+    APP_BUILDER_GATEWAY_API_KEY NGC_API_KEY CLAUDE_API_KEY
+)
+
 if [[ -t 1 ]]; then
     RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'; BOLD=$'\033[1m'; NC=$'\033[0m'
 else
@@ -35,6 +42,16 @@ env_raw_value() {
     line=${line%\"}; line=${line#\"}
     line=${line%\'}; line=${line#\'}
     printf '%s' "$line"
+}
+
+check_plaintext_secrets() {
+    local key value
+    for key in "${SENSITIVE_KEYS[@]}"; do
+        value=$(env_raw_value "$key" 2>/dev/null) || continue
+        [[ -z "$value" ]] && continue
+        report "plaintext-secret:${key}" \
+            "${key} ships a value in .env.example — every deployment that follows the guide reuses it"
+    done
 }
 
 read_baseline() {
@@ -87,6 +104,7 @@ compare_with_baseline() {
 }
 
 main() {
+    check_plaintext_secrets
     compare_with_baseline
 }
 

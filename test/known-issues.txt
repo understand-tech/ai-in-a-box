@@ -5,3 +5,26 @@
 # prunes stops protecting anything.
 #
 # One identifier per line. Keep the reason next to it.
+
+# --- Secrets shipped in .env.example ---------------------------------------
+# Every deployment that follows the installation guide runs with these values.
+# JWT_SECRET is the serious one: it is shared by api, app-llms, app-assistants
+# and app-builder, so a token minted at one customer is accepted at another.
+# Fix prepared, not yet applied — the values must be emptied and generated at
+# install time instead.
+plaintext-secret:JWT_SECRET
+plaintext-secret:MONGODB_PASSWORD
+plaintext-secret:ADMIN_SETUP_PASSWORD
+plaintext-secret:STATE_SECRET
+plaintext-secret:OPENID_SECRET_KEY
+
+# Placeholder-looking values that read as configured and therefore never get
+# corrected. Same fix as above: empty them.
+plaintext-secret:OA_KEY
+plaintext-secret:SENDGRID_API_KEY
+
+# GPU_VM_API_TOKEN="ut" is the token the application presents to the inference
+# service. VLLM_API_KEY="EMPTY" is vLLM's convention for "no authentication",
+# which is why inference is reachable unauthenticated.
+plaintext-secret:GPU_VM_API_TOKEN
+plaintext-secret:VLLM_API_KEY
