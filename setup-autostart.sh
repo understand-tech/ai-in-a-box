@@ -745,6 +745,30 @@ UNIT_EOF
     systemctl enable "$SERVICE_NAME"
 }
 
+# compose.appbuilder.yaml declares the 'proxy' network external, because the
+# generated apps join it from their own compose projects — so no single project
+# owns it, and nothing creates it on the way up. Without it `docker compose up`
+# fails outright as soon as the App Builder overlay is enabled in COMPOSE_FILE.
+#
+# The README has always said this script creates it. It did not.
+install_proxy_network() {
+    case "$(env_value COMPOSE_FILE)" in
+        *appbuilder*) ;;
+        *) return 0 ;;
+    esac
+
+    log_step "Checking the App Builder network..."
+
+    if "$DOCKER_BIN" network inspect proxy >/dev/null 2>&1; then
+        log_info "Network 'proxy' already exists"
+    elif "$DOCKER_BIN" network create proxy >/dev/null 2>&1; then
+        log_info "Created network 'proxy' (required by the App Builder overlay)"
+    else
+        log_warn "Could not create the 'proxy' network — 'docker compose up' will fail"
+        log_warn "Create it by hand: docker network create proxy"
+    fi
+}
+
 do_install() {
     banner "UnderstandTech Auto-Start Installation"
 
@@ -752,6 +776,7 @@ do_install() {
     check_prerequisites
     install_service
     install_mdns_alias
+    install_proxy_network
 
     echo ""
     log_info "Installation complete!"
