@@ -178,8 +178,6 @@ preflight() {
     log_step "Checking the system"
     local blocking=0
 
-    [[ $EUID -eq 0 ]] || die "Run with sudo: sudo $0"
-
     if ! command -v docker >/dev/null 2>&1; then
         log_error "Docker is not installed."
         blocking=1
