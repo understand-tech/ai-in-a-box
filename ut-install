@@ -92,6 +92,18 @@ hidden prompt. It is never passed on a command line and never written to the log
 EOF
 }
 
+as_target_user() {
+    if [[ "$TARGET_USER" == "root" ]]; then
+        "$@"
+    else
+        sudo -u "$TARGET_USER" -H "$@"
+    fi
+}
+
+checkout_exists() { [[ -d "$INSTALL_DIR/.git" ]]; }
+
+registry_credentials_stored() { grep -q "$REGISTRY" /root/.docker/config.json 2>/dev/null; }
+
 preflight() {
     log_step "Checking the system"
     local blocking=0
@@ -168,6 +180,92 @@ preflight() {
     log_info "System ready"
 }
 
+token_required() {
+    checkout_exists && registry_credentials_stored && return 1
+    return 0
+}
+
+read_token() {
+    [[ -n "$REGISTRY_TOKEN" ]] && return 0
+
+    if [[ -n "$TOKEN_FILE" ]]; then
+        [[ -r "$TOKEN_FILE" ]] || die "Token file not readable: ${TOKEN_FILE}"
+        REGISTRY_TOKEN=$(tr -d '\r\n' < "$TOKEN_FILE")
+    elif token_required; then
+        printf 'Registry token for %s (input hidden): ' "$REGISTRY_USER" > /dev/tty
+        read -rs REGISTRY_TOKEN < /dev/tty
+        printf '\n' > /dev/tty
+    else
+        log_info "Checkout and registry credentials already present — no token needed"
+        return 0
+    fi
+
+    [[ -n "$REGISTRY_TOKEN" ]] || die "No registry token supplied."
+}
+
+step_registry_login() {
+    if [[ -z "$REGISTRY_TOKEN" ]]; then
+        log_step "Registry credentials already stored"
+        return 0
+    fi
+
+    log_step "Authenticating with the registry"
+
+    printf '%s' "$REGISTRY_TOKEN" | docker login "$REGISTRY" -u "$REGISTRY_USER" --password-stdin >/dev/null \
+        || die "Registry login failed. Check the token, or ask for a new one."
+    log_info "root can pull private images"
+
+    if [[ "$TARGET_USER" != "root" ]]; then
+        if printf '%s' "$REGISTRY_TOKEN" | as_target_user docker login "$REGISTRY" -u "$REGISTRY_USER" --password-stdin >/dev/null 2>&1; then
+            log_info "${TARGET_USER} can pull private images"
+        else
+            log_warn "Could not store credentials for ${TARGET_USER}; updates will need sudo"
+        fi
+    fi
+}
+
+clone_without_persisting_token() {
+    # The helper references the variables by name instead of expanding them, so
+    # the token reaches git through the environment and never appears in the
+    # process table, the shell history, or .git/config.
+    UT_REGISTRY_USER="$REGISTRY_USER" UT_REGISTRY_TOKEN="$REGISTRY_TOKEN" \
+    git -c 'credential.helper=!f() { printf "username=%s\npassword=%s\n" "$UT_REGISTRY_USER" "$UT_REGISTRY_TOKEN"; }; f' \
+        clone --quiet --branch "$REPO_REF" "$REPO_URL" "$INSTALL_DIR"
+}
+
+assert_token_absent_from_git_config() {
+    [[ -n "$REGISTRY_TOKEN" ]] || return 0
+    grep -q "$REGISTRY_TOKEN" "$INSTALL_DIR/.git/config" 2>/dev/null \
+        && die "The token leaked into .git/config — refusing to continue."
+    return 0
+}
+
+step_fetch_repo() {
+    log_step "Fetching the deployment files"
+
+    if checkout_exists; then
+        if $DO_UPDATE; then
+            ( cd "$INSTALL_DIR"
+              git fetch --quiet origin "$REPO_REF"
+              git checkout --quiet "$REPO_REF"
+              git reset --quiet --hard "origin/${REPO_REF}" )
+            log_info "Updated to ${REPO_REF} ($(cd "$INSTALL_DIR" && git rev-parse --short HEAD))"
+        else
+            log_info "Checkout already present ($(cd "$INSTALL_DIR" && git rev-parse --short HEAD)) — use --update to refresh"
+        fi
+        return 0
+    fi
+
+    [[ -e "$INSTALL_DIR" && -n "$(ls -A "$INSTALL_DIR" 2>/dev/null)" ]] \
+        && die "${INSTALL_DIR} exists and is not a checkout. Move it aside first."
+
+    mkdir -p "$(dirname "$INSTALL_DIR")"
+    clone_without_persisting_token || die "Clone failed. Check the token and the network."
+    assert_token_absent_from_git_config
+
+    log_info "Cloned ${REPO_REF} into ${INSTALL_DIR}"
+}
+
 start_logging() {
     mkdir -p "$(dirname "$LOG_FILE")"
     touch "$LOG_FILE"
@@ -206,6 +304,9 @@ main() {
 
     start_logging
     preflight
+    read_token
+    step_registry_login
+    step_fetch_repo
 }
 
 [[ "${BASH_SOURCE[0]}" == "${0}" ]] && main "$@"
