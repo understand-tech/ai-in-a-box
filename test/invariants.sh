@@ -121,6 +121,17 @@ check_production_defaults() {
     fi
 }
 
+check_documented_paths_exist() {
+    local path
+    while read -r path; do
+        [[ -n "$path" ]] || continue
+        [[ -e "$REPO_ROOT/$path" ]] && continue
+        report "missing-documented-path:${path}" \
+            "README.md refers to ${path}, which does not exist"
+    done <<< "$(grep -ohE '`[A-Za-z0-9_./-]+\.(ya?ml|sh|svg|caddy|example)`' "$REPO_ROOT/README.md" \
+        | tr -d '`' | sort -u)"
+}
+
 read_baseline() {
     [[ -f "$BASELINE_FILE" ]] || return 0
     grep -vE '^\s*(#|$)' "$BASELINE_FILE" || true
@@ -176,6 +187,7 @@ main() {
     check_published_ports_are_allowed
     check_images_are_pinned
     check_production_defaults
+    check_documented_paths_exist
     compare_with_baseline
 }
 
