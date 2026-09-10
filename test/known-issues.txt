@@ -35,3 +35,20 @@ plaintext-secret:VLLM_API_KEY
 unlisted-port:mongodb:27018:27017
 unlisted-port:nim-llm:8001:8000
 unlisted-port:nim-vlm:8002:8000
+
+# --- Mutable image references ----------------------------------------------
+# Tags like 2.0-arm64 move, so two boxes on "the same version" can differ and a
+# diagnosis on one does not transfer to another. Pinning by digest is a build
+# chain change, not a one-line edit.
+unpinned-image:LLM_IMAGE
+unpinned-image:API_IMAGE
+unpinned-image:API_CUSTOMER_IMAGE
+unpinned-image:WORKER_IMAGE
+unpinned-image:WORKER_CUSTOMER_IMAGE
+unpinned-image:FRONTEND_IMAGE
+unpinned-image:LLMS_APP_IMAGE
+unpinned-image:ASSISTANTS_APP_IMAGE
+unpinned-image:ADMIN_PORTAL_IMAGE
+unpinned-image:APP_BUILDER_IMAGE
+unpinned-image:NIM_IMAGE
+unpinned-image:VLLM_LLM_IMAGE

@@ -95,6 +95,18 @@ check_published_ports_are_allowed() {
     done <<< "$(published_port_entries "${COMPOSE_FILES[@]}")"
 }
 
+check_images_are_pinned() {
+    local key value
+    while read -r key; do
+        [[ "$key" == *_IMAGE ]] || continue
+        value=$(env_raw_value "$key") || continue
+        [[ -z "$value" ]] && continue
+        [[ "$value" == *@sha256:* ]] && continue
+        report "unpinned-image:${key}" \
+            "${key}=${value} is a mutable reference — two boxes on the same version can differ"
+    done <<< "$(env_keys)"
+}
+
 read_baseline() {
     [[ -f "$BASELINE_FILE" ]] || return 0
     grep -vE '^\s*(#|$)' "$BASELINE_FILE" || true
@@ -148,6 +160,7 @@ main() {
     check_plaintext_secrets
     check_variables_without_default_are_declared
     check_published_ports_are_allowed
+    check_images_are_pinned
     compare_with_baseline
 }
 
