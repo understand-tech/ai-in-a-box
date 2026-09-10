@@ -150,6 +150,12 @@ is_shipped_placeholder() {
 
 database_already_initialised() { docker volume inspect ut-mongodb-data >/dev/null 2>&1; }
 
+compose_in_dir() { ( cd "$INSTALL_DIR" && docker compose "$@" ); }
+
+appbuilder_enabled() {
+    [[ "$(env_get "$INSTALL_DIR/.env" COMPOSE_FILE 2>/dev/null || true)" == *appbuilder* ]]
+}
+
 checkout_exists() { [[ -d "$INSTALL_DIR/.git" ]]; }
 
 registry_credentials_stored() { grep -q "$REGISTRY" /root/.docker/config.json 2>/dev/null; }
@@ -390,6 +396,62 @@ step_configure() {
     log_info "Data directories ready under ${DATA_DIR}"
 }
 
+step_check_resolution() {
+    log_step "Checking how ${DOMAIN} resolves"
+
+    if [[ "$DOMAIN" == *.local ]]; then
+        log_warn "${DOMAIN} is an mDNS name: it only resolves on this network"
+        log_warn "  segment. A box in a datacentre will be unreachable — use a"
+        log_warn "  domain from the customer's DNS zone instead."
+        command -v avahi-daemon >/dev/null 2>&1 \
+            || log_warn "  avahi is not installed, so nothing publishes it either."
+        return 0
+    fi
+
+    if getent hosts "$DOMAIN" >/dev/null 2>&1; then
+        log_info "${DOMAIN} resolves"
+    else
+        log_warn "${DOMAIN} does not resolve yet. Two records are needed:"
+        log_warn "    ${DOMAIN}.      A   <this machine's address>"
+        log_warn "    *.${DOMAIN}.    A   <this machine's address>"
+        log_warn "  The wildcard covers the satellite apps and every generated app."
+    fi
+}
+
+step_docker_group() {
+    log_step "Granting Docker access"
+
+    if [[ "$TARGET_USER" == "root" ]]; then
+        log_info "Running as root — nothing to grant"
+        return 0
+    fi
+
+    if id -nG "$TARGET_USER" | tr ' ' '\n' | grep -qx docker; then
+        log_info "${TARGET_USER} is already in the docker group"
+        return 0
+    fi
+
+    usermod -aG docker "$TARGET_USER"
+    log_info "Added ${TARGET_USER} to the docker group"
+    log_warn "${TARGET_USER} must log out and back in before running docker unprivileged"
+}
+
+step_networks() {
+    log_step "Preparing Docker networks"
+
+    if ! appbuilder_enabled; then
+        log_info "App Builder disabled — no extra network needed"
+        return 0
+    fi
+
+    if docker network inspect proxy >/dev/null 2>&1; then
+        log_info "Network 'proxy' already present"
+    else
+        docker network create proxy >/dev/null
+        log_info "Created network 'proxy' — the App Builder overlay declares it external"
+    fi
+}
+
 start_logging() {
     mkdir -p "$(dirname "$LOG_FILE")"
     touch "$LOG_FILE"
@@ -432,6 +494,9 @@ main() {
     step_registry_login
     step_fetch_repo
     step_configure
+    step_check_resolution
+    step_docker_group
+    step_networks
 }
 
 [[ "${BASH_SOURCE[0]}" == "${0}" ]] && main "$@"
