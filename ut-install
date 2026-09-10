@@ -100,6 +100,56 @@ as_target_user() {
     fi
 }
 
+random_alphanumeric() {
+    # The platform builds its database URI by concatenation, so a value holding
+    # @ / # or % breaks the connection string.
+    local chars="${1:-32}" raw
+    if command -v openssl >/dev/null 2>&1; then
+        raw=$(openssl rand -hex "$(( (chars + 1) / 2 ))")
+    else
+        raw=$(od -An -tx1 -N "$(( (chars + 1) / 2 ))" /dev/urandom | tr -d ' \n')
+    fi
+    printf '%s' "${raw:0:chars}"
+}
+
+env_get() {
+    local file=$1 key=$2 value
+    [[ -f "$file" ]] || return 1
+    value=$(grep -m1 -E "^[[:space:]]*${key}=" "$file" 2>/dev/null) || return 1
+    value=${value#*=}
+    value=${value%\"}; value=${value#\"}
+    value=${value%\'}; value=${value#\'}
+    printf '%s' "$value"
+}
+
+env_set() {
+    # Copying the temp file's content back, rather than moving it over, keeps
+    # the original inode and its 0600 permissions.
+    local file=$1 key=$2 value=$3 tmp found=0 line
+    tmp=$(mktemp)
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" =~ ^[[:space:]]*${key}= ]]; then
+            printf '%s="%s"\n' "$key" "$value" >> "$tmp"
+            found=1
+        else
+            printf '%s\n' "$line" >> "$tmp"
+        fi
+    done < "$file"
+    (( found )) || printf '%s="%s"\n' "$key" "$value" >> "$tmp"
+    cat "$tmp" > "$file"
+    rm -f "$tmp"
+}
+
+is_shipped_placeholder() {
+    local candidate=$1 placeholder
+    for placeholder in "${SHIPPED_PLACEHOLDERS[@]}"; do
+        [[ "$candidate" == "$placeholder" ]] && return 0
+    done
+    return 1
+}
+
+database_already_initialised() { docker volume inspect ut-mongodb-data >/dev/null 2>&1; }
+
 checkout_exists() { [[ -d "$INSTALL_DIR/.git" ]]; }
 
 registry_credentials_stored() { grep -q "$REGISTRY" /root/.docker/config.json 2>/dev/null; }
@@ -266,6 +316,80 @@ step_fetch_repo() {
     log_info "Cloned ${REPO_REF} into ${INSTALL_DIR}"
 }
 
+generate_database_credentials() {
+    local env_file=$1 user
+
+    # The mongo image only reads MONGO_INITDB_ROOT_PASSWORD when it creates the
+    # data directory. Rotating it later changes nothing in the database and just
+    # stops every service from connecting.
+    if database_already_initialised; then
+        log_info "Database already initialised — leaving its credentials alone"
+        return 0
+    fi
+
+    if ! is_shipped_placeholder "$(env_get "$env_file" MONGODB_PASSWORD || true)"; then
+        log_info "Database credentials already set"
+        return 0
+    fi
+
+    user=$(env_get "$env_file" MONGODB_USERNAME || true)
+    [[ -z "$user" || "$user" == "mongoadmin" ]] && user="ut$(random_alphanumeric 8)"
+    env_set "$env_file" MONGODB_USERNAME "$user"
+    env_set "$env_file" MONGODB_PASSWORD "$(random_alphanumeric 32)"
+    log_info "Generated database credentials"
+}
+
+generate_application_secrets() {
+    local env_file=$1 key rotated=()
+
+    for key in "${GENERATED_SECRET_KEYS[@]}"; do
+        if is_shipped_placeholder "$(env_get "$env_file" "$key" || true)"; then
+            case "$key" in
+                JWT_SECRET) env_set "$env_file" "$key" "$(random_alphanumeric 64)" ;;
+                *)          env_set "$env_file" "$key" "$(random_alphanumeric 32)" ;;
+            esac
+            rotated+=("$key")
+        fi
+    done
+
+    if (( ${#rotated[@]} == 0 )); then
+        log_info "Secrets already set"
+        return 0
+    fi
+
+    log_info "Generated: ${rotated[*]}"
+    [[ " ${rotated[*]} " == *" JWT_SECRET "* ]] \
+        && log_warn "JWT_SECRET was the shipped value — tokens were forgeable across deployments"
+    return 0
+}
+
+step_configure() {
+    log_step "Writing the configuration"
+
+    local env_file="$INSTALL_DIR/.env"
+
+    if [[ -f "$env_file" ]]; then
+        log_info "Keeping the existing .env"
+    else
+        [[ -f "$INSTALL_DIR/.env.example" ]] || die "No .env.example in ${INSTALL_DIR}."
+        cp "$INSTALL_DIR/.env.example" "$env_file"
+        log_info "Created .env from .env.example"
+    fi
+    chmod 600 "$env_file"
+    chown "$TARGET_USER" "$env_file" 2>/dev/null || true
+
+    if [[ "$(env_get "$env_file" UT_DOMAIN || true)" != "$DOMAIN" ]]; then
+        env_set "$env_file" UT_DOMAIN "$DOMAIN"
+        log_info "Address set to ${DOMAIN} — every other URL in .env derives from it"
+    fi
+
+    generate_database_credentials "$env_file"
+    generate_application_secrets "$env_file"
+
+    mkdir -p "$DATA_DIR/app-data" "$DATA_DIR/appbuilder"/{workspaces,prod-workspaces,traefik-dynamic}
+    log_info "Data directories ready under ${DATA_DIR}"
+}
+
 start_logging() {
     mkdir -p "$(dirname "$LOG_FILE")"
     touch "$LOG_FILE"
@@ -307,6 +431,7 @@ main() {
     read_token
     step_registry_login
     step_fetch_repo
+    step_configure
 }
 
 [[ "${BASH_SOURCE[0]}" == "${0}" ]] && main "$@"
