@@ -30,7 +30,7 @@ SHIPPED_PLACEHOLDERS=(
     "" "12345678" "password" "SECRET" "SJKFVK" "FVVE" "SJBVSJB" "ut"
     "czIzgahTJGzdG3b1XtEgGIWPvwhdfBvhVd1JjzetjWQ"
 )
-GENERATED_SECRET_KEYS=(JWT_SECRET STATE_SECRET OPENID_SECRET_KEY ADMIN_SETUP_PASSWORD)
+GENERATED_SECRET_KEYS=(JWT_SECRET STATE_SECRET OPENID_SECRET_KEY ADMIN_SETUP_PASSWORD BACKUP_FILES_PASSWORD)
 
 if [[ -t 1 ]]; then
     RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'
@@ -368,8 +368,8 @@ generate_application_secrets() {
     for key in "${GENERATED_SECRET_KEYS[@]}"; do
         if is_shipped_placeholder "$(env_get "$env_file" "$key" || true)"; then
             case "$key" in
-                JWT_SECRET) env_set "$env_file" "$key" "$(random_alphanumeric 64)" ;;
-                *)          env_set "$env_file" "$key" "$(random_alphanumeric 32)" ;;
+                JWT_SECRET|BACKUP_FILES_PASSWORD) env_set "$env_file" "$key" "$(random_alphanumeric 64)" ;;
+                *)                                env_set "$env_file" "$key" "$(random_alphanumeric 32)" ;;
             esac
             rotated+=("$key")
         fi
@@ -553,13 +553,25 @@ step_autostart() {
     log_info "Boot service and mDNS publisher installed"
 }
 
-print_admin_password_out_of_band() {
-    local env_file=$1 admin_password
-    admin_password=$(env_get "$env_file" ADMIN_SETUP_PASSWORD 2>/dev/null || true)
-    [[ -n "$admin_password" && -w /dev/tty ]] || return 0
+print_secrets_out_of_band() {
+    local env_file=$1 admin_password backup_password
+    [[ -w /dev/tty ]] || return 0
 
-    printf '  %sInitial admin password%s  %s\n' "$BOLD" "$NC" "$admin_password" > /dev/tty
-    printf '  (shown here only — it is stored in %s, not in the install log)\n\n' "$env_file" > /dev/tty
+    admin_password=$(env_get "$env_file" ADMIN_SETUP_PASSWORD 2>/dev/null || true)
+    backup_password=$(env_get "$env_file" BACKUP_FILES_PASSWORD 2>/dev/null || true)
+
+    if [[ -n "$admin_password" ]]; then
+        printf '  %sInitial admin password%s  %s\n' "$BOLD" "$NC" "$admin_password" > /dev/tty
+    fi
+
+    if [[ -n "$backup_password" ]]; then
+        printf '\n  %sBackup repository password%s  %s\n' "$BOLD" "$NC" "$backup_password" > /dev/tty
+        printf '  %sWrite this down somewhere other than this machine.%s Losing it makes\n' "$YELLOW" "$NC" > /dev/tty
+        printf '  every snapshot unreadable, including copies held off-site — there is\n' > /dev/tty
+        printf '  no recovery path.\n' > /dev/tty
+    fi
+
+    printf '\n  (shown here only — stored in %s, never in the install log)\n\n' "$env_file" > /dev/tty
 }
 
 print_summary() {
@@ -589,7 +601,7 @@ ${BOLD}Installation complete${NC}
 
 EOF
 
-    print_admin_password_out_of_band "$env_file"
+    print_secrets_out_of_band "$env_file"
 }
 
 start_logging() {
