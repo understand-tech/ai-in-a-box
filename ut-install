@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+REPO_URL="${UT_REPO_URL:-https://github.com/understand-tech/ai-in-a-box.git}"
+REPO_REF="${UT_REPO_REF:-main}"
+REGISTRY="${UT_REGISTRY:-ghcr.io}"
+REGISTRY_USER="${UT_REGISTRY_USER:-dgx-access}"
+
+INSTALL_DIR="${UT_INSTALL_DIR:-/opt/understandtech}"
+DATA_DIR="/var/lib/understandtech"
+LOG_FILE="/var/log/ut-install.log"
+TARGET_USER="${SUDO_USER:-root}"
+DOMAIN="${UT_DOMAIN:-understand.local}"
+
+MIN_DOCKER_MAJOR=24
+MIN_DISK_BYTES=$((250 * 1000 * 1000 * 1000))
+MIN_RAM_KB=$((24 * 1024 * 1024))
+NIM_COLD_START_SECONDS=2700
+
+ACTION="install"
+DO_UPDATE=false
+DO_AUTOSTART=true
+DO_PULL=true
+TOKEN_FILE=""
+REGISTRY_TOKEN="${UT_REGISTRY_TOKEN:-}"
+HEALTH_TIMEOUT="${UT_HEALTH_TIMEOUT:-3600}"
+
+SHIPPED_PLACEHOLDERS=(
+    "" "12345678" "password" "SECRET" "SJKFVK" "FVVE" "SJBVSJB" "ut"
+    "czIzgahTJGzdG3b1XtEgGIWPvwhdfBvhVd1JjzetjWQ"
+)
+GENERATED_SECRET_KEYS=(JWT_SECRET STATE_SECRET OPENID_SECRET_KEY ADMIN_SETUP_PASSWORD)
+
+if [[ -t 1 ]]; then
+    RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'
+    CYAN=$'\033[0;36m'; BOLD=$'\033[1m'; NC=$'\033[0m'
+else
+    RED=""; GREEN=""; YELLOW=""; CYAN=""; BOLD=""; NC=""
+fi
+
+log()       { printf '%s\n' "$*"; }
+log_info()  { printf '%s[ ok ]%s %s\n' "$GREEN" "$NC" "$*"; }
+log_warn()  { printf '%s[warn]%s %s\n' "$YELLOW" "$NC" "$*"; }
+log_error() { printf '%s[fail]%s %s\n' "$RED" "$NC" "$*" >&2; }
+log_step()  { printf '\n%s==>%s %s%s%s\n' "$CYAN" "$NC" "$BOLD" "$*" "$NC"; }
+
+die() { log_error "$*"; exit 1; }
+
+report_failure_and_exit() {
+    local exit_code=$? line=$1
+    log_error "Install stopped at line ${line} (exit ${exit_code})."
+    log_error "Nothing was rolled back — re-running the same command resumes."
+    log_error "Log: ${LOG_FILE}"
+    exit "$exit_code"
+}
+trap 'report_failure_and_exit $LINENO' ERR
+
+usage() {
+    cat <<'EOF'
+ut-install — installs the UnderstandTech appliance in one command.
+
+Replaces steps 1 to 10 of the manual setup guide. Safe to re-run: every step
+checks its own state before acting, so an interrupted install is resumed by
+running the same command again.
+
+  sudo ./ut-install                 install
+  sudo ./ut-install --check         preflight only, changes nothing
+  sudo ./ut-install --update        also fast-forward an existing checkout
+
+Options
+  --check              Run the preflight checks and exit. Changes nothing.
+  --update             Fast-forward an existing checkout to the target ref.
+                       Off by default so a support fix applied on the machine
+                       is not silently discarded.
+  --token-file PATH    Read the registry token from a file instead of a prompt.
+  --dir PATH           Install directory (default: /opt/understandtech).
+  --domain NAME        Address the platform is served at
+                       (default: understand.local).
+  --no-autostart       Skip the boot service and the mDNS publisher.
+  --skip-pull          Do not pull images. Useful when they are already local.
+  --health-timeout N   Seconds to wait for services (default: 3600).
+  -h, --help           This message.
+
+Environment
+  UT_REGISTRY_TOKEN    Registry token, instead of --token-file or the prompt.
+  UT_REPO_REF          Branch or tag to install (default: main).
+  UT_DOMAIN            Address the platform is served at.
+
+The registry token is read from UT_REGISTRY_TOKEN, from --token-file, or from a
+hidden prompt. It is never passed on a command line and never written to the log.
+EOF
+}
+
+start_logging() {
+    mkdir -p "$(dirname "$LOG_FILE")"
+    touch "$LOG_FILE"
+    chmod 600 "$LOG_FILE"
+    exec > >(tee -a "$LOG_FILE") 2>&1
+    printf '\n===== ut-install %s =====\n' "$(date -Is)"
+}
+
+parse_arguments() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --check)          ACTION="check" ;;
+            --update)         DO_UPDATE=true ;;
+            --no-autostart)   DO_AUTOSTART=false ;;
+            --skip-pull)      DO_PULL=false ;;
+            --token-file)     TOKEN_FILE="${2:?--token-file needs a path}"; shift ;;
+            --dir)            INSTALL_DIR="${2:?--dir needs a path}"; shift ;;
+            --domain)         DOMAIN="${2:?--domain needs a name}"; shift ;;
+            --health-timeout) HEALTH_TIMEOUT="${2:?--health-timeout needs seconds}"; shift ;;
+            -h|--help)        usage; exit 0 ;;
+            *)                log_error "Unknown option: $1"; usage; exit 2 ;;
+        esac
+        shift
+    done
+}
+
+main() {
+    parse_arguments "$@"
+
+    if [[ "$ACTION" == "check" ]]; then
+        preflight
+        exit 0
+    fi
+
+    [[ $EUID -eq 0 ]] || die "Run with sudo: sudo $0"
+
+    start_logging
+
+}
+
+[[ "${BASH_SOURCE[0]}" == "${0}" ]] && main "$@"
