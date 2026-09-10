@@ -167,9 +167,10 @@ nvidia_runtime_registered() {
 # The toolkit stopped registering a docker runtime once CDI became its default
 # path, so a working GPU host can have no nvidia runtime at all.
 nvidia_cdi_devices_declared() {
-    local dir
-    for dir in /etc/cdi /var/run/cdi; do
-        ls "$dir"/nvidia*.yaml "$dir"/nvidia*.json >/dev/null 2>&1 && return 0
+    local candidate
+    for candidate in /etc/cdi/nvidia*.yaml /etc/cdi/nvidia*.json \
+                     /var/run/cdi/nvidia*.yaml /var/run/cdi/nvidia*.json; do
+        [[ -e "$candidate" ]] && return 0
     done
     return 1
 }
