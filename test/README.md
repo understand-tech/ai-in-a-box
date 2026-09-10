@@ -4,15 +4,37 @@
 
 | File | Purpose |
 |---|---|
+| `capabilities.sh` | Checks what the deployment can do, one line per capability. Needs Docker; renders configurations, starts nothing. |
 | `invariants.sh` | Checks the repository against a set of invariants. No dependencies beyond bash and coreutils, runs in under a second. |
 | `known-issues.txt` | Problems that already exist and are accepted for now, with the reason next to each. |
 | `allowed-ports.txt` | Ports intentionally published on every interface. |
 
-Run it from anywhere:
+Run them from anywhere:
 
 ```bash
+./test/capabilities.sh
 ./test/invariants.sh
 ```
+
+`capabilities.sh` prints what the deployment is verified to do:
+
+```
+Deployment topologies
+  ✔ the default role renders a valid stack
+  ✔ the control-plane role leaves out the inference engines
+
+Backward compatibility
+  ✔ an untouched install keeps its container, volume, network and data names
+
+Multi-machine roles
+  ✔ a compute node serves inference
+  ✔ overriding the prefixes isolates every resource
+```
+
+That list is the point. Each line is a capability the product is expected to
+have, checked on every push — so the output doubles as the specification, and a
+capability nobody checks is a capability that does not appear. Add a line when
+you add a capability; name it after what it does, not after the mechanism.
 
 ## What it is for
 
