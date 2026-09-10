@@ -68,6 +68,10 @@ check_variables_without_default_are_declared() {
     done <<< "$required"
 }
 
+# A published port is reported by its effective value, with ${VAR:-default}
+# collapsed to its default. Parameterising a port then leaves the identifier
+# unchanged, so the baseline survives an edit that alters the form without
+# altering the exposure.
 published_port_entries() {
     awk '
         /^  [a-z0-9_-]+:/ { service = $1; sub(":", "", service) }
@@ -75,6 +79,12 @@ published_port_entries() {
         in_ports && /^      - / {
             entry = $2
             gsub(/"/, "", entry)
+            while (match(entry, /\$\{[A-Za-z_][A-Za-z0-9_]*:-[^}]*\}/)) {
+                spec = substr(entry, RSTART, RLENGTH)
+                sub(/^\$\{[A-Za-z_][A-Za-z0-9_]*:-/, "", spec)
+                sub(/\}$/, "", spec)
+                entry = substr(entry, 1, RSTART - 1) spec substr(entry, RSTART + RLENGTH)
+            }
             print service "|" entry
             next
         }
