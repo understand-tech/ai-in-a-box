@@ -1,0 +1,7 @@
+# Problems that already exist and are accepted for now.
+#
+# test/invariants.sh fails on any problem NOT listed here, and also on any line
+# here whose problem has been fixed. The second half matters: a baseline nobody
+# prunes stops protecting anything.
+#
+# One identifier per line. Keep the reason next to it.
