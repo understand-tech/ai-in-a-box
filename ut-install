@@ -160,6 +160,20 @@ checkout_exists() { [[ -d "$INSTALL_DIR/.git" ]]; }
 
 registry_credentials_stored() { grep -q "$REGISTRY" /root/.docker/config.json 2>/dev/null; }
 
+nvidia_runtime_registered() {
+    docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q nvidia
+}
+
+# The toolkit stopped registering a docker runtime once CDI became its default
+# path, so a working GPU host can have no nvidia runtime at all.
+nvidia_cdi_devices_declared() {
+    local dir
+    for dir in /etc/cdi /var/run/cdi; do
+        ls "$dir"/nvidia*.yaml "$dir"/nvidia*.json >/dev/null 2>&1 && return 0
+    done
+    return 1
+}
+
 preflight() {
     log_step "Checking the system"
     local blocking=0
@@ -190,11 +204,15 @@ preflight() {
 
     if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
         log_info "GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"
-        if docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q nvidia; then
-            log_info "NVIDIA container runtime available"
+        if nvidia_runtime_registered; then
+            log_info "GPU reachable from containers through the nvidia runtime"
+        elif nvidia_cdi_devices_declared; then
+            log_info "GPU reachable from containers through CDI"
         else
-            log_error "The NVIDIA container runtime is not registered with Docker."
-            log_error "  Inference containers cannot start without it."
+            log_error "Docker cannot reach the GPU: no nvidia runtime and no CDI device."
+            log_error "  Inference containers will not start. Install the NVIDIA"
+            log_error "  Container Toolkit, then either 'nvidia-ctk runtime configure'"
+            log_error "  or 'nvidia-ctk cdi generate'."
             blocking=1
         fi
     else
