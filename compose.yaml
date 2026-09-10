@@ -132,8 +132,8 @@ services:
     ports:
       - "27018:27017"
     environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGODB_USERNAME:-}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_PASSWORD:-}
+      MONGO_INITDB_ROOT_USERNAME: ${MONGODB_USERNAME:?generate it, see .env.example}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_PASSWORD:?generate it, see .env.example}
       MONGO_INITDB_DATABASE: ${MONGODB_DATABASE:-}
     command: >
       mongod
@@ -145,7 +145,7 @@ services:
       - ut-frontend-network
       - ut-backend-network
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok", "-u", "${MONGODB_USERNAME:-}", "-p", "${MONGODB_PASSWORD:-}", "--authenticationDatabase", "admin"]
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok", "-u", "${MONGODB_USERNAME:?generate it, see .env.example}", "-p", "${MONGODB_PASSWORD:?generate it, see .env.example}", "--authenticationDatabase", "admin"]
       <<: *healthcheck-defaults
       start_period: 30s
     logging: *default-logging
@@ -171,8 +171,8 @@ services:
       DB01_PORT: ${MONGODB_PORT:-27017}
       # Restore one database out of the archive with:
       #   mongorestore --archive=<file> --gzip --nsInclude='ut-app-llms.*'
-      DB01_USER: ${MONGODB_USERNAME:-mongoadmin}
-      DB01_PASS: ${MONGODB_PASSWORD:-12345678}
+      DB01_USER: ${MONGODB_USERNAME:?generate it, see .env.example}
+      DB01_PASS: ${MONGODB_PASSWORD:?generate it, see .env.example}
       DB01_AUTH: admin
 
       DB01_BACKUP_BEGIN: ${BACKUP_BEGIN:-1520}
@@ -257,16 +257,16 @@ services:
       DOMAIN_URL: *url-domain
       MONGODB_HOST: ${MONGODB_HOST:-}
       MONGODB_PORT: ${MONGODB_PORT:-}
-      MONGODB_USERNAME: ${MONGODB_USERNAME:-}
-      MONGODB_PASSWORD: ${MONGODB_PASSWORD:-}
+      MONGODB_USERNAME: ${MONGODB_USERNAME:?generate it, see .env.example}
+      MONGODB_PASSWORD: ${MONGODB_PASSWORD:?generate it, see .env.example}
       MONGODB_DATABASE: ${MONGODB_DATABASE:-}
       REDIS_PORT: ${REDIS_PORT:-}
       REDIS_HOST: ${REDIS_HOST:-}
       PUBLIC_BASE_URL: *url-public-base
       REDIRECT_PATH: *url-redirect-path
       REDIRECT_URI: *url-redirect-uri
-      STATE_SECRET: ${STATE_SECRET:-}
-      GPU_VM_API_TOKEN: ${GPU_VM_API_TOKEN:-}
+      STATE_SECRET: ${STATE_SECRET:?generate it, see .env.example}
+      GPU_VM_API_TOKEN: ${GPU_VM_API_TOKEN:?generate it, see .env.example}
       GPU_VM_URL: ${GPU_VM_URL:-}
       ADMIN_MAIL: ${ADMIN_MAIL:-}
       BACKEND_URL: *url-backend
@@ -275,7 +275,7 @@ services:
       OA_KEY: ${OA_KEY:-}
       DEPLOY_ENV: ${DEPLOY_ENV:-}
       EXTRA_ALLOWED_ORIGINS: *url-allowed-origins
-      JWT_SECRET: ${JWT_SECRET}
+      JWT_SECRET: ${JWT_SECRET:?generate it, see .env.example}
       VLLM_LLM_BASE_URL: ${VLLM_LLM_BASE_URL:-}
       VLLM_VLM_BASE_URL: ${VLLM_VLM_BASE_URL:-}
       VLLM_API_KEY: ${VLLM_API_KEY:-}
@@ -329,11 +329,11 @@ services:
       REDIS_PORT: ${REDIS_PORT:-}
       MONGODB_HOST: ${MONGODB_HOST:-}
       MONGODB_PORT: ${MONGODB_PORT:-}
-      MONGODB_USERNAME: ${MONGODB_USERNAME:-}
-      MONGODB_PASSWORD: ${MONGODB_PASSWORD:-}
+      MONGODB_USERNAME: ${MONGODB_USERNAME:?generate it, see .env.example}
+      MONGODB_PASSWORD: ${MONGODB_PASSWORD:?generate it, see .env.example}
       MONGODB_DATABASE: ${MONGODB_DATABASE:-}
       GPU_VM_URL: ${GPU_VM_URL:-}
-      GPU_VM_API_TOKEN: ${GPU_VM_API_TOKEN:-}
+      GPU_VM_API_TOKEN: ${GPU_VM_API_TOKEN:?generate it, see .env.example}
       DOMAIN_URL: *url-domain
       FRONTEND_URL_AUTH: *url-frontend-auth
       ADMIN_MAIL: ${ADMIN_MAIL:-}
@@ -408,16 +408,16 @@ services:
       DOMAIN_URL: *url-domain
       MONGODB_HOST: ${MONGODB_HOST:-}
       MONGODB_PORT: ${MONGODB_PORT:-}
-      MONGODB_USERNAME: ${MONGODB_USERNAME:-}
-      MONGODB_PASSWORD: ${MONGODB_PASSWORD:-}
+      MONGODB_USERNAME: ${MONGODB_USERNAME:?generate it, see .env.example}
+      MONGODB_PASSWORD: ${MONGODB_PASSWORD:?generate it, see .env.example}
       MONGODB_DATABASE: ${MONGODB_DATABASE:-}
       REDIS_PORT: ${REDIS_PORT:-}
       REDIS_HOST: ${REDIS_HOST:-}
       PUBLIC_BASE_URL: *url-public-base
       REDIRECT_PATH: *url-redirect-path
       REDIRECT_URI: *url-redirect-uri
-      STATE_SECRET: ${STATE_SECRET:-}
-      GPU_VM_API_TOKEN: ${GPU_VM_API_TOKEN:-}
+      STATE_SECRET: ${STATE_SECRET:?generate it, see .env.example}
+      GPU_VM_API_TOKEN: ${GPU_VM_API_TOKEN:?generate it, see .env.example}
       GPU_VM_URL: ${GPU_VM_URL:-}
       ADMIN_MAIL: ${ADMIN_MAIL:-}
       BACKEND_URL: *url-backend
@@ -473,11 +473,11 @@ services:
       REDIS_PORT: ${REDIS_PORT:-}
       MONGODB_HOST: ${MONGODB_HOST:-}
       MONGODB_PORT: ${MONGODB_PORT:-}
-      MONGODB_USERNAME: ${MONGODB_USERNAME:-}
-      MONGODB_PASSWORD: ${MONGODB_PASSWORD:-}
+      MONGODB_USERNAME: ${MONGODB_USERNAME:?generate it, see .env.example}
+      MONGODB_PASSWORD: ${MONGODB_PASSWORD:?generate it, see .env.example}
       MONGODB_DATABASE: ${MONGODB_DATABASE:-}
       GPU_VM_URL: ${GPU_VM_URL:-}
-      GPU_VM_API_TOKEN: ${GPU_VM_API_TOKEN:-}
+      GPU_VM_API_TOKEN: ${GPU_VM_API_TOKEN:?generate it, see .env.example}
       DOMAIN_URL: *url-domain
       FRONTEND_URL_AUTH: *url-frontend-auth
       GROQ_API_KEY: ${GROQ_API_KEY:-}
@@ -513,8 +513,8 @@ services:
     environment:
       MONGODB_HOST: ${MONGODB_HOST:-}
       MONGODB_PORT: ${MONGODB_PORT:-}
-      MONGODB_USERNAME: ${MONGODB_USERNAME:-}
-      MONGODB_PASSWORD: ${MONGODB_PASSWORD:-}
+      MONGODB_USERNAME: ${MONGODB_USERNAME:?generate it, see .env.example}
+      MONGODB_PASSWORD: ${MONGODB_PASSWORD:?generate it, see .env.example}
       MONGODB_DB: ${APP_LLMS_MONGODB_DB:-ut-app-llms}
       VITE_DB_PROVIDER: ${DB_PROVIDER:-}
       VITE_API_BASE_URL: *url-vite-api-base
@@ -522,7 +522,7 @@ services:
       UT_APP_BASE_URL: http://api:8501/api
       UT_CUSTOMER_URL: http://api-customer:8501
       UNDERSTAND_API_VERSION: ${UNDERSTAND_API_VERSION:-v3}
-      UT_JWT_SECRET: ${JWT_SECRET:-}
+      UT_JWT_SECRET: ${JWT_SECRET:?generate it, see .env.example}
       UT_APP_LLMS_BASE_URL: *url-app-llms
       CORS_ORIGINS: *url-app-llms-cors
     networks:
@@ -552,8 +552,8 @@ services:
     environment:
       MONGODB_HOST: ${MONGODB_HOST:-}
       MONGODB_PORT: ${MONGODB_PORT:-}
-      MONGODB_USERNAME: ${MONGODB_USERNAME:-}
-      MONGODB_PASSWORD: ${MONGODB_PASSWORD:-}
+      MONGODB_USERNAME: ${MONGODB_USERNAME:?generate it, see .env.example}
+      MONGODB_PASSWORD: ${MONGODB_PASSWORD:?generate it, see .env.example}
       MONGO_DB: ${APP_ASSISTANTS_MONGODB_DB:-ut-app-assistants}
       VITE_DB_PROVIDER: ${DB_PROVIDER:-}
       VITE_API_BASE_URL: *url-vite-api-base
@@ -561,7 +561,7 @@ services:
       UT_APP_BASE_URL: http://api:8501/api
       UT_CUSTOMER_URL: http://api-customer:8501
       UNDERSTAND_API_VERSION: ${UNDERSTAND_API_VERSION:-v3}
-      UT_JWT_SECRET: ${JWT_SECRET:-}
+      UT_JWT_SECRET: ${JWT_SECRET:?generate it, see .env.example}
       UT_APP_ASSISTANTS_BASE_URL: *url-app-assistants
       CORS_ORIGINS: *url-app-assistants-cors
     volumes:
@@ -691,7 +691,7 @@ services:
       LOCAL_STORAGE_BASE: ${LOCAL_STORAGE_BASE:-}
       DB_PROVIDER: ${DB_PROVIDER:-}
       STORAGE_PROVIDER: ${STORAGE_PROVIDER:-}
-      GPU_VM_API_TOKEN: ${GPU_VM_API_TOKEN:-}
+      GPU_VM_API_TOKEN: ${GPU_VM_API_TOKEN:?generate it, see .env.example}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       SENDGRID_API_KEY: ${SENDGRID_API_KEY:-}
       OLLAMA_MODEL_LLM: ${OLLAMA_MODEL_LLM:-}
@@ -703,8 +703,8 @@ services:
       EMBED_MODEL_NAME: ${EMBED_MODEL_NAME:-}
       MONGODB_HOST: ${MONGODB_HOST:-}
       MONGODB_PORT: ${MONGODB_PORT:-}
-      MONGODB_USERNAME: ${MONGODB_USERNAME:-}
-      MONGODB_PASSWORD: ${MONGODB_PASSWORD:-}
+      MONGODB_USERNAME: ${MONGODB_USERNAME:?generate it, see .env.example}
+      MONGODB_PASSWORD: ${MONGODB_PASSWORD:?generate it, see .env.example}
       MONGODB_DATABASE: ${MONGODB_DATABASE:-}
       RERANKER_HF_PATH: ${RERANKER_HF_PATH:-}
       RERANKER_MODEL_NAME: ${RERANKER_MODEL_NAME:-}
