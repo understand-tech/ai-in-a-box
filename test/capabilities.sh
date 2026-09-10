@@ -99,6 +99,50 @@ overrides_isolate_every_resource() {
     ! grep -qE 'name: ut-mongodb-data|name: ut-backend-network|/var/lib/understandtech' <<< "$rendered"
 }
 
+files_are_backed_up_and_restore_identically() {
+    local repo="$WORK_DIR/repo" src="$WORK_DIR/src" out="$WORK_DIR/out"
+    mkdir -p "$src/app-data" "$src/appbuilder/workspaces/an-app/mongo-data" "$out"
+    head -c 200000 /dev/urandom > "$src/app-data/document.bin"
+    echo "metadata" > "$src/app-data/notes.txt"
+    echo "live database file" > "$src/appbuilder/workspaces/an-app/mongo-data/wt.wt"
+
+    docker run --rm -v "$src":/data:ro -v "$repo":/backup \
+        -v "$REPO_ROOT/backup-files.sh":/usr/local/bin/backup-files:ro \
+        -e RESTIC_REPOSITORY=/backup/restic -e RESTIC_PASSWORD=capability-test \
+        --entrypoint /usr/local/bin/backup-files "$RESTIC_IMAGE" >/dev/null 2>&1 || return 1
+
+    docker run --rm -v "$repo":/backup -v "$out":/out \
+        -e RESTIC_REPOSITORY=/backup/restic -e RESTIC_PASSWORD=capability-test \
+        "$RESTIC_IMAGE" restore latest --target /out >/dev/null 2>&1 || return 1
+
+    diff -r "$src/app-data" "$out/data/app-data" >/dev/null || return 1
+
+    # The exclusion is part of the capability, not an implementation detail: a
+    # database file copied while it is written restores into a corrupt state, so
+    # its absence is what the check asserts.
+    [[ ! -e "$out/data/appbuilder/workspaces/an-app/mongo-data" ]]
+}
+
+a_missing_backup_is_visible() {
+    local dir="$WORK_DIR/hc" status
+    mkdir -p "$dir"
+    docker rm -f ut-capability-hc >/dev/null 2>&1
+    docker run -d --name ut-capability-hc -v "$dir":/backup \
+        --health-cmd "find /backup -name 'mongo_*.archive.gz' -mtime -2 | grep -q ." \
+        --health-interval 3s --health-retries 2 --health-start-period 1s \
+        alpine sleep 120 >/dev/null 2>&1 || return 1
+
+    sleep 14
+    status=$(docker inspect ut-capability-hc --format '{{.State.Health.Status}}')
+    [[ "$status" == "unhealthy" ]] || { docker rm -f ut-capability-hc >/dev/null 2>&1; return 1; }
+
+    touch "$dir/mongo__fresh.archive.gz"
+    sleep 12
+    status=$(docker inspect ut-capability-hc --format '{{.State.Health.Status}}')
+    docker rm -f ut-capability-hc >/dev/null 2>&1
+    [[ "$status" == "healthy" ]]
+}
+
 prepare_env
 
 group "Deployment topologies"
@@ -126,6 +170,15 @@ fi
 if [[ -f "$REPO_ROOT/compose.no-gpu.yaml" ]]; then
     capability "a machine without a GPU requests no NVIDIA device" \
         requests_no_gpu -f compose.yaml -f compose.no-gpu.yaml
+fi
+
+if [[ -f "$REPO_ROOT/backup-files.sh" ]]; then
+    RESTIC_IMAGE=$(grep -m1 -oE 'restic/restic:[0-9.]+' "$REPO_ROOT/compose.yaml" || echo restic/restic:latest)
+    group "Backup"
+    capability "files are backed up and restore identically" \
+        files_are_backed_up_and_restore_identically
+    capability "a missing backup is visible, and recovers when one appears" \
+        a_missing_backup_is_visible
 fi
 
 printf '\n%s%d verified%s' "$GREEN" "$PASSED" "$NC"
