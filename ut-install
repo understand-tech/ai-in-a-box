@@ -656,4 +656,9 @@ main() {
     print_summary
 }
 
-[[ "${BASH_SOURCE[0]}" == "${0}" ]] && main "$@"
+# An `if` rather than `&&`: a false condition would otherwise be the script's
+# exit status, so sourcing it for tests would fail under `set -e` — which is the
+# one thing this guard exists to allow.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
