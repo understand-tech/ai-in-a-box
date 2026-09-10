@@ -1,0 +1,62 @@
+# Problems that already exist and are accepted for now.
+#
+# test/invariants.sh fails on any problem NOT listed here, and also on any line
+# here whose problem has been fixed. The second half matters: a baseline nobody
+# prunes stops protecting anything.
+#
+# One identifier per line. Keep the reason next to it.
+
+# --- Secrets shipped in .env.example ---------------------------------------
+# Every deployment that follows the installation guide runs with these values.
+# JWT_SECRET is the serious one: it is shared by api, app-llms, app-assistants
+# and app-builder, so a token minted at one customer is accepted at another.
+# Fix prepared, not yet applied — the values must be emptied and generated at
+# install time instead.
+plaintext-secret:JWT_SECRET
+plaintext-secret:MONGODB_PASSWORD
+plaintext-secret:ADMIN_SETUP_PASSWORD
+plaintext-secret:STATE_SECRET
+plaintext-secret:OPENID_SECRET_KEY
+
+# Placeholder-looking values that read as configured and therefore never get
+# corrected. Same fix as above: empty them.
+plaintext-secret:OA_KEY
+plaintext-secret:SENDGRID_API_KEY
+
+# GPU_VM_API_TOKEN="ut" is the token the application presents to the inference
+# service. VLLM_API_KEY="EMPTY" is vLLM's convention for "no authentication",
+# which is why inference is reachable unauthenticated.
+plaintext-secret:GPU_VM_API_TOKEN
+plaintext-secret:VLLM_API_KEY
+
+# --- Ports on every interface ----------------------------------------------
+# Being fixed by the open pull requests that bind them to loopback. Once merged,
+# these lines become stale and the script will ask for their removal.
+unlisted-port:mongodb:27018:27017
+unlisted-port:nim-llm:8001:8000
+unlisted-port:nim-vlm:8002:8000
+
+# --- Mutable image references ----------------------------------------------
+# Tags like 2.0-arm64 move, so two boxes on "the same version" can differ and a
+# diagnosis on one does not transfer to another. Pinning by digest is a build
+# chain change, not a one-line edit.
+unpinned-image:LLM_IMAGE
+unpinned-image:API_IMAGE
+unpinned-image:API_CUSTOMER_IMAGE
+unpinned-image:WORKER_IMAGE
+unpinned-image:WORKER_CUSTOMER_IMAGE
+unpinned-image:FRONTEND_IMAGE
+unpinned-image:LLMS_APP_IMAGE
+unpinned-image:ASSISTANTS_APP_IMAGE
+unpinned-image:ADMIN_PORTAL_IMAGE
+unpinned-image:APP_BUILDER_IMAGE
+unpinned-image:NIM_IMAGE
+unpinned-image:VLLM_LLM_IMAGE
+
+# --- Production defaults ---------------------------------------------------
+# Verbose logging on a customer appliance, and sensitive content in the logs.
+verbose-log-level:LOG_LEVEL
+
+# Redis holds the RQ queues while running allkeys-lru, so tasks can be evicted
+# under memory pressure. 'noeviction' fixes it in one line.
+queue-eviction:redis

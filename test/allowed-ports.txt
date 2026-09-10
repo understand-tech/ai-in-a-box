@@ -1,0 +1,14 @@
+# Ports intentionally published on every interface.
+#
+# Anything else that reaches the network fails test/invariants.sh. A publication
+# bound to 127.0.0.1 is not listed here: it exposes nothing, so it needs no
+# authorisation.
+#
+# One entry per line: <service>:<published spec, exactly as written in compose>
+
+caddy:${UT_HTTP_PORT:-80}:80
+caddy:${UT_HTTPS_PORT:-443}:443
+
+# Generated apps run in their own compose projects and reach the builder's model
+# proxy at host.docker.internal, which Docker DNS cannot resolve for them.
+app-builder:${APP_BUILDER_HOST_PORT:-8011}:8001
