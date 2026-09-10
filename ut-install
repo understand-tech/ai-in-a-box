@@ -92,6 +92,82 @@ hidden prompt. It is never passed on a command line and never written to the log
 EOF
 }
 
+preflight() {
+    log_step "Checking the system"
+    local blocking=0
+
+    [[ $EUID -eq 0 ]] || die "Run with sudo: sudo $0"
+
+    if ! command -v docker >/dev/null 2>&1; then
+        log_error "Docker is not installed."
+        blocking=1
+    else
+        local docker_version major
+        docker_version=$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo "unknown")
+        major=${docker_version%%.*}
+        if [[ "$major" =~ ^[0-9]+$ ]] && (( major >= MIN_DOCKER_MAJOR )); then
+            log_info "Docker ${docker_version}"
+        else
+            log_error "Docker ${docker_version} — ${MIN_DOCKER_MAJOR}.0 or newer required."
+            blocking=1
+        fi
+    fi
+
+    if docker compose version >/dev/null 2>&1; then
+        log_info "Compose $(docker compose version --short 2>/dev/null || echo v2)"
+    else
+        log_error "Docker Compose V2 is missing (docker compose)."
+        blocking=1
+    fi
+
+    if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+        log_info "GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"
+        if docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q nvidia; then
+            log_info "NVIDIA container runtime available"
+        else
+            log_error "The NVIDIA container runtime is not registered with Docker."
+            log_error "  Inference containers cannot start without it."
+            blocking=1
+        fi
+    else
+        log_error "No usable GPU detected (nvidia-smi)."
+        blocking=1
+    fi
+
+    local available_bytes disk_target
+    disk_target=$([[ -d /var/lib/docker ]] && echo /var/lib/docker || echo /var/lib)
+    available_bytes=$(df -B1 --output=avail "$disk_target" 2>/dev/null | tail -1 | tr -d ' ')
+    if [[ -n "$available_bytes" ]] && (( available_bytes >= MIN_DISK_BYTES )); then
+        log_info "Disk: $((available_bytes / 1000000000)) GB free on ${disk_target}"
+    else
+        log_error "Disk: $((${available_bytes:-0} / 1000000000)) GB free on ${disk_target} — $((MIN_DISK_BYTES / 1000000000)) GB needed."
+        blocking=1
+    fi
+
+    local ram_kb
+    ram_kb=$(awk '/MemTotal/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
+    if (( ram_kb >= MIN_RAM_KB )); then
+        log_info "Memory: $((ram_kb / 1024 / 1024)) GB"
+    else
+        log_warn "Memory: $((ram_kb / 1024 / 1024)) GB — low, workers may be starved"
+    fi
+
+    if command -v git >/dev/null 2>&1; then
+        log_info "git present"
+    else
+        log_error "git is not installed."
+        blocking=1
+    fi
+
+    if (( blocking )); then
+        log_error ""
+        log_error "Blocking problems found. Nothing was changed."
+        exit 1
+    fi
+
+    log_info "System ready"
+}
+
 start_logging() {
     mkdir -p "$(dirname "$LOG_FILE")"
     touch "$LOG_FILE"
@@ -129,7 +205,7 @@ main() {
     [[ $EUID -eq 0 ]] || die "Run with sudo: sudo $0"
 
     start_logging
-
+    preflight
 }
 
 [[ "${BASH_SOURCE[0]}" == "${0}" ]] && main "$@"
