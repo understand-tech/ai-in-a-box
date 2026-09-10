@@ -452,6 +452,71 @@ step_networks() {
     fi
 }
 
+step_pull() {
+    if ! $DO_PULL; then
+        log_step "Skipping image download (--skip-pull)"
+        return 0
+    fi
+    log_step "Downloading images"
+    log "     First run downloads several tens of GB. This is the long part."
+    compose_in_dir pull || die "Image pull failed. Check the token and the network."
+    log_info "Images present locally"
+}
+
+step_start() {
+    log_step "Starting services"
+    compose_in_dir up -d
+    log_info "Containers created"
+}
+
+container_health_lines() {
+    local container_id
+    compose_in_dir ps -q 2>/dev/null | while read -r container_id; do
+        [[ -n "$container_id" ]] || continue
+        docker inspect --format \
+            '{{.Name}}|{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
+            "$container_id" 2>/dev/null || true
+    done
+}
+
+step_wait_healthy() {
+    log_step "Waiting for services to become ready"
+    log "     Inference containers load their models before reporting healthy;"
+    log "     their health check allows $((NIM_COLD_START_SECONDS / 60)) minutes for a cold start."
+    log "     Waiting up to $((HEALTH_TIMEOUT / 60)) minutes."
+
+    local deadline=$(( SECONDS + HEALTH_TIMEOUT ))
+    local pending name status health line
+
+    while (( SECONDS < deadline )); do
+        pending=""
+        while IFS='|' read -r name status health; do
+            [[ -n "$name" ]] || continue
+            name=${name#/}
+            case "$health" in
+                healthy) ;;
+                none)    [[ "$status" == "running" ]] || pending+="  ${name}: ${status}"$'\n' ;;
+                *)       pending+="  ${name}: ${status}/${health}"$'\n' ;;
+            esac
+        done < <(container_health_lines)
+
+        if [[ -z "$pending" ]]; then
+            log_info "All services are ready"
+            return 0
+        fi
+
+        printf '\r%s     %d services still starting (%dm elapsed)%s\033[K' \
+            "$YELLOW" "$(printf '%s' "$pending" | grep -c .)" "$(( SECONDS / 60 ))" "$NC"
+        sleep 15
+    done
+
+    printf '\r\033[K'
+    log_warn "Timed out after $((HEALTH_TIMEOUT / 60)) minutes. Still not ready:"
+    printf '%s' "$pending" | while IFS= read -r line; do [[ -n "$line" ]] && log_warn "$line"; done
+    log_warn "Inspect one with: cd ${INSTALL_DIR} && docker compose logs <service>"
+    return 0
+}
+
 start_logging() {
     mkdir -p "$(dirname "$LOG_FILE")"
     touch "$LOG_FILE"
@@ -497,6 +562,9 @@ main() {
     step_check_resolution
     step_docker_group
     step_networks
+    step_pull
+    step_start
+    step_wait_healthy
 }
 
 [[ "${BASH_SOURCE[0]}" == "${0}" ]] && main "$@"
