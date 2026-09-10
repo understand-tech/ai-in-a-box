@@ -1,4 +1,4 @@
-name: understandtech
+name: ${COMPOSE_PROJECT_NAME:-understandtech}
 
 x-logging: &default-logging
   driver: json-file
@@ -15,7 +15,7 @@ services:
 
   app-builder:
     image: ${APP_BUILDER_IMAGE:-}
-    container_name: ut-app-builder
+    container_name: ${CONTAINER_PREFIX:-ut}-app-builder
     restart: unless-stopped
     ports:
       - "${APP_BUILDER_HOST_PORT:-8011}:8001"
@@ -48,9 +48,9 @@ services:
       MONGO_USER: ${MONGODB_USERNAME:-}
       MONGO_PASSWORD: ${MONGODB_PASSWORD:-}
       ORCHESTRATOR_DB: ${APP_BUILDER_MONGODB_DB:-app-builder}
-      REPO_ROOT_HOST: /var/lib/understandtech/appbuilder
-      WORKSPACES_DIR: /var/lib/understandtech/appbuilder/workspaces
-      TRAEFIK_DYNAMIC_DIR: /var/lib/understandtech/appbuilder/traefik-dynamic
+      REPO_ROOT_HOST: ${DATA_ROOT:-/var/lib/understandtech}/appbuilder
+      WORKSPACES_DIR: ${DATA_ROOT:-/var/lib/understandtech}/appbuilder/workspaces
+      TRAEFIK_DYNAMIC_DIR: ${DATA_ROOT:-/var/lib/understandtech}/appbuilder/traefik-dynamic
       # Suffix for generated apps. Changing it later does not rename the apps
       # already built: their traefik files still carry the old hostname until
       # they are redeployed from the App Builder.
@@ -60,7 +60,7 @@ services:
       ORCHESTRATOR_TRAEFIK_SERVICE: builder-api
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - /var/lib/understandtech/appbuilder:/var/lib/understandtech/appbuilder
+      - ${DATA_ROOT:-/var/lib/understandtech}/appbuilder:${DATA_ROOT:-/var/lib/understandtech}/appbuilder
     networks:
       - ut-frontend-network
     depends_on:
@@ -85,7 +85,7 @@ services:
 
   app-builder-traefik:
     image: traefik:v3.2
-    container_name: ut-app-builder-traefik
+    container_name: ${CONTAINER_PREFIX:-ut}-app-builder-traefik
     restart: unless-stopped
     command:
       - "--providers.file.directory=/etc/traefik/dynamic"
@@ -93,7 +93,7 @@ services:
       - "--entrypoints.web.address=:80"
       - "--ping=true"
     volumes:
-      - /var/lib/understandtech/appbuilder/traefik-dynamic:/etc/traefik/dynamic
+      - ${DATA_ROOT:-/var/lib/understandtech}/appbuilder/traefik-dynamic:/etc/traefik/dynamic
       - ./appbuilder/traefik/_orchestrator.yml:/etc/traefik/dynamic/_orchestrator.yml:ro
     networks:
       ut-frontend-network:
@@ -122,4 +122,4 @@ networks:
 
 volumes:
   app-builder-claude-state:
-    name: ut-app-builder-claude-state
+    name: ${RESOURCE_PREFIX:-ut}-app-builder-claude-state

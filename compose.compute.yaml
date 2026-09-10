@@ -1,0 +1,48 @@
+name: ${COMPOSE_PROJECT_NAME:-understandtech}
+
+# Overlay for a machine that only serves inference — a second DGX added to an
+# existing deployment. It keeps the NIM engines and Caddy, and switches off
+# everything that belongs to the control plane.
+#
+#   COMPOSE_FILE="compose.yaml:compose.compute.yaml"
+#   COMPOSE_PROFILES="nim"
+#
+# Services are switched off by giving them a profile that is never enabled,
+# rather than by listing the survivors in a separate file. compose.yaml stays
+# the single definition of every service: this file only says which ones a
+# compute node leaves out.
+#
+# 'llm' is switched off here too, and that is a limitation rather than a choice.
+# It carries the embedding and reranking work, but it also reads the customer's
+# documents and talks to MongoDB, so it cannot run on a machine that holds
+# neither. A compute node therefore serves generation and vision, which is where
+# the GPU time goes, while indexing stays on the machine that has the data.
+
+services:
+  caddy:
+    depends_on: !reset null
+
+  redis:
+    profiles: ["control-plane-only"]
+  mongodb:
+    profiles: ["control-plane-only"]
+  mongodb-backup:
+    profiles: ["control-plane-only"]
+  api:
+    profiles: ["control-plane-only"]
+  workers:
+    profiles: ["control-plane-only"]
+  frontend:
+    profiles: ["control-plane-only"]
+  api-customer:
+    profiles: ["control-plane-only"]
+  workers-customer:
+    profiles: ["control-plane-only"]
+  app-llms:
+    profiles: ["control-plane-only"]
+  app-assistants:
+    profiles: ["control-plane-only"]
+  admin-portal:
+    profiles: ["control-plane-only"]
+  llm:
+    profiles: ["control-plane-only"]
