@@ -28,3 +28,10 @@ plaintext-secret:SENDGRID_API_KEY
 # which is why inference is reachable unauthenticated.
 plaintext-secret:GPU_VM_API_TOKEN
 plaintext-secret:VLLM_API_KEY
+
+# --- Ports on every interface ----------------------------------------------
+# Being fixed by the open pull requests that bind them to loopback. Once merged,
+# these lines become stale and the script will ask for their removal.
+unlisted-port:mongodb:27018:27017
+unlisted-port:nim-llm:8001:8000
+unlisted-port:nim-vlm:8002:8000

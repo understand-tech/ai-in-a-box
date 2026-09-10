@@ -68,6 +68,33 @@ check_variables_without_default_are_declared() {
     done <<< "$required"
 }
 
+published_port_entries() {
+    awk '
+        /^  [a-z0-9_-]+:/ { service = $1; sub(":", "", service) }
+        /^    ports:/     { in_ports = 1; next }
+        in_ports && /^      - / {
+            entry = $2
+            gsub(/"/, "", entry)
+            print service "|" entry
+            next
+        }
+        in_ports && !/^      / { in_ports = 0 }
+    ' "$@"
+}
+
+check_published_ports_are_allowed() {
+    local service port_spec allowed
+    allowed=$(grep -vE '^\s*(#|$)' "$ALLOWED_PORTS_FILE" 2>/dev/null || true)
+
+    while IFS='|' read -r service port_spec; do
+        [[ -n "$service" && -n "$port_spec" ]] || continue
+        [[ "$port_spec" == 127.0.0.1:* || "$port_spec" == localhost:* ]] && continue
+        grep -qxF "${service}:${port_spec}" <<< "$allowed" && continue
+        report "unlisted-port:${service}:${port_spec}" \
+            "${service} publishes ${port_spec} on every interface, and it is not in test/allowed-ports.txt"
+    done <<< "$(published_port_entries "${COMPOSE_FILES[@]}")"
+}
+
 read_baseline() {
     [[ -f "$BASELINE_FILE" ]] || return 0
     grep -vE '^\s*(#|$)' "$BASELINE_FILE" || true
@@ -120,6 +147,7 @@ compare_with_baseline() {
 main() {
     check_plaintext_secrets
     check_variables_without_default_are_declared
+    check_published_ports_are_allowed
     compare_with_baseline
 }
 
