@@ -54,6 +54,20 @@ check_plaintext_secrets() {
     done
 }
 
+check_variables_without_default_are_declared() {
+    local declared required var
+    declared=$(env_keys | sort -u)
+    required=$(grep -ohE '\$\{[A-Za-z_][A-Za-z0-9_]*\}' "${COMPOSE_FILES[@]}" \
+        | tr -d '${}' | sort -u)
+
+    while read -r var; do
+        [[ -n "$var" ]] || continue
+        grep -qxF "$var" <<< "$declared" && continue
+        report "undeclared-variable:${var}" \
+            "\${${var}} has no default in the compose files and no value in .env.example — the stack starts with it empty"
+    done <<< "$required"
+}
+
 read_baseline() {
     [[ -f "$BASELINE_FILE" ]] || return 0
     grep -vE '^\s*(#|$)' "$BASELINE_FILE" || true
@@ -105,6 +119,7 @@ compare_with_baseline() {
 
 main() {
     check_plaintext_secrets
+    check_variables_without_default_are_declared
     compare_with_baseline
 }
 
