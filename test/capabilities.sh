@@ -34,16 +34,23 @@ capability() {
     fi
 }
 
-# A .env with only what compose needs to render: image references and replica
-# counts. Everything else is left to its default, which is the point — these
-# checks exercise what an untouched install produces.
+# A .env with only what compose cannot render without: image references,
+# replica counts, and whatever the compose files mark as required with
+# ${VAR:?...}. Everything else is left to its default, which is the point —
+# these checks exercise what an untouched install produces.
+#
+# The required list is read from the compose files rather than spelled out here,
+# so marking one more variable as mandatory does not break this harness.
 prepare_env() {
     cp "$REPO_ROOT"/compose*.yaml "$WORK_DIR/"
     {
         echo 'WORKER_REPLICAS=2'
         echo 'WORKER_CUSTOMER_REPLICAS=2'
+        grep -ohE '\$\{[A-Z_][A-Z_0-9]*_IMAGE' "$WORK_DIR"/compose*.yaml \
+            | tr -d '${' | sort -u | sed 's/$/=test:1/'
+        grep -ohE '\$\{[A-Z_][A-Z_0-9]*:\?' "$WORK_DIR"/compose*.yaml \
+            | sed 's/^\${//; s/:?$//' | sort -u | sed 's/$/=capability-test/'
         echo 'BACKUP_FILES_PASSWORD=capability-test'
-        grep -ohE '\$\{[A-Z_]+_IMAGE' "$REPO_ROOT"/compose*.yaml | tr -d '${' | sort -u | sed 's/$/=test:1/'
     } > "$WORK_DIR/.env"
 }
 
