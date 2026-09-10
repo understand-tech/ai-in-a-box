@@ -1,0 +1,15 @@
+# Ports intentionally published on every interface.
+#
+# Anything else that reaches the network fails test/invariants.sh. A publication
+# bound to 127.0.0.1 is not listed here: it exposes nothing, so it needs no
+# authorisation.
+#
+# One entry per line: <service>:<published spec, with ${VAR:-default} collapsed
+# to its default — that is the form the check compares against.
+
+caddy:80:80
+caddy:443:443
+
+# Generated apps run in their own compose projects and reach the builder's model
+# proxy at host.docker.internal, which Docker DNS cannot resolve for them.
+app-builder:8011:8001
