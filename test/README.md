@@ -5,6 +5,8 @@
 | File | Purpose |
 |---|---|
 | `capabilities.sh` | Checks what the deployment can do, one line per capability. Needs Docker; renders configurations, starts nothing. |
+| `machine-identity.sh` | Validates the certificate mechanism intended to replace the shared JWT_SECRET. **Not a product capability yet** — nothing here runs a CA. Nightly. |
+| `database-restore.sh` | Proves a backup archive restores, end to end. Nightly. |
 | `invariants.sh` | Checks the repository against a set of invariants. No dependencies beyond bash and coreutils, runs in under a second. |
 | `known-issues.txt` | Problems that already exist and are accepted for now, with the reason next to each. |
 | `allowed-ports.txt` | Ports intentionally published on every interface. |
@@ -91,6 +93,22 @@ line number is not.
 The message is read by whoever gets the failure, months from now, on a change
 that has nothing to do with the check. Say what is wrong and why it matters, not
 which rule fired.
+
+## Validations, which are not capabilities
+
+`machine-identity.sh` sits apart from `capabilities.sh` on purpose. It checks
+that a mechanism works — a local authority issuing client certificates against
+single-use tokens, with the proxy requiring them — but **the product does not
+use it yet**. Listing it among the capabilities would claim something the
+appliance cannot do, which is the one thing that list must not do.
+
+It is here because the decision to build on that mechanism rests on these
+properties holding, and it runs in an `--internal` Docker network, so a pass
+also means the mechanism needs no outbound access — the property an isolated
+deployment depends on.
+
+When the authority lands in the product, the lines move into `capabilities.sh`
+and this file loses a section.
 
 ## Coming next
 
