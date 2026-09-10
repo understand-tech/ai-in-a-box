@@ -191,6 +191,10 @@ services:
     depends_on:
       mongodb:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "find /backup -name 'mongo_*.archive.gz' -mtime -2 | grep -q ."]
+      <<: *healthcheck-defaults
+      start_period: 25h
     logging: *default-logging
     deploy:
       resources:
