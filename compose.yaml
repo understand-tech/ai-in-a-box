@@ -1,4 +1,4 @@
-name: understandtech
+name: ${COMPOSE_PROJECT_NAME:-understandtech}
 
 x-logging: &default-logging
   driver: json-file
@@ -44,7 +44,7 @@ services:
 
   caddy: 
     image: caddy:2-alpine
-    container_name: ut-caddy
+    container_name: ${CONTAINER_PREFIX:-ut}-caddy
     restart: unless-stopped
     ports:
       - "${UT_HTTP_PORT:-80}:80"
@@ -96,7 +96,7 @@ services:
 
   redis:
     image: redis:7.2-alpine
-    container_name: ut-redis
+    container_name: ${CONTAINER_PREFIX:-ut}-redis
     restart: unless-stopped
     command: >
       redis-server
@@ -127,10 +127,10 @@ services:
 
   mongodb:
     image: mongo:8.2
-    container_name: ut-mongodb
+    container_name: ${CONTAINER_PREFIX:-ut}-mongodb
     restart: unless-stopped
     ports:
-      - "27018:27017"
+      - "${MONGODB_HOST_PORT:-27018}:27017"
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGODB_USERNAME:-}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_PASSWORD:-}
@@ -159,7 +159,7 @@ services:
 
   mongodb-backup:
     image: tiredofit/db-backup:4.1.100
-    container_name: ut-mongodb-backup
+    container_name: ${CONTAINER_PREFIX:-ut}-mongodb-backup
     restart: unless-stopped
     environment:
       TIMEZONE: ${TIMEZONE:-UTC}
@@ -202,7 +202,7 @@ services:
 
   api:
     image: ${API_IMAGE:-}
-    container_name: ut-api
+    container_name: ${CONTAINER_PREFIX:-ut}-api
     restart: unless-stopped
     expose:
       - "8501"
@@ -249,7 +249,7 @@ services:
       APP_BUILDER_BASE_URL: *url-app-builder
     volumes:
       - uploads-data:/tmp/uploads
-      - /var/lib/understandtech/app-data:/app/storage
+      - ${DATA_ROOT:-/var/lib/understandtech}/app-data:/app/storage
     networks:
       - ut-backend-network
       - ut-frontend-network
@@ -298,7 +298,7 @@ services:
       ADMIN_MAIL: ${ADMIN_MAIL:-}
     volumes:
       - uploads-data:/tmp/uploads
-      - /var/lib/understandtech/app-data:/app/storage
+      - ${DATA_ROOT:-/var/lib/understandtech}/app-data:/app/storage
     networks:
       - ut-backend-network
       - ut-frontend-network
@@ -323,7 +323,7 @@ services:
 
   frontend:
     image: ${FRONTEND_IMAGE:-}
-    container_name: ut-frontend
+    container_name: ${CONTAINER_PREFIX:-ut}-frontend
     restart: unless-stopped
     expose:
       - "80"
@@ -353,7 +353,7 @@ services:
 
   api-customer:
     image: ${API_CUSTOMER_IMAGE:-}
-    container_name: ut-api-customer
+    container_name: ${CONTAINER_PREFIX:-ut}-api-customer
     restart: unless-stopped
     expose:
       - "8501"
@@ -397,7 +397,7 @@ services:
       GATEWAY_MODELS: ${GATEWAY_MODELS:-}
     volumes:
       - uploads-data:/tmp/uploads
-      - /var/lib/understandtech/app-data:/app/storage
+      - ${DATA_ROOT:-/var/lib/understandtech}/app-data:/app/storage
     networks:
       - ut-backend-network
       - ut-frontend-network
@@ -443,7 +443,7 @@ services:
       ADMIN_MAIL: ${ADMIN_MAIL:-}
     volumes:
       - uploads-data:/tmp/uploads
-      - /var/lib/understandtech/app-data:/app/storage
+      - ${DATA_ROOT:-/var/lib/understandtech}/app-data:/app/storage
     networks:
       - ut-backend-network
       - ut-frontend-network
@@ -465,7 +465,7 @@ services:
 
   app-llms:
     image: ${LLMS_APP_IMAGE:-}
-    container_name: ut-app-llms
+    container_name: ${CONTAINER_PREFIX:-ut}-app-llms
     restart: unless-stopped
     expose:
       - "80"
@@ -504,7 +504,7 @@ services:
 
   app-assistants:
     image: ${ASSISTANTS_APP_IMAGE:-}
-    container_name: ut-app-assistants
+    container_name: ${CONTAINER_PREFIX:-ut}-app-assistants
     restart: unless-stopped
     expose:
       - "80"
@@ -524,7 +524,7 @@ services:
       UT_APP_ASSISTANTS_BASE_URL: *url-app-assistants
       CORS_ORIGINS: *url-app-assistants-cors
     volumes:
-      - /var/lib/understandtech/app-data:/app/storage
+      - ${DATA_ROOT:-/var/lib/understandtech}/app-data:/app/storage
     networks:
       - ut-frontend-network
       - ut-backend-network
@@ -546,7 +546,7 @@ services:
 
   admin-portal:
     image: ${ADMIN_PORTAL_IMAGE:-}
-    container_name: ut-admin-portal
+    container_name: ${CONTAINER_PREFIX:-ut}-admin-portal
     restart: unless-stopped
     expose:
       - "8080"
@@ -574,7 +574,6 @@ services:
   nim-llm:
     profiles:  ["nim", "nim-llm"]
     image: ${NIM_IMAGE:-}
-    container_name: nim-llm
     restart: unless-stopped
     shm_size: "16gb"
     environment:
@@ -584,7 +583,7 @@ services:
       - NIM_SERVED_MODEL_NAME=${LLM_MODEL:-openai/gpt-oss-20b}
       - NIM_PASSTHROUGH_ARGS=${NIM_LLM_PASSTHROUGH_ARGS:---gpu-memory-utilization 0.55 --max-model-len 32768 --enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser nemotron_v3}
     ports:
-      - "8001:8000"
+      - "${NIM_LLM_HOST_PORT:-8001}:8000"
     volumes:
       - nim-llm-cache:/opt/nim/.cache
     healthcheck:
@@ -608,7 +607,6 @@ services:
   nim-vlm:
     profiles: ["nim", "nim-vlm"]
     image: ${NIM_IMAGE:-}
-    container_name: nim-vlm
     restart: unless-stopped
     shm_size: "16gb"
     environment:
@@ -618,7 +616,7 @@ services:
       - NIM_SERVED_MODEL_NAME=${VLM_MODEL:-Qwen/Qwen3-VL-4B-Instruct}
       - NIM_PASSTHROUGH_ARGS=${NIM_VLM_PASSTHROUGH_ARGS:---gpu-memory-utilization 0.25 --max-model-len 8192}
     ports:
-      - "8002:8000"
+      - "${NIM_VLM_HOST_PORT:-8002}:8000"
     volumes:
       - nim-vlm-cache:/opt/nim/.cache
     healthcheck:
@@ -641,7 +639,6 @@ services:
 
   llm:
     image: ${LLM_IMAGE:-}
-    container_name: ut-llm
     restart: unless-stopped
     expose:
       - "8000"
@@ -687,7 +684,7 @@ services:
       - vllm-models:/root/.cache/huggingface
       - llm-ollama:/root/.ollama
       - llm-models:/root/models
-      - /var/lib/understandtech/app-data:/app/storage
+      - ${DATA_ROOT:-/var/lib/understandtech}/app-data:/app/storage
     networks:
       - ut-backend-network
       - ut-frontend-network # Add the frontend network during first-time installation
@@ -707,35 +704,35 @@ services:
 
 networks:
   ut-backend-network:
-    name: ut-backend-network
+    name: ${RESOURCE_PREFIX:-ut}-backend-network
     driver: bridge
     internal: true
   ut-frontend-network:
-    name: ut-frontend-network
+    name: ${RESOURCE_PREFIX:-ut}-frontend-network
     driver: bridge
 
 volumes:
   caddy-data:
-    name: ut-caddy-data
+    name: ${RESOURCE_PREFIX:-ut}-caddy-data
   caddy-config:
-    name: ut-caddy-config
+    name: ${RESOURCE_PREFIX:-ut}-caddy-config
   redis-data:
-    name: ut-redis-data
+    name: ${RESOURCE_PREFIX:-ut}-redis-data
   uploads-data:
-    name: ut-uploads-data
+    name: ${RESOURCE_PREFIX:-ut}-uploads-data
   mongodb-data:
-    name: ut-mongodb-data
+    name: ${RESOURCE_PREFIX:-ut}-mongodb-data
   mongodb-backups:
-    name: ut-mongodb-backup
+    name: ${RESOURCE_PREFIX:-ut}-mongodb-backup
   llm-ollama:
-    name: ut-llm-ollama
+    name: ${RESOURCE_PREFIX:-ut}-llm-ollama
   llm-models:
-    name: ut-llm-models
+    name: ${RESOURCE_PREFIX:-ut}-llm-models
   vllm-models:
-    name: ut-vllm-models
+    name: ${RESOURCE_PREFIX:-ut}-vllm-models
   nim-llm-cache:
-    name: ut-nim-llm-cache
+    name: ${RESOURCE_PREFIX:-ut}-nim-llm-cache
   nim-vlm-cache:
-    name: ut-nim-vlm-cache
+    name: ${RESOURCE_PREFIX:-ut}-nim-vlm-cache
   vllm-llm-cache:
-    name: ut-vllm-llm-cache
+    name: ${RESOURCE_PREFIX:-ut}-vllm-llm-cache
