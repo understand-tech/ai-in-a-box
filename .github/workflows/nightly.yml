@@ -1,0 +1,24 @@
+name: nightly
+
+# Scheduled rather than triggered by a push, because this is the one check that
+# can break without anyone changing this repository: it exercises the upstream
+# mongo and db-backup images, which move on their own.
+#
+# Everything else is better served by a path filter — bound to the commit that
+# caused it, instead of found the next morning among a day's worth of changes.
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  database-restore:
+    name: database archives restore identically
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - run: ./test/database-restore.sh
