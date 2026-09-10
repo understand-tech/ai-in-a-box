@@ -603,7 +603,6 @@ services:
               capabilities: [gpu]
     networks:
       - ut-backend-network
-      - ut-frontend-network
 
   nim-vlm:
     profiles: ["nim", "nim-vlm"]
@@ -637,7 +636,6 @@ services:
               capabilities: [gpu]
     networks:
       - ut-backend-network
-      - ut-frontend-network
 
   llm:
     image: ${LLM_IMAGE:-}
