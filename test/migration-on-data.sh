@@ -129,19 +129,41 @@ write_documents() {
     done
 }
 
-database_fingerprint() {
+database_shape() {
     mongo_eval '
         db.adminCommand("listDatabases").databases
           .filter(d => !["admin","local","config"].includes(d.name))
           .map(d => {
               const target = db.getSiblingDB(d.name);
               return d.name + "[" + target.getCollectionNames().sort()
-                  .map(c => c + ":" + target.getCollection(c).countDocuments()).join(",") + "]";
+                  .map(c => {
+                      const collection = target.getCollection(c);
+                      return c + ":" + collection.countDocuments()
+                           + "/" + collection.getIndexes().map(i => i.name).sort().join("+");
+                  }).join(",") + "]";
           }).sort().join(" ")'
 }
 
+database_contents() {
+    mongo_eval '
+        db.adminCommand("listDatabases").databases
+          .filter(d => !["admin","local","config"].includes(d.name))
+          .map(d => {
+              const target = db.getSiblingDB(d.name);
+              return target.getCollectionNames().sort().map(c =>
+                  EJSON.stringify(target.getCollection(c).find().sort({_id: 1}).toArray())
+              ).join("");
+          }).join("")' | cksum | cut -d' ' -f1
+}
+
 documents_fingerprint() {
-    find "$DATA_ROOT" -type f -exec cat {} + 2>/dev/null | cksum | cut -d' ' -f1
+    ( cd "$DATA_ROOT" && find . -type f | sort | while read -r file; do
+        printf '%s %s\n' "$file" "$(cksum < "$file" | cut -d' ' -f1)"
+      done | cksum | cut -d' ' -f1 )
+}
+
+document_count() {
+    find "$DATA_ROOT" -type f | wc -l | tr -d ' '
 }
 
 supply_missing_variables() {
@@ -180,10 +202,13 @@ else
 fi
 write_documents
 
-BEFORE_DB=$(database_fingerprint)
+BEFORE_SHAPE=$(database_shape)
+BEFORE_CONTENTS=$(database_contents)
 BEFORE_DOCS=$(documents_fingerprint)
-[[ -n "$BEFORE_DB" ]] || fail "the database is empty before the migration, so nothing would be proven"
-printf '   %s%s%s\n' "$DIM" "${BEFORE_DB:0:120}" "$NC"
+BEFORE_COUNT=$(document_count)
+[[ -n "$BEFORE_SHAPE" ]] || fail "the database is empty before the migration, so nothing would be proven"
+(( BEFORE_COUNT > 0 )) || fail "no documents on disk before the migration"
+printf '   %s%s%s\n' "$DIM" "${BEFORE_SHAPE:0:120}" "$NC"
 
 echo "4. applying the new version"
 supply_missing_variables
@@ -192,19 +217,30 @@ compose_in after up -d mongodb >/dev/null 2>&1 || fail "the new version does not
 wait_for_database || fail "the database never answered after the migration"
 
 echo "5. comparing"
-AFTER_DB=$(database_fingerprint)
+AFTER_SHAPE=$(database_shape)
+AFTER_CONTENTS=$(database_contents)
 AFTER_DOCS=$(documents_fingerprint)
+AFTER_COUNT=$(document_count)
 
 echo
-if [[ "$BEFORE_DB" != "$AFTER_DB" ]]; then
-    printf '%sthe database changed%s\n  before: %s\n  after:  %s\n' "$RED" "$NC" "$BEFORE_DB" "$AFTER_DB"
+if [[ "$BEFORE_SHAPE" != "$AFTER_SHAPE" ]]; then
+    printf '%sthe databases, collections, counts or indexes changed%s\n  before: %s\n  after:  %s\n' \
+        "$RED" "$NC" "$BEFORE_SHAPE" "$AFTER_SHAPE"
     exit 1
 fi
-if [[ "$BEFORE_DOCS" != "$AFTER_DOCS" ]]; then
-    printf '%sthe documents changed%s\n  before: %s\n  after:  %s\n' "$RED" "$NC" "$BEFORE_DOCS" "$AFTER_DOCS"
+if [[ "$BEFORE_CONTENTS" != "$AFTER_CONTENTS" ]]; then
+    printf '%sthe documents inside the database changed%s — %s became %s\n' \
+        "$RED" "$NC" "$BEFORE_CONTENTS" "$AFTER_CONTENTS"
+    exit 1
+fi
+if [[ "$BEFORE_COUNT" != "$AFTER_COUNT" || "$BEFORE_DOCS" != "$AFTER_DOCS" ]]; then
+    printf '%sthe files on disk changed%s — %s files / %s became %s files / %s\n' \
+        "$RED" "$NC" "$BEFORE_COUNT" "$BEFORE_DOCS" "$AFTER_COUNT" "$AFTER_DOCS"
     exit 1
 fi
 
-printf '%s✔ the database is identical%s — every database, collection and document count\n' "$GREEN" "$NC"
-printf '%s✔ the documents are identical%s — %s files, checksum %s\n' \
-    "$GREEN" "$NC" "$(find "$DATA_ROOT" -type f | wc -l | tr -d ' ')" "$AFTER_DOCS"
+printf '%s✔ the database keeps its shape%s — every database, collection, document count and index\n' "$GREEN" "$NC"
+printf '%s✔ the database keeps its contents%s — every document, field by field, checksum %s\n' \
+    "$GREEN" "$NC" "$AFTER_CONTENTS"
+printf '%s✔ the files keep their names and contents%s — %s files, checksum %s\n' \
+    "$GREEN" "$NC" "$AFTER_COUNT" "$AFTER_DOCS"
