@@ -136,6 +136,53 @@ the_machine_surface_survives_every_ingress_mode() {
     grep -q 'import /etc/caddy/surface.caddy' "$REPO_ROOT/Caddyfile"
 }
 
+# The three checks above read the configuration. This one runs it: the
+# authority and the proxy as compose.yaml declares them, with the Caddyfile and
+# the surface fragment from this repository, and asks who signed what the proxy
+# serves.
+the_machine_surface_is_really_served_by_the_authority() {
+    local run=cap-surface-$$ net ca proxy domain=understand.local work issuer
+    net=$run-net; ca=$run-ca; proxy=$run-caddy
+    work="$WORK_DIR/surface"
+    mkdir -p "$work/ca" && chmod 777 "$work/ca"
+
+    docker network create "$net" >/dev/null 2>&1
+    docker run -d --name "$ca" --network "$net" --network-alias step-ca \
+        -v "$work/ca":/home/step \
+        -e DOCKER_STEPCA_INIT_NAME="$domain" \
+        -e DOCKER_STEPCA_INIT_DNS_NAMES="step-ca,$domain" \
+        -e DOCKER_STEPCA_INIT_PASSWORD=capability-test \
+        -e DOCKER_STEPCA_INIT_ACME=true \
+        "$STEP_CA_IMAGE" >/dev/null 2>&1
+    sleep 16
+
+    local verdict=1
+    if [[ -f "$work/ca/certs/root_ca.crt" ]]; then
+        docker run -d --name "$proxy" --network "$net" --network-alias "node.$domain" \
+            -e UT_DOMAIN="$domain" \
+            -v "$REPO_ROOT/Caddyfile":/etc/caddy/Caddyfile:ro \
+            -v "$REPO_ROOT/caddy/ingress-internal.caddy":/etc/caddy/ingress.caddy:ro \
+            -v "$REPO_ROOT/caddy/internal-surface.caddy":/etc/caddy/surface.caddy:ro \
+            -v "$work/ca/certs":/etc/caddy/ca/certs:ro \
+            "$CADDY_IMAGE" >/dev/null 2>&1
+        sleep 30
+
+        issuer=$(docker run --rm --network "$net" -v "$work/ca/certs":/certs:ro --user root \
+            --entrypoint sh "$STEP_CA_IMAGE" -c \
+            "step certificate inspect https://node.$domain:8443 --roots /certs/root_ca.crt --short" 2>&1)
+        grep -q 'Provisioner: acme' <<< "$issuer" && verdict=0
+        (( verdict )) && docker logs "$proxy" 2>&1 | grep -iE 'error' | tail -4
+    else
+        echo "the authority wrote no root"
+        docker logs "$ca" 2>&1 | tail -4
+    fi
+
+    docker rm -f "$ca" "$proxy" >/dev/null 2>&1
+    docker network rm "$net" >/dev/null 2>&1
+    docker run --rm -v "$work":/w alpine:3 sh -c 'rm -rf /w/ca' >/dev/null 2>&1
+    return "$verdict"
+}
+
 files_are_backed_up_and_restore_identically() {
     local repo="$WORK_DIR/repo" src="$WORK_DIR/src" out="$WORK_DIR/out"
     mkdir -p "$src/app-data" "$src/appbuilder/workspaces/an-app/mongo-data" "$out"
@@ -180,6 +227,9 @@ a_missing_backup_is_visible() {
     [[ "$status" == "healthy" ]]
 }
 
+STEP_CA_IMAGE=$(grep -m1 -oE 'smallstep/step-ca:[0-9.]+' "$REPO_ROOT/compose.yaml" || echo smallstep/step-ca:latest)
+CADDY_IMAGE=$(grep -m1 -oE 'caddy:[0-9a-z.-]+' "$REPO_ROOT/compose.yaml" || echo caddy:2-alpine)
+
 prepare_env
 
 group "Deployment topologies"
@@ -199,6 +249,8 @@ capability "the machine-facing surface takes its certificate from that authority
     the_machine_surface_uses_the_local_authority
 capability "it does so whatever the customer chose for the public one" \
     the_machine_surface_survives_every_ingress_mode
+capability "and it is really served by it, not just configured to be" \
+    the_machine_surface_is_really_served_by_the_authority
 
 group "Backward compatibility"
 capability "an untouched install keeps its container, volume, network and data names" \
