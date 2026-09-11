@@ -108,6 +108,34 @@ overrides_isolate_every_resource() {
     ! grep -q '/var/lib/understandtech' <<< "$rendered"
 }
 
+the_authority_root_is_where_the_backup_looks() {
+    command -v jq >/dev/null || { echo "jq absent"; return 1; }
+    local config root backed_up
+    config=$( cd "$WORK_DIR" && docker compose -f compose.yaml config --format json 2>/dev/null )
+    root=$(jq -r '.services["step-ca"].volumes[]? | select(.target == "/home/step") | .source' <<< "$config")
+    backed_up=$(jq -r '.services["files-backup"].volumes[]? | select(.target == "/data") | .source' <<< "$config")
+    [[ -n "$root" && -n "$backed_up" ]] || { echo "no root or no backup source"; return 1; }
+    [[ "$root" == "$backed_up"/* ]] || { echo "the root at ${root} is outside ${backed_up}"; return 1; }
+}
+
+the_machine_surface_uses_the_local_authority() {
+    grep -q 'step-ca:9000/acme' "$REPO_ROOT/caddy/internal-surface.caddy" \
+        && ! grep -qE 'UT_CERT_FILE|acme-v02\.api\.letsencrypt' "$REPO_ROOT/caddy/internal-surface.caddy"
+}
+
+# The public certificate follows UT_INGRESS_MODE, the machine-facing one never
+# does: an appliance behind a customer's load balancer would otherwise leave the
+# authority issuing nothing at all.
+the_machine_surface_survives_every_ingress_mode() {
+    local mode missing=()
+    for mode in internal custom edge; do
+        [[ -f "$REPO_ROOT/caddy/ingress-$mode.caddy" ]] || continue
+        grep -qE 'surface|step-ca' "$REPO_ROOT/caddy/ingress-$mode.caddy" && missing+=("$mode")
+    done
+    (( ${#missing[@]} == 0 )) || { echo "ingress modes that touch the machine surface: ${missing[*]}"; return 1; }
+    grep -q 'import /etc/caddy/surface.caddy' "$REPO_ROOT/Caddyfile"
+}
+
 files_are_backed_up_and_restore_identically() {
     local repo="$WORK_DIR/repo" src="$WORK_DIR/src" out="$WORK_DIR/out"
     mkdir -p "$src/app-data" "$src/appbuilder/workspaces/an-app/mongo-data" "$out"
@@ -161,6 +189,16 @@ capability "the App Builder overlay renders on top of it" \
     renders_valid_configuration -f compose.yaml -f compose.appbuilder.yaml
 capability "the control-plane role leaves out the inference engines" \
     omits_service nim-llm -f compose.yaml
+
+group "Machine identity"
+capability "the appliance runs its own certificate authority" \
+    lists_service step-ca -f compose.yaml
+capability "its root sits where the file backup looks" \
+    the_authority_root_is_where_the_backup_looks
+capability "the machine-facing surface takes its certificate from that authority" \
+    the_machine_surface_uses_the_local_authority
+capability "it does so whatever the customer chose for the public one" \
+    the_machine_surface_survives_every_ingress_mode
 
 group "Backward compatibility"
 capability "an untouched install keeps its container, volume, network and data names" \
