@@ -28,6 +28,11 @@ CA_PASS=machine-identity-test
 STEP_IMAGE=smallstep/step-ca:latest
 CADDY_IMAGE=$(grep -m1 -oE 'caddy:[0-9a-z.-]+' "$(dirname "${BASH_SOURCE[0]}")/../compose.yaml" || echo caddy:2-alpine)
 CURL_IMAGE=curlimages/curl:latest
+RESTIC_IMAGE=$(grep -m1 -oE 'restic/restic:[0-9.]+' "$(dirname "${BASH_SOURCE[0]}")/../compose.yaml" || echo restic/restic:latest)
+SPARE_CA=$RUN-spare-ca
+SPARE_CERTS=$RUN-spare-certs
+SPARE_WORK=$(mktemp -d)
+SPARE_ROOT=$SPARE_WORK/ca
 
 PASSED=0
 FAILED=0
@@ -50,9 +55,11 @@ property() {
 }
 
 cleanup() {
-    docker rm -f "$CA_NODE" "$NODE" >/dev/null 2>&1
-    docker volume rm "$CA_VOLUME" "$CERT_VOLUME" >/dev/null 2>&1
+    docker rm -f "$CA_NODE" "$NODE" "$SPARE_CA" >/dev/null 2>&1
+    docker volume rm "$CA_VOLUME" "$CERT_VOLUME" "$SPARE_CERTS" >/dev/null 2>&1
     docker network rm "$NET" >/dev/null 2>&1
+    docker run --rm -v "$SPARE_WORK":/w alpine:3 sh -c 'rm -rf /w/..?* /w/.[!.]* /w/*' >/dev/null 2>&1
+    rm -rf "$SPARE_WORK"
     rm -f "$CADDYFILE"
 }
 trap cleanup EXIT
@@ -189,6 +196,65 @@ a_revoked_node_cannot_renew_once_expired() {
     ! revoked_node_renews
 }
 
+spare_authority_starts() {
+    docker run -d --name "$SPARE_CA" --network "$NET" -v "$SPARE_ROOT":/home/step \
+        -e DOCKER_STEPCA_INIT_NAME=restore-test \
+        -e DOCKER_STEPCA_INIT_DNS_NAMES="$SPARE_CA" \
+        -e DOCKER_STEPCA_INIT_PASSWORD="$CA_PASS" \
+        "$STEP_IMAGE" >/dev/null 2>&1
+    sleep 15
+}
+
+spare_client() {
+    docker run --rm --network "$NET" -v "$SPARE_CERTS":/certs --user root --entrypoint sh \
+        -e FP="$SPARE_FINGERPRINT" -e CA_URL="https://$SPARE_CA:9000" "${@:2}" "$STEP_IMAGE" -c "$1"
+}
+
+spare_node_renews() {
+    spare_client 'step ca renew --force --ca-url "$CA_URL" --root /certs/root.crt \
+        /certs/node.crt /certs/node.key'
+}
+
+restic_on_spare() {
+    docker run --rm -v "$SPARE_WORK":/work \
+        -e RESTIC_REPOSITORY=/work/backup -e RESTIC_PASSWORD="$CA_PASS" \
+        "$RESTIC_IMAGE" "$@"
+}
+
+a_backed_up_root_survives_the_machine() {
+    local token before after
+    mkdir -p "$SPARE_ROOT" && chmod 777 "$SPARE_ROOT"
+    docker volume create "$SPARE_CERTS" >/dev/null
+    spare_authority_starts
+
+    SPARE_FINGERPRINT=$(docker logs "$SPARE_CA" 2>&1 | grep -oE '[a-f0-9]{64}' | head -1)
+    docker exec "$SPARE_CA" sh -c "echo $CA_PASS > /tmp/p" >/dev/null 2>&1
+    spare_client 'step ca bootstrap --force --ca-url "$CA_URL" --fingerprint "$FP" \
+        && cp "$(step path)/certs/root_ca.crt" /certs/root.crt && chmod -R 777 /certs' >/dev/null 2>&1
+    token=$(docker exec "$SPARE_CA" step ca token node --provisioner admin --password-file /tmp/p 2>/dev/null | tail -1)
+    spare_client 'step ca certificate node /certs/node.crt /certs/node.key --token "$TOKEN" \
+        && chmod 644 /certs/node.crt /certs/node.key' -e TOKEN="$token" >/dev/null 2>&1
+    spare_node_renews >/dev/null 2>&1 || return 1
+
+    before=$(docker run --rm -v "$SPARE_ROOT":/ca:ro alpine:3 cksum /ca/certs/root_ca.crt | cut -d' ' -f1)
+
+    restic_on_spare init >/dev/null 2>&1
+    restic_on_spare backup /work/ca --quiet >/dev/null 2>&1 || return 1
+
+    docker rm -f "$SPARE_CA" >/dev/null 2>&1
+    docker run --rm -v "$SPARE_WORK":/w alpine:3 sh -c 'rm -rf /w/ca' >/dev/null 2>&1
+    [[ -e "$SPARE_ROOT/config/ca.json" ]] && return 1
+
+    restic_on_spare restore latest --target / --quiet >/dev/null 2>&1
+    [[ -e "$SPARE_ROOT/config/ca.json" ]] || return 1
+
+    spare_authority_starts
+    after=$(docker run --rm -v "$SPARE_ROOT":/ca:ro alpine:3 cksum /ca/certs/root_ca.crt | cut -d' ' -f1)
+    [[ "$before" == "$after" ]] || return 1
+
+    spare_node_renews
+}
+
 echo "Machine identity"
 property "the authority serves with no outbound access at all" \
     ca_is_reachable_without_outbound_access
@@ -214,6 +280,11 @@ property "a revoked node cannot renew" \
     a_revoked_node_cannot_renew
 property "it still cannot once its certificate has expired" \
     a_revoked_node_cannot_renew_once_expired
+
+echo
+echo "Recovery ${DIM}(the only irreversible part of running an authority)${NC}"
+property "a backed-up root survives losing the machine" \
+    a_backed_up_root_survives_the_machine
 
 echo
 printf '%s%d verified%s' "$GREEN" "$PASSED" "$NC"
