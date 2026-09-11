@@ -49,6 +49,7 @@ services:
     ports:
       - "${UT_HTTP_PORT:-80}:80"
       - "${UT_HTTPS_PORT:-443}:443"
+      - "${UT_INTERNAL_BIND_ADDRESS:-127.0.0.1}:${UT_INTERNAL_PORT:-8443}:8443"
     environment:
       # Substituted by Caddy in the Caddyfile and in the mode fragment. Always
       # a real default, never ${VAR:-}: a placeholder that is set but empty
@@ -72,14 +73,28 @@ services:
       # unconditionally: the directory is empty in the other modes, where the
       # Caddyfile never refers to it.
       - ${UT_CERT_DIR:-./caddy/certs}:/etc/caddy/certs:ro
+      # The machine-facing surface, whose certificate comes from the local
+      # authority whatever UT_INGRESS_MODE decides for the public one. Set
+      # UT_INTERNAL_SURFACE="no-internal-surface" on a node that runs no
+      # authority.
+      - ./caddy/${UT_INTERNAL_SURFACE:-internal-surface}.caddy:/etc/caddy/surface.caddy:ro
+      - ${DATA_ROOT:-/var/lib/understandtech}/ca/certs:/etc/caddy/ca/certs:ro
       - caddy-data:/data
       - caddy-config:/config
     networks:
-      - ut-frontend-network
+      ut-frontend-network:
+      ut-ca-network:
+        aliases:
+          - ${UT_NODE_NAME:-node}.${UT_DOMAIN:-understand.local}
     depends_on:
       api:
         condition: service_healthy
       frontend:
+        condition: service_healthy
+      # `caddy validate` reads the trusted_roots file for real, so Caddy cannot
+      # start before the authority has written its root — and the healthcheck
+      # below is that same command.
+      step-ca:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "caddy", "validate", "--config", "/etc/caddy/Caddyfile"]
