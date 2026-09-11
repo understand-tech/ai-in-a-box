@@ -88,7 +88,9 @@ service_names_in() {
 }
 
 state_names_in() {
-    rendered "$1" -f compose.yaml | grep -oE 'name: ut-[a-z-]+(-data|-network)' | sort -u
+    rendered_as_json "$1" \
+        | jq -r '((.volumes // {}) + (.networks // {})) | to_entries[] | .value.name // .key' \
+        | sort -u
 }
 
 container_names_in() {
@@ -159,20 +161,26 @@ the_installer_recognises_an_existing_database() {
 the_state_keeps_its_names() {
     local before lost
     before=$(state_names_in "$BEFORE")
-    [[ -n "$before" ]] || { echo "no named volume or network found before the change"; return 1; }
+    (( $(grep -c . <<< "$before") >= 10 )) \
+        || { echo "only $(grep -c . <<< "$before") names found before the change, too few to be reading them all"; return 1; }
     lost=$(comm -23 <(printf '%s\n' "$before") <(state_names_in "$AFTER"))
-    [[ -z "$lost" ]] || { echo "no longer mounted: $(echo "$lost" | sed 's/name: //' | tr '\n' ' ')"; return 1; }
+    [[ -z "$lost" ]] || { echo "no longer mounted: $(tr '\n' ' ' <<< "$lost")"; return 1; }
 }
 
 the_data_directory_is_unchanged() {
     rendered "$AFTER" -f compose.yaml | grep -q '/var/lib/understandtech'
 }
 
+database_credentials_in() {
+    rendered "$1" -f compose.yaml | grep -E 'MONGO_INITDB_ROOT_(USERNAME|PASSWORD):' | sort | cksum
+}
+
 the_database_keeps_its_credentials() {
-    local before after
-    before=$(rendered "$BEFORE" -f compose.yaml | grep -c 'MONGO_INITDB_ROOT_USERNAME')
-    after=$(rendered "$AFTER" -f compose.yaml | grep -c 'MONGO_INITDB_ROOT_USERNAME')
-    [[ "$before" == "$after" ]]
+    local before
+    before=$(database_credentials_in "$BEFORE")
+    [[ "$before" != "$(printf '' | cksum)" ]] || { echo "no credentials rendered before the change"; return 1; }
+    [[ "$before" == "$(database_credentials_in "$AFTER")" ]] \
+        || { echo "the rendered credentials differ"; return 1; }
 }
 
 every_service_that_uses_the_database_can_reach_it() {
