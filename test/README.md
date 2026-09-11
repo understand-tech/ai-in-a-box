@@ -230,20 +230,31 @@ are rewritten before anything starts, and a guard refuses to run if the
 rendered configuration still holds a name outside the run's namespace. Run it
 once with that guard removed and it will seed a live volume with test data.
 
-Verified on the test appliance against a production archive, with twenty
-containers running throughout:
+Verified on the test appliance against a production archive — 5 databases, 56
+collections, 7720 documents, 98 indexes — with twenty containers running
+throughout and twenty still running after:
 
 ```
-1. checking nothing here belongs to another deployment
-2. starting the version the customer runs
 3. filling it
    restored from prod.archive.gz
+   app-builder[app_sessions:34/_id_+expires_at_1+owner_uid_1,audit_log:53/...]
 4. applying the new version
 5. comparing
 
-✔ the database is identical — every database, collection and document count
-✔ the documents are identical — 200 files, checksum 3398948712
+✔ the database keeps its shape — every database, collection, document count and index
+✔ the database keeps its contents — every document, field by field, checksum 2511543522
+✔ the files keep their names and contents — 200 files, checksum 1525678159
 ```
+
+Three comparisons, because the first two are not the same question. The shape
+catches a lost index — a uniqueness constraint or a table scan, silently. The
+contents catch a document that changed while the count did not. The files are
+compared one by one, by path and checksum, so a rename or a move is visible;
+concatenating them and checksumming the result was not enough.
+
+Both were checked against an alteration and its reversal: a changed field and a
+renamed file each move the checksum, and restoring them brings it back. File
+ownership and permissions are still not compared.
 
 ## What this does not prove
 
