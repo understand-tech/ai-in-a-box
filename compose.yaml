@@ -94,6 +94,35 @@ services:
         reservations:
           memory: 64M
 
+  step-ca:
+    image: ${STEP_CA_IMAGE:-smallstep/step-ca:0.30.2}
+    container_name: ${CONTAINER_PREFIX:-ut}-step-ca
+    restart: unless-stopped
+    environment:
+      DOCKER_STEPCA_INIT_NAME: ${UT_DOMAIN:-understand.local}
+      DOCKER_STEPCA_INIT_DNS_NAMES: step-ca,${UT_DOMAIN:-understand.local}
+      DOCKER_STEPCA_INIT_PASSWORD: ${CA_PASSWORD:?generate it, see .env.example}
+      DOCKER_STEPCA_INIT_ACME: "true"
+    # The root lives under DATA_ROOT rather than in a named volume so that the
+    # file backup carries it. Losing it means re-enrolling every machine the
+    # customer owns; a named volume is backed up by nothing.
+    volumes:
+      - ${DATA_ROOT:-/var/lib/understandtech}/ca:/home/step
+    networks:
+      - ut-ca-network
+    healthcheck:
+      test: ["CMD", "step", "ca", "health", "--ca-url", "https://localhost:9000", "--root", "/home/step/certs/root_ca.crt"]
+      <<: *healthcheck-defaults
+      start_period: 30s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+        reservations:
+          memory: 64M
+
   redis:
     image: redis:7.2-alpine
     container_name: ${CONTAINER_PREFIX:-ut}-redis
@@ -757,6 +786,10 @@ networks:
     driver: bridge
   ut-data-network:
     name: ${RESOURCE_PREFIX:-ut}-data-network
+    driver: bridge
+    internal: true
+  ut-ca-network:
+    name: ${RESOURCE_PREFIX:-ut}-ca-network
     driver: bridge
     internal: true
 
