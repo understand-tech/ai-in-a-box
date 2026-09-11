@@ -38,6 +38,34 @@ have, checked on every push — so the output doubles as the specification, and 
 capability nobody checks is a capability that does not appear. Add a line when
 you add a capability; name it after what it does, not after the mechanism.
 
+## Running the nightly checks
+
+The other two start containers, so they are not on the push path:
+
+```bash
+./test/database-restore.sh     # about a minute
+./test/machine-identity.sh     # about five, it waits for a certificate to expire
+```
+
+They need nothing but a Docker daemon — no secret, no registry credentials, and
+`machine-identity.sh` builds its network with `--internal`, so neither needs
+outbound access once the images are local.
+
+Every container, volume and network they create carries the shell's PID, and
+both clean up after themselves on exit. Two runs can therefore overlap, and
+either can run beside a live deployment without touching it.
+
+**`gh workflow run nightly.yml` does not work, and that is not a local
+problem.** GitHub only reads `schedule` and `workflow_dispatch` from the default
+branch. `nightly.yml` lives on the release branches, not on `main`, so there is
+no *Run workflow* button and the 3 a.m. cron was never armed either. `checks.yml`
+is unaffected because `push` and `pull_request` are evaluated on the branch being
+pushed.
+
+Until that is resolved, run them by hand — on the target machine rather than a
+generic runner, which is where they say the most: what they watch for is the
+upstream `mongo`, `db-backup` and `step-ca` images moving on their own.
+
 ## What it is for
 
 Every check exists because of a defect that was actually found in this
@@ -125,11 +153,12 @@ Not implemented yet. Listed so the gap is visible rather than assumed covered.
 
 ## What this does not prove
 
-These checks read files. They do not start anything.
+The two checks on the push path read files. They do not start anything.
 
 They say nothing about whether the images pull, the containers start, the
 inference serves, or the platform works. A green run means no known class of
-defect was reintroduced — nothing more.
+defect was reintroduced — nothing more. The nightly pair does start containers,
+but a disposable MongoDB and a disposable authority are not this product.
 
 Proving more takes a machine with a GPU, a registry it can pull from, and the
 time for a cold start. None of that belongs in CI, so the first real install
