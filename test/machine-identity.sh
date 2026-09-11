@@ -19,6 +19,7 @@ RUN=mi-$$
 NET=$RUN-net
 CA_NODE=$RUN-ca
 NODE=$RUN-node
+REVOKED=$RUN-revoked
 CA_VOLUME=$RUN-ca-data
 CERT_VOLUME=$RUN-certs
 CA_URL=https://$CA_NODE:9000
@@ -92,7 +93,7 @@ issue_token() {
 
 step_client() {
     docker run --rm --network "$NET" -v "$CERT_VOLUME":/certs --user root --entrypoint sh \
-        -e FP="$FINGERPRINT" -e CA_URL="$CA_URL" -e NODE="$NODE" "${@:2}" "$STEP_IMAGE" -c "$1"
+        -e FP="$FINGERPRINT" -e CA_URL="$CA_URL" -e NODE="$NODE" -e REVOKED="$REVOKED" "${@:2}" "$STEP_IMAGE" -c "$1"
 }
 
 ca_is_reachable_without_outbound_access() {
@@ -164,6 +165,30 @@ a_node_recovers_after_its_certificate_expired() {
     renewal_needs_no_token
 }
 
+enrol_second_node() {
+    local token; token=$(issue_token "$REVOKED")
+    step_client 'step ca certificate "$REVOKED" /certs/revoked.crt /certs/revoked.key --token "$TOKEN" \
+        && chmod 644 /certs/revoked.crt /certs/revoked.key' -e TOKEN="$token"
+}
+
+revoked_node_renews() {
+    step_client 'step ca renew --force --ca-url "$CA_URL" --root /certs/root.crt \
+        /certs/revoked.crt /certs/revoked.key'
+}
+
+a_revoked_node_cannot_renew() {
+    enrol_second_node >/dev/null 2>&1 || return 1
+    revoked_node_renews >/dev/null 2>&1 || return 1
+    step_client 'step ca revoke --cert /certs/revoked.crt --key /certs/revoked.key \
+        --ca-url "$CA_URL" --root /certs/root.crt' >/dev/null 2>&1 || return 1
+    ! revoked_node_renews
+}
+
+a_revoked_node_cannot_renew_once_expired() {
+    sleep 125
+    ! revoked_node_renews
+}
+
 echo "Machine identity"
 property "the authority serves with no outbound access at all" \
     ca_is_reachable_without_outbound_access
@@ -182,6 +207,13 @@ echo
 echo "Resilience ${DIM}(this one waits for a certificate to expire)${NC}"
 property "a node recovers even after its certificate expired" \
     a_node_recovers_after_its_certificate_expired
+
+echo
+echo "Revocation ${DIM}(what makes recovery-after-expiry safe to allow)${NC}"
+property "a revoked node cannot renew" \
+    a_revoked_node_cannot_renew
+property "it still cannot once its certificate has expired" \
+    a_revoked_node_cannot_renew_once_expired
 
 echo
 printf '%s%d verified%s' "$GREEN" "$PASSED" "$NC"
