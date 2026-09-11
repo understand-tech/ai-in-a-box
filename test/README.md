@@ -7,6 +7,7 @@
 | `capabilities.sh` | Checks what the deployment can do, one line per capability. Needs Docker; renders configurations and exercises the backup, starts no application service. |
 | `invariants.sh` | Checks the repository against eight invariants. No dependencies beyond bash and coreutils, runs in under a second. |
 | `migration.sh` | Asks what an upgrade does to an install that already runs, starting from the environment file the earlier version shipped. Needs Docker and the git history. |
+| `migration-on-data.sh` | Runs that upgrade on a real database and document tree, beside whatever else the machine runs. Manual, not in CI. |
 | `machine-identity.sh` | Validates the certificate mechanism intended to replace the shared JWT_SECRET. **Not a product capability yet** — nothing here runs a CA. Nightly. |
 | `database-restore.sh` | Proves a backup archive restores, end to end. Nightly. |
 | `known-issues.txt` | Problems that already exist and are accepted for now, with the reason next to each. |
@@ -205,6 +206,44 @@ with a fixed name and a named volume, removes the fixed name, and checks the
 volume came back. That is what makes the rename safe, and it is a Compose
 behaviour rather than ours: if it ever changed, every customer would
 re-download the model weights on upgrade.
+
+## Migrating real data
+
+`migration-on-data.sh` does what the check above cannot: it fills a database,
+applies the new version to the same volume, and compares. It is manual, since
+it needs a machine with the images and several minutes.
+
+```bash
+./test/migration-on-data.sh
+MIGRATION_ARCHIVE=/path/to/mongo.archive.gz ./test/migration-on-data.sh
+```
+
+With an archive it migrates real data; without one it generates 3000
+documents. It installs beside whatever the machine already runs — its own
+project, prefixes, data directory and host port — and starts only MongoDB,
+since the inference engines hold nothing an upgrade can lose and would compete
+for the GPU.
+
+**The starting version predates the prefix variables**, so its compose file
+names `ut-mongodb` and mounts `ut-mongodb-data`: the production names. Those
+are rewritten before anything starts, and a guard refuses to run if the
+rendered configuration still holds a name outside the run's namespace. Run it
+once with that guard removed and it will seed a live volume with test data.
+
+Verified on the test appliance against a production archive, with twenty
+containers running throughout:
+
+```
+1. checking nothing here belongs to another deployment
+2. starting the version the customer runs
+3. filling it
+   restored from prod.archive.gz
+4. applying the new version
+5. comparing
+
+✔ the database is identical — every database, collection and document count
+✔ the documents are identical — 200 files, checksum 3398948712
+```
 
 ## What this does not prove
 
