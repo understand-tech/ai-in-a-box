@@ -63,6 +63,7 @@ services:
       - ${DATA_ROOT:-/var/lib/understandtech}/appbuilder:${DATA_ROOT:-/var/lib/understandtech}/appbuilder
     networks:
       - ut-frontend-network
+      - ut-data-network
     depends_on:
       mongodb:
         condition: service_healthy
