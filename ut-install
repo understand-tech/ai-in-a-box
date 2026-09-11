@@ -148,7 +148,11 @@ is_shipped_placeholder() {
     return 1
 }
 
-database_already_initialised() { docker volume inspect ut-mongodb-data >/dev/null 2>&1; }
+database_already_initialised() {
+    local env_file=$1 prefix
+    prefix=$(env_get "$env_file" RESOURCE_PREFIX 2>/dev/null || true)
+    docker volume inspect "${prefix:-ut}-mongodb-data" >/dev/null 2>&1
+}
 
 compose_in_dir() { ( cd "$INSTALL_DIR" && docker compose "$@" ); }
 
@@ -345,7 +349,7 @@ generate_database_credentials() {
     # The mongo image only reads MONGO_INITDB_ROOT_PASSWORD when it creates the
     # data directory. Rotating it later changes nothing in the database and just
     # stops every service from connecting.
-    if database_already_initialised; then
+    if database_already_initialised "$env_file"; then
         log_info "Database already initialised — leaving its credentials alone"
         return 0
     fi
