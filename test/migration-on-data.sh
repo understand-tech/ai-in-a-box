@@ -166,6 +166,25 @@ document_count() {
     find "$DATA_ROOT" -type f | wc -l | tr -d ' '
 }
 
+application_image_is_available() {
+    docker image inspect "$(env_value API_IMAGE)" >/dev/null 2>&1
+}
+
+open_database_connections() {
+    mongo_eval 'db.serverStatus().connections.current'
+}
+
+application_answers() {
+    local attempt code
+    for attempt in $(seq 1 45); do
+        code=$(docker run --rm --network "${RUN}_${RUN}-backend-network" curlimages/curl:latest \
+            -s -o /dev/null -w '%{http_code}' -m 5 "http://$RUN-api:8501/api/" 2>/dev/null)
+        [[ "$code" == "200" ]] && return 0
+        sleep 4
+    done
+    return 1
+}
+
 supply_missing_variables() {
     set +u
     INSTALL_DIR="$WORK_DIR/after" source "$REPO_ROOT/ut-install" >/dev/null 2>&1
@@ -244,3 +263,32 @@ printf '%s✔ the database keeps its contents%s — every document, field by fie
     "$GREEN" "$NC" "$AFTER_CONTENTS"
 printf '%s✔ the files keep their names and contents%s — %s files, checksum %s\n' \
     "$GREEN" "$NC" "$AFTER_COUNT" "$AFTER_DOCS"
+
+if ! application_image_is_available; then
+    printf '\n%sthe application was not started: %s is not on this machine%s\n' \
+        "$DIM" "$(env_value API_IMAGE)" "$NC"
+    exit 0
+fi
+
+echo
+echo "6. starting the application on the migrated database"
+IDLE_CONNECTIONS=$(open_database_connections)
+compose_in after up -d redis api >/dev/null 2>&1 || fail "the application does not come up after the migration"
+application_answers || fail "the application never answered on /api/"
+
+BUSY_CONNECTIONS=$(open_database_connections)
+SERVED_SHAPE=$(database_shape)
+SERVED_CONTENTS=$(database_contents)
+
+echo
+(( BUSY_CONNECTIONS > IDLE_CONNECTIONS )) \
+    || fail "the application answers but opened no database connection — $IDLE_CONNECTIONS before, $BUSY_CONNECTIONS after"
+printf '%s✔ the application serves%s — /api/ answers 200\n' "$GREEN" "$NC"
+printf '%s✔ it reaches the database across the new network%s — connections went from %s to %s\n' \
+    "$GREEN" "$NC" "$IDLE_CONNECTIONS" "$BUSY_CONNECTIONS"
+
+if [[ "$SERVED_SHAPE" != "$AFTER_SHAPE" || "$SERVED_CONTENTS" != "$AFTER_CONTENTS" ]]; then
+    printf '%s✘ starting the application changed the data%s — the comparison above was taken too early\n' "$RED" "$NC"
+    exit 1
+fi
+printf '%s✔ starting it changed nothing%s — no schema migration ran behind the comparison\n' "$GREEN" "$NC"
