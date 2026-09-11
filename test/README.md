@@ -215,8 +215,15 @@ it needs a machine with the images and several minutes.
 
 ```bash
 ./test/migration-on-data.sh
-MIGRATION_ARCHIVE=/path/to/mongo.archive.gz ./test/migration-on-data.sh
+MIGRATION_ARCHIVE=/path/to/mongo.archive.gz \
+MIGRATION_API_IMAGE=ghcr.io/understand-tech/ut-api-customer:latest-arm64 \
+  ./test/migration-on-data.sh
 ```
+
+`MIGRATION_API_IMAGE` is needed because `.env.example` names `2.0-arm64` while
+the appliance runs `latest-arm64` — one more reason the `unpinned-image` check
+exists. Without an application image on the machine, the run stops after the
+data comparison and says so.
 
 With an archive it migrates real data; without one it generates 3000
 documents. It installs beside whatever the machine already runs — its own
@@ -243,8 +250,25 @@ throughout and twenty still running after:
 
 ✔ the database keeps its shape — every database, collection, document count and index
 ✔ the database keeps its contents — every document, field by field, checksum 2511543522
-✔ the files keep their names and contents — 200 files, checksum 1525678159
+✔ the files keep their names and contents — 200 files, checksum 2022053646
+
+6. starting the application on the migrated database
+
+✔ the application serves — /api/ answers 200
+✔ it reaches the database across the new network — a socket to mongodb:27017 opens from inside the container
+✔ starting it changed nothing — no schema migration ran behind the comparison
 ```
+
+The last line is the one that makes the three above it mean anything. A
+comparison taken before the application starts proves nothing if the
+application rewrites the schema on first launch — the data would change after
+the check said it had not. It does not, and now that is a fact rather than an
+assumption.
+
+Reaching the database is checked by opening a socket rather than by counting
+MongoDB connections: the driver connects lazily, so the application answers on
+`/api/` having opened none. Every route that reads is behind authentication, so
+a request proving a read would need a token.
 
 Three comparisons, because the first two are not the same question. The shape
 catches a lost index — a uniqueness constraint or a table scan, silently. The
