@@ -154,10 +154,17 @@ the_machine_surface_is_really_served_by_the_authority() {
         -e DOCKER_STEPCA_INIT_PASSWORD=capability-test \
         -e DOCKER_STEPCA_INIT_ACME=true \
         "$STEP_CA_IMAGE" >/dev/null 2>&1
-    sleep 16
+
+    # Asked inside the container: the root directory is mode 700 for uid 1000,
+    # and the user running this script is not it on every machine.
+    local attempt
+    for attempt in $(seq 1 20); do
+        docker exec "$ca" test -f /home/step/certs/root_ca.crt >/dev/null 2>&1 && break
+        sleep 3
+    done
 
     local verdict=1
-    if [[ -f "$work/ca/certs/root_ca.crt" ]]; then
+    if docker exec "$ca" test -f /home/step/certs/root_ca.crt >/dev/null 2>&1; then
         docker run -d --name "$proxy" --network "$net" --network-alias "node.$domain" \
             -e UT_DOMAIN="$domain" \
             -v "$REPO_ROOT/Caddyfile":/etc/caddy/Caddyfile:ro \
@@ -165,12 +172,14 @@ the_machine_surface_is_really_served_by_the_authority() {
             -v "$REPO_ROOT/caddy/internal-surface.caddy":/etc/caddy/surface.caddy:ro \
             -v "$work/ca/certs":/etc/caddy/ca/certs:ro \
             "$CADDY_IMAGE" >/dev/null 2>&1
-        sleep 30
 
-        issuer=$(docker run --rm --network "$net" -v "$work/ca/certs":/certs:ro --user root \
-            --entrypoint sh "$STEP_CA_IMAGE" -c \
-            "step certificate inspect https://node.$domain:8443 --roots /certs/root_ca.crt --short" 2>&1)
-        grep -q 'Provisioner: acme' <<< "$issuer" && verdict=0
+        for attempt in $(seq 1 20); do
+            issuer=$(docker run --rm --network "$net" -v "$work/ca/certs":/certs:ro --user root \
+                --entrypoint sh "$STEP_CA_IMAGE" -c \
+                "step certificate inspect https://node.$domain:8443 --roots /certs/root_ca.crt --short" 2>&1)
+            grep -q 'Provisioner: acme' <<< "$issuer" && { verdict=0; break; }
+            sleep 3
+        done
         (( verdict )) && docker logs "$proxy" 2>&1 | grep -iE 'error' | tail -4
     else
         echo "the authority wrote no root"
