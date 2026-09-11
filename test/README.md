@@ -6,6 +6,7 @@
 |---|---|
 | `capabilities.sh` | Checks what the deployment can do, one line per capability. Needs Docker; renders configurations and exercises the backup, starts no application service. |
 | `invariants.sh` | Checks the repository against eight invariants. No dependencies beyond bash and coreutils, runs in under a second. |
+| `migration.sh` | Asks what an upgrade does to an install that already runs, starting from the environment file the earlier version shipped. Needs Docker and the git history. |
 | `machine-identity.sh` | Validates the certificate mechanism intended to replace the shared JWT_SECRET. **Not a product capability yet** — nothing here runs a CA. Nightly. |
 | `database-restore.sh` | Proves a backup archive restores, end to end. Nightly. |
 | `known-issues.txt` | Problems that already exist and are accepted for now, with the reason next to each. |
@@ -15,7 +16,7 @@
 
 | Workflow | Trigger | Runs | Takes |
 |---|---|---|---|
-| `checks.yml` | every push and pull request | `invariants.sh`, `capabilities.sh` | under a minute |
+| `checks.yml` | every push and pull request | `invariants.sh`, `capabilities.sh`, `migration.sh` | under a minute |
 | `nightly.yml` | 3 a.m. and manual — **neither works yet**, see below | `machine-identity.sh`, `database-restore.sh` | about six minutes |
 
 Run the first two from anywhere:
@@ -171,12 +172,39 @@ Not implemented yet. Listed so the gap is visible rather than assumed covered.
 | `shellcheck` | Shell fails quietly | Unknown — it has never been run against these four scripts |
 | unit tests | Pure functions test without a machine | `env_set` does not recognise a commented-out variable and appends a duplicate |
 | stubbed installer | Idempotence is proven, not promised | A leaking token, a second run that is not a no-op, a missing terminal |
-| undocumented variable | A default nobody can find is not a setting | `NIM_LLM_BIND_ADDRESS` decides whether a compute node is reachable and appears in no `.env.example`; having a default, `undeclared-variable` stays silent |
-| Q3 → Q4 migration | Backward compatibility is proven on paper only | Unknown — `docker compose config` says the names are unchanged, no run has said the data survives |
+| undocumented variable | A default nobody can find is not a setting | Preventive: `NIM_LLM_BIND_ADDRESS` decided whether a compute node was reachable and appeared in no `.env.example`; having a default, `undeclared-variable` stayed silent |
+| upgrade on real data | A rendered configuration is not a running one | Unknown — `migration.sh` proves what the configuration does, not what a database with 2.4 GB of documents does |
 
 `compose config` has since landed as the first three capabilities, which is
 where a check belongs once it describes something the product does rather than
 something it must not do.
+
+## What the migration check says
+
+It answers one question: what happens to a customer who already runs this
+appliance when the next version lands. The starting point is `origin/main` by
+default, overridable with `MIGRATION_FROM`.
+
+```
+  ✔ an untouched environment file is refused, and says which variable
+      compose stops on: BACKUP_FILES_PASSWORD
+  ✔ the installer supplies every variable the new version requires
+  ✔ the stack then renders
+  ✔ the containers that lose a fixed name are named nowhere else
+      no longer reachable by name: ut-llm
+  ✔ a renamed container keeps its volumes
+```
+
+Two properties are worth reading twice. The installer one **sources
+`ut-install`** instead of reimplementing its logic, so the answer comes from
+the code a customer runs rather than from a copy that can drift — which is what
+the `BASH_SOURCE` guard at the bottom of the installer is for.
+
+The volume one is not about this configuration at all. It starts a container
+with a fixed name and a named volume, removes the fixed name, and checks the
+volume came back. That is what makes the rename safe, and it is a Compose
+behaviour rather than ours: if it ever changed, every customer would
+re-download the model weights on upgrade.
 
 ## What this does not prove
 
