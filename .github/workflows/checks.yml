@@ -27,9 +27,6 @@ jobs:
     name: an existing install survives the upgrade
     runs-on: ubuntu-latest
     steps:
-      # The starting point is a commit, not the working tree, so the history
-      # has to be there — a shallow checkout cannot reach the branch a customer
-      # installed from.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0

@@ -148,9 +148,6 @@ is_shipped_placeholder() {
     return 1
 }
 
-# The volume name follows RESOURCE_PREFIX, so it has to be read from the
-# configuration rather than assumed. Guessing wrong here means concluding the
-# database is new and rotating a password it will never accept.
 database_already_initialised() {
     local env_file=$1 prefix
     prefix=$(env_get "$env_file" RESOURCE_PREFIX 2>/dev/null || true)

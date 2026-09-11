@@ -1,12 +1,5 @@
 #!/usr/bin/env bash
 
-# Answers one question: what happens to a customer who already runs this
-# appliance when the next version lands on their machine.
-#
-# The comparison is made with the environment file the earlier version shipped,
-# because that is literally what a customer copied to .env and has been running
-# since. It is never printed: it carries the secrets that shipped with it.
-
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -58,12 +51,15 @@ lay_out_both_versions() {
     done
     cp "$REPO_ROOT"/compose*.yaml "$AFTER/"
 
-    # The environment file of the earlier version becomes the .env of both, which
-    # is the whole point: the same file that runs today is asked to run the new
-    # stack unchanged.
     cp "$BEFORE/.env.example" "$BEFORE/.env"
     cp "$BEFORE/.env.example" "$AFTER/.env"
     chmod 600 "$BEFORE/.env" "$AFTER/.env"
+}
+
+load_installer() {
+    set +u
+    INSTALL_DIR="$BEFORE" source "$REPO_ROOT/ut-install" >/dev/null 2>&1
+    set -u
 }
 
 required_variables_in() {
@@ -83,10 +79,43 @@ rendered() {
     ( cd "$1" && shift && docker compose "$@" config 2>&1 )
 }
 
+rendered_as_json() {
+    ( cd "$1" && docker compose -f compose.yaml config --format json 2>/dev/null )
+}
+
+service_names_in() {
+    awk '/^  [a-z0-9_-]+:$/ { gsub(/[ :]/, ""); print }' "$1/compose.yaml" | sort -u
+}
+
+state_names_in() {
+    rendered "$1" -f compose.yaml | grep -oE 'name: ut-[a-z-]+(-data|-network)' | sort -u
+}
+
+container_names_in() {
+    rendered "$1" -f compose.yaml | grep -oE 'container_name: [a-z0-9_-]+' | sort -u
+}
+
 names_the_install_would_lose() {
-    comm -23 \
-        <(rendered "$BEFORE" -f compose.yaml | grep -oE 'container_name: [a-z0-9_-]+' | sort -u) \
-        <(rendered "$AFTER" -f compose.yaml | grep -oE 'container_name: [a-z0-9_-]+' | sort -u)
+    comm -23 <(container_names_in "$BEFORE") <(container_names_in "$AFTER")
+}
+
+networks_of() {
+    jq -r --arg s "$2" '.services[$s].networks // {} | keys[]' <<< "$1" | sort
+}
+
+services_holding_a_database_connection() {
+    jq -r '.services | to_entries[]
+           | select(.key != "mongodb")
+           | select([.value.environment // {} | to_entries[]
+                     | select((.value | tostring | test("mongodb://"))
+                              or ((.key | test("_HOST$")) and (.value | tostring) == "mongodb"))]
+                    | length > 0)
+           | .key' <<< "$1"
+}
+
+spelled_out_in_the_repository() {
+    grep -rqE "(^|[^a-z0-9-])${1}([^a-z0-9-]|$)" \
+        "$REPO_ROOT/README.md" "$REPO_ROOT"/*.sh 2>/dev/null
 }
 
 the_new_stack_refuses_an_untouched_env() {
@@ -95,14 +124,6 @@ the_new_stack_refuses_an_untouched_env() {
     [[ -n "${missing// /}" ]] || { echo "nothing is missing, so nothing would refuse"; return 1; }
     rendered "$AFTER" -f compose.yaml >/dev/null 2>&1 && return 1
     echo "compose stops on: ${missing% }"
-}
-
-# Sourcing rather than reimplementing: the answer has to come from the code a
-# customer actually runs, not from a copy of its logic that can drift.
-load_installer() {
-    set +u
-    INSTALL_DIR="$BEFORE" source "$REPO_ROOT/ut-install" >/dev/null 2>&1
-    set -u
 }
 
 the_installer_supplies_what_is_missing() {
@@ -121,15 +142,6 @@ the_new_stack_then_renders() {
     rendered "$AFTER" -f compose.yaml >/dev/null
 }
 
-# The mongo image reads MONGO_INITDB_ROOT_PASSWORD once, when it creates the
-# data directory. An installer that mistakes an existing database for a new one
-# rotates a password the database will never accept, and every service stops
-# connecting — so the guard has to recognise the volume under whatever name
-# RESOURCE_PREFIX gave it.
-# Both directions, because a machine that happens to hold a volume under the
-# default name would let an implementation ignoring the prefix answer correctly
-# by accident. Only "yes for the prefix that exists, no for the one that does
-# not" tells the two apart anywhere.
 the_installer_recognises_an_existing_database() {
     local present=migration-probe-$$ absent=migration-absent-$$ verdict=1
     docker volume create "$present-mongodb-data" >/dev/null 2>&1 || return 1
@@ -144,51 +156,16 @@ the_installer_recognises_an_existing_database() {
     return "$verdict"
 }
 
-# A name that appears is harmless — the internal data network is one. A name
-# that disappears is a volume the new stack no longer mounts, so only the
-# one-way comparison says anything.
 the_state_keeps_its_names() {
     local before lost
-    before=$(rendered "$BEFORE" -f compose.yaml | grep -oE 'name: ut-[a-z-]+(-data|-network)' | sort -u)
+    before=$(state_names_in "$BEFORE")
     [[ -n "$before" ]] || { echo "no named volume or network found before the change"; return 1; }
-    lost=$(comm -23 <(printf '%s\n' "$before") \
-        <(rendered "$AFTER" -f compose.yaml | grep -oE 'name: ut-[a-z-]+(-data|-network)' | sort -u))
+    lost=$(comm -23 <(printf '%s\n' "$before") <(state_names_in "$AFTER"))
     [[ -z "$lost" ]] || { echo "no longer mounted: $(echo "$lost" | sed 's/name: //' | tr '\n' ' ')"; return 1; }
 }
 
 the_data_directory_is_unchanged() {
     rendered "$AFTER" -f compose.yaml | grep -q '/var/lib/understandtech'
-}
-
-# Moving the database onto its own internal network is the kind of change that
-# works until one service was left off the list, and then that service loses the
-# database on the customer's machine rather than here.
-every_service_that_uses_the_database_can_reach_it() {
-    command -v jq >/dev/null || { echo "jq absent"; return 1; }
-    local config db_networks service networks stranded=()
-    config=$( cd "$AFTER" && docker compose -f compose.yaml config --format json 2>/dev/null )
-    db_networks=$(jq -r '.services.mongodb.networks // {} | keys[]' <<< "$config" | sort)
-    [[ -n "$db_networks" ]] || { echo "the database is on no network at all"; return 1; }
-
-    while read -r service; do
-        [[ -n "$service" ]] || continue
-        networks=$(jq -r --arg s "$service" '.services[$s].networks // {} | keys[]' <<< "$config" | sort)
-        [[ -n "$(comm -12 <(printf '%s\n' "$db_networks") <(printf '%s\n' "$networks"))" ]] && continue
-        stranded+=("$service")
-    # A connection string or a host variable, not the mere word: the frontend
-    # passes VITE_DB_PROVIDER=mongodb to the browser and never opens a socket.
-    done <<< "$(jq -r '.services | to_entries[]
-                       | select(.key != "mongodb")
-                       | select([.value.environment // {} | to_entries[]
-                                 | select((.value | tostring | test("mongodb://"))
-                                          or ((.key | test("_HOST$"))
-                                              and (.value | tostring) == "mongodb"))]
-                                | length > 0)
-                       | .key' <<< "$config")"
-
-    (( ${#stranded[@]} == 0 )) && return 0
-    echo "would lose the database: ${stranded[*]}"
-    return 1
 }
 
 the_database_keeps_its_credentials() {
@@ -198,17 +175,24 @@ the_database_keeps_its_credentials() {
     [[ "$before" == "$after" ]]
 }
 
-service_names_in() {
-    awk '/^  [a-z0-9_-]+:$/ { gsub(/[ :]/, ""); print }' "$1/compose.yaml" | sort -u
+every_service_that_uses_the_database_can_reach_it() {
+    command -v jq >/dev/null || { echo "jq absent"; return 1; }
+    local config db_networks service stranded=()
+    config=$(rendered_as_json "$AFTER")
+    db_networks=$(networks_of "$config" mongodb)
+    [[ -n "$db_networks" ]] || { echo "the database is on no network at all"; return 1; }
+
+    while read -r service; do
+        [[ -n "$service" ]] || continue
+        [[ -n "$(comm -12 <(printf '%s\n' "$db_networks") <(networks_of "$config" "$service"))" ]] && continue
+        stranded+=("$service")
+    done <<< "$(services_holding_a_database_connection "$config")"
+
+    (( ${#stranded[@]} == 0 )) && return 0
+    echo "would lose the database: ${stranded[*]}"
+    return 1
 }
 
-# Losing a fixed name is the price of --scale, and Compose recognises the old
-# container by its labels, so nothing is orphaned. What breaks is every command
-# and document that still spells the old name out.
-#
-# A container named after its own service is not affected: the service name
-# stays a network alias, so http://nim-llm:8000 keeps resolving. Only a name
-# that differs from the service disappears for good.
 renamed_containers_are_not_named_elsewhere() {
     local name services renamed=() still_cited=()
     services=$(service_names_in "$AFTER")
@@ -217,9 +201,7 @@ renamed_containers_are_not_named_elsewhere() {
         [[ -n "$name" ]] || continue
         grep -qxF "$name" <<< "$services" && continue
         renamed+=("$name")
-        grep -rqE "(^|[^a-z0-9-])${name}([^a-z0-9-]|$)" \
-            "$REPO_ROOT/README.md" "$REPO_ROOT"/*.sh 2>/dev/null \
-            && still_cited+=("$name")
+        spelled_out_in_the_repository "$name" && still_cited+=("$name")
     done <<< "$(names_the_install_would_lose | sed 's/container_name: //')"
 
     (( ${#renamed[@]} )) && echo "no longer reachable by name: ${renamed[*]}"
@@ -228,9 +210,6 @@ renamed_containers_are_not_named_elsewhere() {
     return 1
 }
 
-# The reason a rename is safe at all, and not a property of this configuration:
-# a volume is attached by its own name. If Compose ever stopped carrying it
-# over, every customer would re-download the model weights on migration.
 a_renamed_container_keeps_its_volumes() {
     local project=migration-rename-$$ dir="$WORK_DIR/rename"
     mkdir -p "$dir"
