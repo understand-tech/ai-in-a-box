@@ -27,6 +27,7 @@ cleanup() {
     compose_in after down >/dev/null 2>&1
     compose_in before down >/dev/null 2>&1
     docker volume rm "$RUN-mongodb-data" "$RUN-redis-data" >/dev/null 2>&1
+    docker run --rm -v "$WORK_DIR":/work alpine:3 sh -c 'rm -rf /work/..?* /work/.[!.]* /work/*' >/dev/null 2>&1
     rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
@@ -178,11 +179,12 @@ open_database_connections() {
 application_answers() {
     local attempt code
     for attempt in $(seq 1 45); do
-        code=$(docker run --rm --network "${RUN}_${RUN}-backend-network" curlimages/curl:latest \
-            -s -o /dev/null -w '%{http_code}' -m 5 "http://$RUN-api:8501/api/" 2>/dev/null)
+        code=$(docker exec "$RUN-api" curl -s -o /dev/null -w '%{http_code}' -m 5 \
+            http://localhost:8501/api/ 2>/dev/null)
         [[ "$code" == "200" ]] && return 0
         sleep 4
     done
+    printf '%s\n' "$(docker logs --tail 12 "$RUN-api" 2>&1)" | sed 's/^/     /'
     return 1
 }
 
