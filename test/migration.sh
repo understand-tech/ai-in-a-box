@@ -97,13 +97,16 @@ the_new_stack_refuses_an_untouched_env() {
     echo "compose stops on: ${missing% }"
 }
 
-the_installer_supplies_what_is_missing() {
-    local key
+# Sourcing rather than reimplementing: the answer has to come from the code a
+# customer actually runs, not from a copy of its logic that can drift.
+load_installer() {
     set +u
-    # Sourcing rather than reimplementing: the answer has to come from the code
-    # a customer actually runs, not from a copy of its logic that can drift.
     INSTALL_DIR="$BEFORE" source "$REPO_ROOT/ut-install" >/dev/null 2>&1
     set -u
+}
+
+the_installer_supplies_what_is_missing() {
+    local key
     generate_application_secrets "$BEFORE/.env" >/dev/null 2>&1
     generate_database_credentials "$BEFORE/.env" >/dev/null 2>&1
 
@@ -116,6 +119,29 @@ the_installer_supplies_what_is_missing() {
 
 the_new_stack_then_renders() {
     rendered "$AFTER" -f compose.yaml >/dev/null
+}
+
+# The mongo image reads MONGO_INITDB_ROOT_PASSWORD once, when it creates the
+# data directory. An installer that mistakes an existing database for a new one
+# rotates a password the database will never accept, and every service stops
+# connecting — so the guard has to recognise the volume under whatever name
+# RESOURCE_PREFIX gave it.
+# Both directions, because a machine that happens to hold a volume under the
+# default name would let an implementation ignoring the prefix answer correctly
+# by accident. Only "yes for the prefix that exists, no for the one that does
+# not" tells the two apart anywhere.
+the_installer_recognises_an_existing_database() {
+    local present=migration-probe-$$ absent=migration-absent-$$ verdict=1
+    docker volume create "$present-mongodb-data" >/dev/null 2>&1 || return 1
+    printf 'RESOURCE_PREFIX="%s"\n' "$present" > "$WORK_DIR/present.env"
+    printf 'RESOURCE_PREFIX="%s"\n' "$absent" > "$WORK_DIR/absent.env"
+
+    if database_already_initialised "$WORK_DIR/present.env" \
+        && ! database_already_initialised "$WORK_DIR/absent.env"; then
+        verdict=0
+    fi
+    docker volume rm "$present-mongodb-data" >/dev/null 2>&1
+    return "$verdict"
 }
 
 # A name that appears is harmless — the internal data network is one. A name
@@ -236,6 +262,7 @@ EOF
 
 resolve_starting_point || { echo "cannot resolve $FROM_REF"; exit 1; }
 lay_out_both_versions
+load_installer
 
 printf '%sMigrating an existing install%s %sfrom %s%s\n' \
     "$BOLD" "$NC" "$DIM" "$(git -C "$REPO_ROOT" rev-parse --short "$FROM_REF")" "$NC"
@@ -247,6 +274,8 @@ property "the installer supplies every variable the new version requires" \
     the_installer_supplies_what_is_missing
 property "the stack then renders" \
     the_new_stack_then_renders
+property "the installer recognises a database that is already there" \
+    the_installer_recognises_an_existing_database
 
 echo
 printf '%sWhat the customer keeps%s\n' "$BOLD" "$NC"
