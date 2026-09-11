@@ -84,7 +84,7 @@ refuse_to_run_beside_production() {
 }
 
 env_value() {
-    grep -m1 -E "^${1}=" "$WORK_DIR/env" | cut -d= -f2- | tr -d '"'
+    grep -E "^${1}=" "$WORK_DIR/env" | tail -1 | cut -d= -f2- | tr -d '"'
 }
 
 mongo_eval() {
