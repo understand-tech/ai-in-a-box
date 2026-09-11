@@ -206,7 +206,7 @@ services:
     expose:
       - "8501"
     environment:
-      LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       TYPE_DEPLOIEMENT: ${TYPE_DEPLOIEMENT:-}
       LOCAL_STORAGE_BASE: ${LOCAL_STORAGE_BASE:-}
       DB_PROVIDER: ${DB_PROVIDER:-}
@@ -359,7 +359,7 @@ services:
     expose:
       - "8501"
     environment:
-      LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       TYPE_DEPLOIEMENT: ${TYPE_DEPLOIEMENT:-}
       LOCAL_STORAGE_BASE: ${LOCAL_STORAGE_BASE:-}
       DB_PROVIDER: ${DB_PROVIDER:-}
@@ -649,7 +649,7 @@ services:
     expose:
       - "8000"
     environment:
-      LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       LOCAL_STORAGE_BASE: ${LOCAL_STORAGE_BASE:-}
       DB_PROVIDER: ${DB_PROVIDER:-}
       STORAGE_PROVIDER: ${STORAGE_PROVIDER:-}
