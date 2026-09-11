@@ -87,9 +87,31 @@ Three services carry no fixed container name, because a fixed name and
 `--scale` are mutually exclusive. Compose names them after the project, so the
 prefix follows `COMPOSE_PROJECT_NAME`.
 
+### Two TLS surfaces, on purpose
+
+What a **browser** must trust follows `UT_INGRESS_MODE`: a self-signed
+certificate from Caddy's own authority (`internal`), a certificate you supply
+(`custom`), or none at all because your load balancer terminates TLS (`edge`).
+
+What one **machine** must prove to another never follows it. The site at
+`node.<UT_DOMAIN>:8443` always takes its certificate from the local authority,
+so bringing your own certificate or putting the appliance behind your proxy
+does not leave that authority idle — an authority that issues nothing rots
+until the day a second machine needs enrolling.
+
+It is bound to `127.0.0.1` by default. If your load balancer would rather
+verify the appliance than trust it blindly, set `UT_INTERNAL_BIND_ADDRESS` to
+the interface it reaches and add `${DATA_ROOT}/ca/certs/root_ca.crt` to its
+trust store. Optional: `edge` works without it.
+
+Certificates last seven days and renew on their own. A machine switched off
+longer than that recovers by itself at power-on; one you revoke loses the right
+to renew immediately.
+
 | Service | Container | Host port | Description |
 |---|---|---|---|
-| Caddy | `ut-caddy` | 80, 443 | Reverse proxy; TLS per `UT_INGRESS_MODE` (self-signed by default) |
+| Caddy | `ut-caddy` | 80, 443, 127.0.0.1:8443 | Reverse proxy; public TLS per `UT_INGRESS_MODE`, machine-facing TLS always from the local authority |
+| step-ca | `ut-step-ca` | — | Local certificate authority. Root under `${DATA_ROOT}/ca`, so the file backup carries it |
 | Frontend | `ut-frontend` | — | React web application |
 | API | `ut-api` | — | Main backend API (FastAPI), `:8501` internal |
 | API-Customer | `ut-api-customer` | — | Partner (REST v3) API and model gateway, `:8501` internal |
