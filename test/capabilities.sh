@@ -6,7 +6,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 WORK_DIR="$(mktemp -d)"
 
-trap 'rm -rf "$WORK_DIR"' EXIT
+# The restic and step-ca containers run as root and write into WORK_DIR, so the
+# shell that created it cannot remove what they left.
+cleanup() {
+    docker run --rm -v "$WORK_DIR":/w alpine:3 sh -c 'rm -rf /w/..?* /w/.[!.]* /w/*' >/dev/null 2>&1
+    rm -rf "$WORK_DIR"
+}
+trap cleanup EXIT
 
 if [[ -t 1 ]]; then
     GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; DIM=$'\033[2m'; BOLD=$'\033[1m'; NC=$'\033[0m'
