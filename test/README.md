@@ -4,25 +4,34 @@
 
 | File | Purpose |
 |---|---|
-| `capabilities.sh` | Checks what the deployment can do, one line per capability. Needs Docker; renders configurations, starts nothing. |
+| `capabilities.sh` | Checks what the deployment can do, one line per capability. Needs Docker; renders configurations and exercises the backup, starts no application service. |
+| `invariants.sh` | Checks the repository against eight invariants. No dependencies beyond bash and coreutils, runs in under a second. |
 | `machine-identity.sh` | Validates the certificate mechanism intended to replace the shared JWT_SECRET. **Not a product capability yet** — nothing here runs a CA. Nightly. |
 | `database-restore.sh` | Proves a backup archive restores, end to end. Nightly. |
-| `invariants.sh` | Checks the repository against a set of invariants. No dependencies beyond bash and coreutils, runs in under a second. |
 | `known-issues.txt` | Problems that already exist and are accepted for now, with the reason next to each. |
 | `allowed-ports.txt` | Ports intentionally published on every interface. |
 
-Run them from anywhere:
+## Where they run
+
+| Workflow | Trigger | Runs | Takes |
+|---|---|---|---|
+| `checks.yml` | every push and pull request | `invariants.sh`, `capabilities.sh` | under a minute |
+| `nightly.yml` | 3 a.m. and manual — **neither works yet**, see below | `machine-identity.sh`, `database-restore.sh` | about six minutes |
+
+Run the first two from anywhere:
 
 ```bash
 ./test/capabilities.sh
 ./test/invariants.sh
 ```
 
-`capabilities.sh` prints what the deployment is verified to do:
+`capabilities.sh` prints what the deployment is verified to do. The whole list,
+as of the `2026-Q4` branch:
 
 ```
 Deployment topologies
   ✔ the default role renders a valid stack
+  ✔ the App Builder overlay renders on top of it
   ✔ the control-plane role leaves out the inference engines
 
 Backward compatibility
@@ -30,8 +39,20 @@ Backward compatibility
 
 Multi-machine roles
   ✔ a compute node serves inference
+  ✔ a compute node runs no database
   ✔ overriding the prefixes isolates every resource
+  ✔ a machine without a GPU requests no NVIDIA device
+
+Backup
+  ✔ files are backed up and restore identically
+  ✔ a missing backup is visible, and recovers when one appears
+
+10 verified
 ```
+
+The list grows with the branch, not with the file: each block is guarded by the
+overlay it needs, so a branch without `compose.compute.yaml` prints four
+capabilities instead of ten rather than failing.
 
 That list is the point. Each line is a capability the product is expected to
 have, checked on every push — so the output doubles as the specification, and a
@@ -76,6 +97,7 @@ produce a false positive eventually, and the whole thing gets switched off.
 | Check | Idea | Defect it addresses |
 |---|---|---|
 | `plaintext-secret` | A shipped secret is a shared secret | `JWT_SECRET` identical at every customer: a token minted at one is accepted at another |
+| `compose-secret-default` | A secret ships from more than one file | `MONGODB_PASSWORD` fell back to `12345678` in `compose.yaml`, which emptying `.env.example` would not have touched |
 | `undeclared-variable` | A variable with no default must be declared | Compose substitutes an empty string, so the stack starts misconfigured instead of refusing to start |
 | `unlisted-port` | Reaching the network must be deliberate | Database and inference engines reachable from the LAN, inference without authentication |
 | `unpinned-image` | A tag moves, a digest does not | Two boxes reporting the same version run different software, and a diagnosis on one no longer transfers |
@@ -144,12 +166,17 @@ Not implemented yet. Listed so the gap is visible rather than assumed covered.
 
 | Check | Idea | Defect it addresses |
 |---|---|---|
-| `compose config` | A configuration that does not parse installs nothing | The App Builder overlay enabled by default over a network nothing creates: `up -d` fails on a fresh install |
 | `caddy validate` × 3 | Three TLS modes, three paths to exercise | A broken ingress mode discovered by the customer who uses it |
 | `caddy adapt` | Either the domain is configurable or it is not | A broken interpolation: the six hostnames no longer match the real address |
-| `shellcheck` | Shell fails quietly | Unknown — it has never been run against these three scripts |
+| `shellcheck` | Shell fails quietly | Unknown — it has never been run against these four scripts |
 | unit tests | Pure functions test without a machine | `env_set` does not recognise a commented-out variable and appends a duplicate |
 | stubbed installer | Idempotence is proven, not promised | A leaking token, a second run that is not a no-op, a missing terminal |
+| undocumented variable | A default nobody can find is not a setting | `NIM_LLM_BIND_ADDRESS` decides whether a compute node is reachable and appears in no `.env.example`; having a default, `undeclared-variable` stays silent |
+| Q3 → Q4 migration | Backward compatibility is proven on paper only | Unknown — `docker compose config` says the names are unchanged, no run has said the data survives |
+
+`compose config` has since landed as the first three capabilities, which is
+where a check belongs once it describes something the product does rather than
+something it must not do.
 
 ## What this does not prove
 
