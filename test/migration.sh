@@ -134,6 +134,37 @@ the_data_directory_is_unchanged() {
     rendered "$AFTER" -f compose.yaml | grep -q '/var/lib/understandtech'
 }
 
+# Moving the database onto its own internal network is the kind of change that
+# works until one service was left off the list, and then that service loses the
+# database on the customer's machine rather than here.
+every_service_that_uses_the_database_can_reach_it() {
+    command -v jq >/dev/null || { echo "jq absent"; return 1; }
+    local config db_networks service networks stranded=()
+    config=$( cd "$AFTER" && docker compose -f compose.yaml config --format json 2>/dev/null )
+    db_networks=$(jq -r '.services.mongodb.networks // {} | keys[]' <<< "$config" | sort)
+    [[ -n "$db_networks" ]] || { echo "the database is on no network at all"; return 1; }
+
+    while read -r service; do
+        [[ -n "$service" ]] || continue
+        networks=$(jq -r --arg s "$service" '.services[$s].networks // {} | keys[]' <<< "$config" | sort)
+        [[ -n "$(comm -12 <(printf '%s\n' "$db_networks") <(printf '%s\n' "$networks"))" ]] && continue
+        stranded+=("$service")
+    # A connection string or a host variable, not the mere word: the frontend
+    # passes VITE_DB_PROVIDER=mongodb to the browser and never opens a socket.
+    done <<< "$(jq -r '.services | to_entries[]
+                       | select(.key != "mongodb")
+                       | select([.value.environment // {} | to_entries[]
+                                 | select((.value | tostring | test("mongodb://"))
+                                          or ((.key | test("_HOST$"))
+                                              and (.value | tostring) == "mongodb"))]
+                                | length > 0)
+                       | .key' <<< "$config")"
+
+    (( ${#stranded[@]} == 0 )) && return 0
+    echo "would lose the database: ${stranded[*]}"
+    return 1
+}
+
 the_database_keeps_its_credentials() {
     local before after
     before=$(rendered "$BEFORE" -f compose.yaml | grep -c 'MONGO_INITDB_ROOT_USERNAME')
@@ -225,6 +256,8 @@ property "the documents stay at the same path" \
     the_data_directory_is_unchanged
 property "the database keeps its credentials" \
     the_database_keeps_its_credentials
+property "every service that uses the database can still reach it" \
+    every_service_that_uses_the_database_can_reach_it
 property "the containers that lose a fixed name are named nowhere else" \
     renamed_containers_are_not_named_elsewhere
 property "a renamed container keeps its volumes" \
