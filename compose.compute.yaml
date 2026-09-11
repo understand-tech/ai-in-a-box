@@ -23,6 +23,19 @@ name: ${COMPOSE_PROJECT_NAME:-understandtech}
 services:
   caddy:
     depends_on: !reset null
+    # A compute node enrols with the control plane's authority; it runs none of
+    # its own, so the machine-facing surface has nothing to ask a certificate
+    # of and would retry ACME forever.
+    volumes: !override
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/ingress-${UT_INGRESS_MODE:-internal}.caddy:/etc/caddy/ingress.caddy:ro
+      - ${UT_CERT_DIR:-./caddy/certs}:/etc/caddy/certs:ro
+      - ./caddy/no-internal-surface.caddy:/etc/caddy/surface.caddy:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+  step-ca:
+    profiles: ["control-plane-only"]
 
   redis:
     profiles: ["control-plane-only"]

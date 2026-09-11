@@ -1,0 +1,34 @@
+# The surface other machines talk to.
+#
+# It serves the same routes as the public site, but its certificate always
+# comes from the local authority — never from UT_CERT_DIR, never from a public
+# ACME provider. The two are different questions: what a browser must trust,
+# and what one machine must prove to another.
+#
+# Keeping it here is also what keeps the authority alive. In UT_INGRESS_MODE
+# "custom" or "edge" the public certificate comes from the customer, so the
+# authority would issue nothing and rot until the day a second machine needs
+# enrolling.
+#
+# It carries its own hostname rather than the apex: Caddy refuses two
+# certificate policies for one name, and the public site already holds the
+# apex. compose gives the proxy that name as a network alias on the authority's
+# network, so the ACME challenge resolves.
+#
+# Bound to loopback by default. A customer whose load balancer wants to verify
+# the appliance rather than trust it blindly sets UT_INTERNAL_BIND_ADDRESS to
+# the interface it reaches, and adds the authority root to that balancer.
+#
+# Mount caddy/no-internal-surface.caddy instead to switch it off — a compute
+# node runs no authority of its own and would retry ACME forever.
+
+https://{$UT_NODE_NAME:node}.{$UT_DOMAIN:understand.local}:{$UT_INTERNAL_PORT:8443} {
+    tls {
+        issuer acme {
+            dir https://step-ca:9000/acme/acme/directory
+            trusted_roots /etc/caddy/ca/certs/root_ca.crt
+        }
+    }
+
+    import platform_routes
+}

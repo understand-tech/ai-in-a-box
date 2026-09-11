@@ -30,7 +30,9 @@ SHIPPED_PLACEHOLDERS=(
     "" "12345678" "password" "SECRET" "SJKFVK" "FVVE" "SJBVSJB" "ut"
     "czIzgahTJGzdG3b1XtEgGIWPvwhdfBvhVd1JjzetjWQ"
 )
-GENERATED_SECRET_KEYS=(JWT_SECRET STATE_SECRET OPENID_SECRET_KEY ADMIN_SETUP_PASSWORD BACKUP_FILES_PASSWORD)
+GENERATED_SECRET_KEYS=(JWT_SECRET STATE_SECRET OPENID_SECRET_KEY ADMIN_SETUP_PASSWORD BACKUP_FILES_PASSWORD CA_PASSWORD)
+STEP_CA_UID=1000
+CA_CERT_DURATION=168h
 
 if [[ -t 1 ]]; then
     RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'
@@ -372,7 +374,7 @@ generate_application_secrets() {
     for key in "${GENERATED_SECRET_KEYS[@]}"; do
         if is_shipped_placeholder "$(env_get "$env_file" "$key" || true)"; then
             case "$key" in
-                JWT_SECRET|BACKUP_FILES_PASSWORD) env_set "$env_file" "$key" "$(random_alphanumeric 64)" ;;
+                JWT_SECRET|BACKUP_FILES_PASSWORD|CA_PASSWORD) env_set "$env_file" "$key" "$(random_alphanumeric 64)" ;;
                 *)                                env_set "$env_file" "$key" "$(random_alphanumeric 32)" ;;
             esac
             rotated+=("$key")
@@ -455,6 +457,56 @@ step_docker_group() {
     usermod -aG docker "$TARGET_USER"
     log_info "Added ${TARGET_USER} to the docker group"
     log_warn "${TARGET_USER} must log out and back in before running docker unprivileged"
+}
+
+# step-ca runs as uid 1000 and writes its root into this directory on first
+# start. Left to docker, the bind mount is created root-owned under a
+# root-owned DATA_ROOT, and the container exits on "Permission denied" before
+# issuing anything.
+step_certificate_authority_root() {
+    log_step "Preparing the certificate authority directory"
+
+    local data_root ca_dir
+    data_root=$(env_get "$INSTALL_DIR/.env" DATA_ROOT 2>/dev/null || true)
+    ca_dir="${data_root:-/var/lib/understandtech}/ca"
+
+    if [[ -d "$ca_dir" ]]; then
+        log_info "Authority directory already present at ${ca_dir}"
+        return 0
+    fi
+
+    install -d -o "$STEP_CA_UID" -g "$STEP_CA_UID" -m 700 "$ca_dir" \
+        || die "Could not create ${ca_dir}"
+    log_info "Created ${ca_dir}, readable only by the authority"
+}
+
+# step-ca ships with 24-hour certificates and allowRenewalAfterExpiry off, and
+# exposes neither through its init variables. Left alone, an appliance switched
+# off over a weekend comes back with an expired certificate the authority
+# refuses to renew, and needs a hand on site.
+step_certificate_policy() {
+    log_step "Applying the certificate policy"
+
+    local current
+    current=$(compose_in_dir exec -T step-ca sh -c \
+        'jq -r ".authority.provisioners[0].claims.defaultTLSCertDuration // empty" /home/step/config/ca.json' 2>/dev/null | tr -d '\r')
+
+    if [[ "$current" == "$CA_CERT_DURATION" ]]; then
+        log_info "Already ${CA_CERT_DURATION}, renewable after expiry"
+        return 0
+    fi
+
+    compose_in_dir exec -T step-ca sh -c "
+        cd /home/step/config
+        jq '(.authority.provisioners[]) |= (.claims = {
+              minTLSCertDuration: \"5m\",
+              defaultTLSCertDuration: \"${CA_CERT_DURATION}\",
+              maxTLSCertDuration: \"${CA_CERT_DURATION}\",
+              allowRenewalAfterExpiry: true })' ca.json > ca.new && mv ca.new ca.json
+    " >/dev/null 2>&1 || { log_warn "Could not apply the certificate policy"; return 0; }
+
+    compose_in_dir restart step-ca >/dev/null 2>&1
+    log_info "Certificates last ${CA_CERT_DURATION} and renew after expiry"
 }
 
 step_networks() {
@@ -652,10 +704,12 @@ main() {
     step_configure
     step_check_resolution
     step_docker_group
+    step_certificate_authority_root
     step_networks
     step_pull
     step_start
     step_wait_healthy
+    step_certificate_policy
     step_autostart
     print_summary
 }
