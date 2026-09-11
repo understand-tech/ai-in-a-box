@@ -52,7 +52,34 @@ stage_version() {
     if ! git -C "$REPO_ROOT" show "$ref:compose.yaml" > "$WORK_DIR/$stage/compose.yaml" 2>/dev/null; then
         cp "$REPO_ROOT/compose.yaml" "$WORK_DIR/$stage/compose.yaml"
     fi
+    rewrite_fixed_names "$WORK_DIR/$stage/compose.yaml"
     cp "$WORK_DIR/env" "$WORK_DIR/$stage/.env"
+}
+
+rewrite_fixed_names() {
+    sed -i.bak \
+        -e "s/^\( *container_name: \)ut-/\1$RUN-/" \
+        -e "s/^\( *container_name: \)nim-/\1$RUN-nim-/" \
+        -e "s/^\( *name: \)ut-/\1$RUN-/" \
+        -e "s/^\( *- \"\)27018:27017\"/\1127.0.0.1:$HOST_PORT:27017\"/" \
+        -e "s/^\( *- \"\)8001:8000\"/\1127.0.0.1:$((HOST_PORT + 1)):8000\"/" \
+        -e "s/^\( *- \"\)8002:8000\"/\1127.0.0.1:$((HOST_PORT + 2)):8000\"/" \
+        "$1"
+    rm -f "$1.bak"
+}
+
+names_not_isolated_in() {
+    compose_in "$1" config 2>/dev/null \
+        | grep -oE '^ *(container_name|name): [a-z][a-z0-9_-]*' \
+        | awk '{print $2}' | grep -vE "^$RUN" | sort -u
+}
+
+refuse_to_run_beside_production() {
+    local stray
+    stray=$(names_not_isolated_in "$1")
+    [[ -z "$stray" ]] && return 0
+    printf '%s\n' "$stray" | sed 's/^/     /'
+    fail "these names are not isolated and belong to whatever else runs here"
 }
 
 env_value() {
@@ -120,7 +147,8 @@ documents_fingerprint() {
 supply_missing_variables() {
     set +u
     INSTALL_DIR="$WORK_DIR/after" source "$REPO_ROOT/ut-install" >/dev/null 2>&1
-    set -u
+    set -u +eE
+    trap - ERR
     generate_application_secrets "$WORK_DIR/after/.env" >/dev/null 2>&1
     generate_database_credentials "$WORK_DIR/after/.env" >/dev/null 2>&1
 }
@@ -134,11 +162,15 @@ write_isolated_env
 stage_version before "$FROM_REF"
 stage_version after HEAD
 
-echo "1. starting the version the customer runs"
+echo "1. checking nothing here belongs to another deployment"
+refuse_to_run_beside_production before
+refuse_to_run_beside_production after
+
+echo "2. starting the version the customer runs"
 compose_in before up -d mongodb >/dev/null 2>&1 || fail "the starting version does not come up"
 wait_for_database || fail "the database never answered"
 
-echo "2. filling it"
+echo "3. filling it"
 if [[ -n "$ARCHIVE" ]]; then
     fill_from_archive || fail "could not restore $ARCHIVE"
     printf '   %srestored from %s%s\n' "$DIM" "$(basename "$ARCHIVE")" "$NC"
@@ -153,13 +185,13 @@ BEFORE_DOCS=$(documents_fingerprint)
 [[ -n "$BEFORE_DB" ]] || fail "the database is empty before the migration, so nothing would be proven"
 printf '   %s%s%s\n' "$DIM" "${BEFORE_DB:0:120}" "$NC"
 
-echo "3. applying the new version"
+echo "4. applying the new version"
 supply_missing_variables
 compose_in before down >/dev/null 2>&1
 compose_in after up -d mongodb >/dev/null 2>&1 || fail "the new version does not come up on the existing volume"
 wait_for_database || fail "the database never answered after the migration"
 
-echo "4. comparing"
+echo "5. comparing"
 AFTER_DB=$(database_fingerprint)
 AFTER_DOCS=$(documents_fingerprint)
 
