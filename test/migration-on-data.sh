@@ -41,6 +41,7 @@ write_isolated_env() {
         echo "CONTAINER_PREFIX=$RUN"
         echo "DATA_ROOT=$DATA_ROOT"
         echo "MONGODB_HOST_PORT=$HOST_PORT"
+        [[ -n "${MIGRATION_API_IMAGE:-}" ]] && echo "API_IMAGE=$MIGRATION_API_IMAGE"
     } >> "$WORK_DIR/env"
     chmod 600 "$WORK_DIR/env"
     mkdir -p "$DATA_ROOT"
