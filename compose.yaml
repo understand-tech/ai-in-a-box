@@ -756,7 +756,7 @@ networks:
     name: ${RESOURCE_PREFIX:-ut}-frontend-network
     driver: bridge
   ut-data-network:
-    name: ut-data-network
+    name: ${RESOURCE_PREFIX:-ut}-data-network
     driver: bridge
     internal: true
 
