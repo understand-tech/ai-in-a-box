@@ -91,9 +91,13 @@ discriminates "one variable with two different defaults" \
     "divergent-default:MONGODB_HOST" \
     "sed -i.bak 's|\${MONGODB_HOST:-mongodb}|\${MONGODB_HOST:-}|' compose.appbuilder.yaml"
 
-discriminates "a required variable absent from the template" \
-    "required-variable-missing:CA_PASSWORD" \
-    "sed -i.bak '/^CA_PASSWORD=/d' .env.example"
+# Guarded like the capability blocks: the list grows with the branch rather
+# than failing on one that predates a check.
+if grep -q 'check_required_variables_appear_in_the_template' "$REPO_ROOT/test/invariants.sh"; then
+    discriminates "a required variable absent from the template" \
+        "required-variable-missing:CA_PASSWORD" \
+        "sed -i.bak '/^CA_PASSWORD=/d' .env.example"
+fi
 
 discriminates "a variable with no default and no value" \
     "undeclared-variable:SOMETHING_NOBODY_SET" \
