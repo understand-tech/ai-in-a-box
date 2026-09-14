@@ -68,6 +68,24 @@ check_compose_declares_no_secret_default() {
     done
 }
 
+# A variable falling back to one value in one service and another elsewhere is
+# a difference nobody chose. MONGODB_HOST read `mongodb` for the App Builder and
+# the empty string for the seven services in compose.yaml, so an .env without
+# that line started them against a database host of "".
+check_defaults_do_not_diverge() {
+    local key defaults count
+    while read -r key; do
+        [[ -n "$key" ]] || continue
+        defaults=$(grep -ohE "\\\$\{${key}:-[^}]*\}" "${COMPOSE_FILES[@]}" 2>/dev/null \
+            | sed "s/^\\\${${key}:-//; s/}\$//" | sort -u)
+        count=$(grep -c '' <<< "$defaults")
+        (( count > 1 )) || continue
+        report "divergent-default:${key}" \
+            "${key} falls back to ${count} different values depending on the service — one of them is wrong"
+    done <<< "$(grep -ohE '\$\{[A-Z_][A-Z0-9_]*:-' "${COMPOSE_FILES[@]}" 2>/dev/null \
+        | sed 's/^\${//; s/:-$//' | sort -u)"
+}
+
 check_variables_without_default_are_declared() {
     local declared required var
     declared=$(env_keys | sort -u)
@@ -208,6 +226,7 @@ compare_with_baseline() {
 main() {
     check_plaintext_secrets
     check_compose_declares_no_secret_default
+    check_defaults_do_not_diverge
     check_variables_without_default_are_declared
     check_published_ports_are_allowed
     check_images_are_pinned
