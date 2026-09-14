@@ -49,6 +49,7 @@ services:
     ports:
       - "${UT_HTTP_PORT:-80}:80"
       - "${UT_HTTPS_PORT:-443}:443"
+      - "${UT_INTERNAL_BIND_ADDRESS:-127.0.0.1}:${UT_INTERNAL_PORT:-8443}:8443"
     environment:
       # Substituted by Caddy in the Caddyfile and in the mode fragment. Always
       # a real default, never ${VAR:-}: a placeholder that is set but empty
@@ -72,19 +73,62 @@ services:
       # unconditionally: the directory is empty in the other modes, where the
       # Caddyfile never refers to it.
       - ${UT_CERT_DIR:-./caddy/certs}:/etc/caddy/certs:ro
+      # The machine-facing surface, whose certificate comes from the local
+      # authority whatever UT_INGRESS_MODE decides for the public one. Set
+      # UT_INTERNAL_SURFACE="no-internal-surface" on a node that runs no
+      # authority.
+      - ./caddy/${UT_INTERNAL_SURFACE:-internal-surface}.caddy:/etc/caddy/surface.caddy:ro
+      - ${DATA_ROOT:-/var/lib/understandtech}/ca/certs:/etc/caddy/ca/certs:ro
       - caddy-data:/data
       - caddy-config:/config
     networks:
-      - ut-frontend-network
+      ut-frontend-network:
+      ut-ca-network:
+        aliases:
+          - ${UT_NODE_NAME:-node}.${UT_DOMAIN:-understand.local}
     depends_on:
       api:
         condition: service_healthy
       frontend:
         condition: service_healthy
+      # `caddy validate` reads the trusted_roots file for real, so Caddy cannot
+      # start before the authority has written its root — and the healthcheck
+      # below is that same command.
+      step-ca:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "caddy", "validate", "--config", "/etc/caddy/Caddyfile"]
       <<: *healthcheck-defaults
       start_period: 10s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+        reservations:
+          memory: 64M
+
+  step-ca:
+    image: ${STEP_CA_IMAGE:-smallstep/step-ca:0.30.2}
+    container_name: ${CONTAINER_PREFIX:-ut}-step-ca
+    restart: unless-stopped
+    environment:
+      DOCKER_STEPCA_INIT_NAME: ${UT_DOMAIN:-understand.local}
+      DOCKER_STEPCA_INIT_DNS_NAMES: step-ca,${UT_DOMAIN:-understand.local}
+      DOCKER_STEPCA_INIT_PASSWORD: ${CA_PASSWORD:?generate it, see .env.example}
+      DOCKER_STEPCA_INIT_ACME: "true"
+    # The root lives under DATA_ROOT rather than in a named volume so that the
+    # file backup carries it. Losing it means re-enrolling every machine the
+    # customer owns; a named volume is backed up by nothing.
+    volumes:
+      - ${DATA_ROOT:-/var/lib/understandtech}/ca:/home/step
+    networks:
+      - ut-ca-network
+    healthcheck:
+      test: ["CMD", "step", "ca", "health", "--ca-url", "https://localhost:9000", "--root", "/home/step/certs/root_ca.crt"]
+      <<: *healthcheck-defaults
+      start_period: 30s
     logging: *default-logging
     deploy:
       resources:
@@ -757,6 +801,10 @@ networks:
     driver: bridge
   ut-data-network:
     name: ${RESOURCE_PREFIX:-ut}-data-network
+    driver: bridge
+    internal: true
+  ut-ca-network:
+    name: ${RESOURCE_PREFIX:-ut}-ca-network
     driver: bridge
     internal: true
 
