@@ -222,6 +222,59 @@ files_are_backed_up_and_restore_identically() {
     [[ ! -e "$out/data/appbuilder/workspaces/an-app/mongo-data" ]]
 }
 
+# The default repository sits in the same volume as the database archives, so it
+# protects against a mistake and not against losing the machine. This exercises
+# the other half — a backup leaving for an S3 destination, and coming back from
+# it alone.
+backups_reach_an_offsite_destination() {
+    local run=cap-offsite-$$ net store bucket=appliance-backups
+    local key=capability-key secret=capability-secret-value
+    local work="$WORK_DIR/offsite" source="$WORK_DIR/offsite/data" restored="$WORK_DIR/offsite/out"
+    net=$run-net; store=$run-store
+    mkdir -p "$source/app-data" "$source/ca/certs" "$restored"
+
+    head -c 200000 /dev/urandom > "$source/app-data/document.bin"
+    echo "customer notes" > "$source/app-data/notes.txt"
+    head -c 2000 /dev/urandom > "$source/ca/certs/root_ca.crt"
+
+    docker network create "$net" >/dev/null 2>&1
+    docker run -d --name "$store" --network "$net" \
+        -e MINIO_ROOT_USER="$key" -e MINIO_ROOT_PASSWORD="$secret" \
+        "$OBJECT_STORE_IMAGE" server /data >/dev/null 2>&1
+
+    local attempt ready=1
+    for attempt in $(seq 1 20); do
+        docker exec "$store" mkdir -p "/data/$bucket" >/dev/null 2>&1 && { ready=0; break; }
+        sleep 2
+    done
+    (( ready )) && { echo "the object store never came up"; docker rm -f "$store" >/dev/null 2>&1
+        docker network rm "$net" >/dev/null 2>&1; return 1; }
+
+    offsite() {
+        docker run --rm --network "$net" -v "$source":/data:ro -v "$restored":/out \
+            -v "$REPO_ROOT/backup-files.sh":/usr/local/bin/backup-files:ro \
+            -e RESTIC_REPOSITORY="s3:http://$store:9000/$bucket" \
+            -e RESTIC_PASSWORD=capability-test \
+            -e AWS_ACCESS_KEY_ID="$key" -e AWS_SECRET_ACCESS_KEY="$secret" \
+            "$@"
+    }
+
+    local verdict=1 before after
+    before=$( cd "$source" && find . -type f | sort | while read -r f; do
+        printf '%s %s\n' "$f" "$(cksum < "$f" | cut -d' ' -f1)"; done | cksum | cut -d' ' -f1 )
+
+    if offsite --entrypoint /usr/local/bin/backup-files "$RESTIC_IMAGE" >/dev/null 2>&1 \
+        && offsite "$RESTIC_IMAGE" restore latest --target /out >/dev/null 2>&1; then
+        after=$( cd "$restored/data" && find . -type f | sort | while read -r f; do
+            printf '%s %s\n' "$f" "$(cksum < "$f" | cut -d' ' -f1)"; done | cksum | cut -d' ' -f1 )
+        [[ "$before" == "$after" && -f "$restored/data/ca/certs/root_ca.crt" ]] && verdict=0
+    fi
+
+    docker rm -f "$store" >/dev/null 2>&1
+    docker network rm "$net" >/dev/null 2>&1
+    return "$verdict"
+}
+
 a_missing_backup_is_visible() {
     local dir="$WORK_DIR/hc" status
     mkdir -p "$dir"
@@ -244,6 +297,9 @@ a_missing_backup_is_visible() {
 
 STEP_CA_IMAGE=$(grep -m1 -oE 'smallstep/step-ca:[0-9.]+' "$REPO_ROOT/compose.yaml" || echo smallstep/step-ca:latest)
 CADDY_IMAGE=$(grep -m1 -oE 'caddy:[0-9a-z.-]+' "$REPO_ROOT/compose.yaml" || echo caddy:2-alpine)
+# quay.io, not docker.io: the minio/minio repository on Docker Hub answers
+# "pull access denied" now.
+OBJECT_STORE_IMAGE=quay.io/minio/minio:latest
 
 prepare_env
 
@@ -293,6 +349,8 @@ if [[ -f "$REPO_ROOT/backup-files.sh" ]]; then
         files_are_backed_up_and_restore_identically
     capability "a missing backup is visible, and recovers when one appears" \
         a_missing_backup_is_visible
+    capability "backups can leave the machine, and come back from where they went" \
+        backups_reach_an_offsite_destination
 fi
 
 printf '\n%s%d verified%s' "$GREEN" "$PASSED" "$NC"
