@@ -292,14 +292,14 @@ services:
       - "8501"
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      TYPE_DEPLOIEMENT: ${TYPE_DEPLOIEMENT:-}
+      TYPE_DEPLOIEMENT: ${TYPE_DEPLOIEMENT:-onprem}
       LOCAL_STORAGE_BASE: ${LOCAL_STORAGE_BASE:-}
-      DB_PROVIDER: ${DB_PROVIDER:-}
+      DB_PROVIDER: ${DB_PROVIDER:-mongodb}
       STORAGE_PROVIDER: ${STORAGE_PROVIDER:-}
       openid_scope: ${openid_scope:-}
       DOMAIN_URL: *url-domain
-      MONGODB_HOST: ${MONGODB_HOST:-}
-      MONGODB_PORT: ${MONGODB_PORT:-}
+      MONGODB_HOST: ${MONGODB_HOST:-mongodb}
+      MONGODB_PORT: ${MONGODB_PORT:-27017}
       MONGODB_USERNAME: ${MONGODB_USERNAME:?generate it, see .env.example}
       MONGODB_PASSWORD: ${MONGODB_PASSWORD:?generate it, see .env.example}
       MONGODB_DATABASE: ${MONGODB_DATABASE:-}
@@ -364,15 +364,15 @@ services:
     restart: unless-stopped
     command: ["sh", "-c", "rq worker --url redis://redis:6379 ut-api"]
     environment:
-      TYPE_DEPLOIEMENT: ${TYPE_DEPLOIEMENT:-}
+      TYPE_DEPLOIEMENT: ${TYPE_DEPLOIEMENT:-onprem}
       BACKEND_URL: *url-backend
       LOCAL_STORAGE_BASE: ${LOCAL_STORAGE_BASE:-}
-      DB_PROVIDER: ${DB_PROVIDER:-}
+      DB_PROVIDER: ${DB_PROVIDER:-mongodb}
       STORAGE_PROVIDER: ${STORAGE_PROVIDER:-}
       REDIS_HOST: ${REDIS_HOST:-}
       REDIS_PORT: ${REDIS_PORT:-}
-      MONGODB_HOST: ${MONGODB_HOST:-}
-      MONGODB_PORT: ${MONGODB_PORT:-}
+      MONGODB_HOST: ${MONGODB_HOST:-mongodb}
+      MONGODB_PORT: ${MONGODB_PORT:-27017}
       MONGODB_USERNAME: ${MONGODB_USERNAME:?generate it, see .env.example}
       MONGODB_PASSWORD: ${MONGODB_PASSWORD:?generate it, see .env.example}
       MONGODB_DATABASE: ${MONGODB_DATABASE:-}
@@ -418,7 +418,7 @@ services:
       VITE_URL_API_REST: *url-vite-api-rest
       VITE_AUTH_TYPE: ${VITE_AUTH_TYPE:-}
       VITE_DEPLOYMENT_TYPE: ${VITE_DEPLOYMENT_TYPE:-}
-      VITE_DB_PROVIDER: ${DB_PROVIDER:-}
+      VITE_DB_PROVIDER: ${DB_PROVIDER:-mongodb}
     networks:
       - ut-frontend-network
     depends_on:
@@ -445,14 +445,14 @@ services:
       - "8501"
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      TYPE_DEPLOIEMENT: ${TYPE_DEPLOIEMENT:-}
+      TYPE_DEPLOIEMENT: ${TYPE_DEPLOIEMENT:-onprem}
       LOCAL_STORAGE_BASE: ${LOCAL_STORAGE_BASE:-}
-      DB_PROVIDER: ${DB_PROVIDER:-}
+      DB_PROVIDER: ${DB_PROVIDER:-mongodb}
       STORAGE_PROVIDER: ${STORAGE_PROVIDER:-}
       openid_scope: ${openid_scope:-}
       DOMAIN_URL: *url-domain
-      MONGODB_HOST: ${MONGODB_HOST:-}
-      MONGODB_PORT: ${MONGODB_PORT:-}
+      MONGODB_HOST: ${MONGODB_HOST:-mongodb}
+      MONGODB_PORT: ${MONGODB_PORT:-27017}
       MONGODB_USERNAME: ${MONGODB_USERNAME:?generate it, see .env.example}
       MONGODB_PASSWORD: ${MONGODB_PASSWORD:?generate it, see .env.example}
       MONGODB_DATABASE: ${MONGODB_DATABASE:-}
@@ -513,12 +513,12 @@ services:
     restart: unless-stopped
     command: ["sh", "-c", "rq worker --url redis://redis:6379 ut-api-partners"]
     environment:
-      DB_PROVIDER: ${DB_PROVIDER:-}
+      DB_PROVIDER: ${DB_PROVIDER:-mongodb}
       STORAGE_PROVIDER: ${STORAGE_PROVIDER:-}
       REDIS_HOST: ${REDIS_HOST:-}
       REDIS_PORT: ${REDIS_PORT:-}
-      MONGODB_HOST: ${MONGODB_HOST:-}
-      MONGODB_PORT: ${MONGODB_PORT:-}
+      MONGODB_HOST: ${MONGODB_HOST:-mongodb}
+      MONGODB_PORT: ${MONGODB_PORT:-27017}
       MONGODB_USERNAME: ${MONGODB_USERNAME:?generate it, see .env.example}
       MONGODB_PASSWORD: ${MONGODB_PASSWORD:?generate it, see .env.example}
       MONGODB_DATABASE: ${MONGODB_DATABASE:-}
@@ -558,12 +558,12 @@ services:
     expose:
       - "80"
     environment:
-      MONGODB_HOST: ${MONGODB_HOST:-}
-      MONGODB_PORT: ${MONGODB_PORT:-}
+      MONGODB_HOST: ${MONGODB_HOST:-mongodb}
+      MONGODB_PORT: ${MONGODB_PORT:-27017}
       MONGODB_USERNAME: ${MONGODB_USERNAME:?generate it, see .env.example}
       MONGODB_PASSWORD: ${MONGODB_PASSWORD:?generate it, see .env.example}
       MONGODB_DB: ${APP_LLMS_MONGODB_DB:-ut-app-llms}
-      VITE_DB_PROVIDER: ${DB_PROVIDER:-}
+      VITE_DB_PROVIDER: ${DB_PROVIDER:-mongodb}
       VITE_API_BASE_URL: *url-vite-api-base
       VITE_UT_APP_URL: *url-vite-ut-app
       UT_APP_BASE_URL: http://api:8501/api
@@ -598,12 +598,12 @@ services:
     expose:
       - "80"
     environment:
-      MONGODB_HOST: ${MONGODB_HOST:-}
-      MONGODB_PORT: ${MONGODB_PORT:-}
+      MONGODB_HOST: ${MONGODB_HOST:-mongodb}
+      MONGODB_PORT: ${MONGODB_PORT:-27017}
       MONGODB_USERNAME: ${MONGODB_USERNAME:?generate it, see .env.example}
       MONGODB_PASSWORD: ${MONGODB_PASSWORD:?generate it, see .env.example}
       MONGO_DB: ${APP_ASSISTANTS_MONGODB_DB:-ut-app-assistants}
-      VITE_DB_PROVIDER: ${DB_PROVIDER:-}
+      VITE_DB_PROVIDER: ${DB_PROVIDER:-mongodb}
       VITE_API_BASE_URL: *url-vite-api-base
       VITE_UT_APP_URL: *url-vite-ut-app
       UT_APP_BASE_URL: http://api:8501/api
@@ -733,7 +733,7 @@ services:
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       LOCAL_STORAGE_BASE: ${LOCAL_STORAGE_BASE:-}
-      DB_PROVIDER: ${DB_PROVIDER:-}
+      DB_PROVIDER: ${DB_PROVIDER:-mongodb}
       STORAGE_PROVIDER: ${STORAGE_PROVIDER:-}
       GPU_VM_API_TOKEN: ${GPU_VM_API_TOKEN:?generate it, see .env.example}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
@@ -745,8 +745,8 @@ services:
       MODELS_DIR: ${MODELS_DIR:-}
       EMBED_URL: ${EMBED_URL:-}
       EMBED_MODEL_NAME: ${EMBED_MODEL_NAME:-}
-      MONGODB_HOST: ${MONGODB_HOST:-}
-      MONGODB_PORT: ${MONGODB_PORT:-}
+      MONGODB_HOST: ${MONGODB_HOST:-mongodb}
+      MONGODB_PORT: ${MONGODB_PORT:-27017}
       MONGODB_USERNAME: ${MONGODB_USERNAME:?generate it, see .env.example}
       MONGODB_PASSWORD: ${MONGODB_PASSWORD:?generate it, see .env.example}
       MONGODB_DATABASE: ${MONGODB_DATABASE:-}
