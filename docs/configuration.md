@@ -35,6 +35,78 @@ explicit value beats the derived one, which is why an old `.env` keeps working
 untouched. Leave them alone unless something genuinely sits at a different
 address.
 
+## The secrets
+
+`ut-install` generates them. If you are filling `.env` by hand, all of them at
+once:
+
+```bash
+for k in MONGODB_USERNAME MONGODB_PASSWORD JWT_SECRET \
+         STATE_SECRET OPENID_SECRET_KEY ADMIN_SETUP_PASSWORD \
+         GPU_VM_API_TOKEN BACKUP_FILES_PASSWORD CA_PASSWORD; do
+    sed -i "s|^${k}=.*|${k}=\"$(openssl rand -hex 24)\"|" .env
+done
+```
+
+**Hexadecimal on purpose.** The database URI is built by concatenation, so a
+value holding `@`, `/`, `#` or `%` breaks the connection string.
+
+**Two of them cannot be rotated afterwards.**
+
+`MONGODB_PASSWORD` is only read when the database is first created. Changing it
+later changes nothing in the database and stops every service from connecting.
+
+`BACKUP_FILES_PASSWORD` encrypts the backup repository. Losing it makes every
+snapshot unreadable — including the offsite copies, including the certificate
+authority's root. **Write it down somewhere other than this machine**, because
+the offsite copy is exactly what you reach for when this machine is gone.
+
+`JWT_SECRET` is shared by four services, so a token minted at one customer
+would be accepted at another if the value were the same. That is why nothing
+ships with a value.
+
+## The App Builder
+
+Off by default, and **it cannot be enabled on a first install**: its gateway key
+is generated inside the platform, which has to be running first. Enabling it
+before that leaves the key empty.
+
+Once the platform is up:
+
+1. In the platform UI, **DEVELOPER → API keys**, create one.
+2. Set `APP_BUILDER_GATEWAY_API_KEY` in `.env`.
+3. `docker network create proxy`
+4. Uncomment `COMPOSE_FILE`.
+5. `docker compose up -d`
+
+Step 3 is not optional. The overlay declares that network `external`, generated
+apps join it from their own compose projects, so no project owns it and compose
+refuses to start without it.
+
+## Inference
+
+`LLM_BACKEND` decides which model is actually served:
+
+| | What takes effect |
+|---|---|
+| `LLM_BACKEND="nim"` (default) | `NIM_LLM_MODEL_PATH` |
+| `LLM_BACKEND="vllm"` | `VLLM_LLM_MODEL` |
+
+So editing `VLLM_LLM_MODEL` on a default install changes nothing.
+
+`VLLM_API_KEY="EMPTY"` is vLLM's convention for **no authentication**, not a
+placeholder waiting to be filled. Turning authentication on means setting a real
+key *and* passing `--api-key` through `NIM_LLM_PASSTHROUGH_ARGS`. Until then,
+keep the engines on loopback.
+
+`GATEWAY_MODELS` lists what the catalogue offers. **Local models only**: an entry
+with an external `base_url` sends prompts off the appliance, which is the one
+thing this product promises not to do.
+
+`HF_HUB_OFFLINE="0"` lets containers fetch model weights on first start — which
+is why an appliance sold as offline is only offline after a connected first
+boot. Setting it to `1` requires the weights to be present already.
+
 ## What you will actually change
 
 ### The address
