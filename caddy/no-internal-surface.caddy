@@ -1,0 +1,3 @@
+# Empty on purpose: UT_INTERNAL_SURFACE="no-internal-surface" mounts this file
+# where the internal surface would go. A compute node runs no authority of its
+# own, so a site asking one for a certificate would retry forever.
