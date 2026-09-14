@@ -31,6 +31,7 @@ off the box.
 | `setup-autostart.sh` | Installs the systemd boot service and the mDNS alias publisher; `--check` validates domain/TLS settings |
 | `ut-logs-archive` | Automated daily log archival with compression and retention |
 | `appbuilder/traefik/` | Static routing config for the App Builder's per-app router |
+| `monitoring/` | Observability add-on — Prometheus, Grafana and the DCGM exporter, in their own compose project |
 | `docs/architecture.svg` | Source of the architecture diagram above |
 
 ## Quick Start
@@ -522,6 +523,35 @@ The builder is at `https://builder.understand.local`; each generated app gets
 `APP_BUILDER_HOST_PORT` is published on the host because generated apps run in
 their own compose projects and reach the builder's model proxy at
 `host.docker.internal:<port>` — docker DNS cannot get them there.
+
+## Observability
+
+An optional Prometheus / Grafana / DCGM stack under `monitoring/`, there to answer
+one question fast: **is the box hung, or is it saturated?** Both look identical to
+a user — a request that never comes back — and have opposite fixes.
+
+It runs as its own compose project (`ut-monitoring`) and *joins*
+`ut-backend-network` and `ut-frontend-network` instead of creating them, so
+`compose.yaml` stays untouched and the stack can be started, stopped or skipped
+independently.
+
+```bash
+# The platform must already be up, with COMPOSE_PROFILES including nim
+cd monitoring
+docker compose -f docker-compose.monitoring.yml up -d
+```
+
+| Service | Container | Host port | Description |
+|---|---|---|---|
+| Prometheus | `ut-prometheus` | 9090 | Scrapes the NIMs at 5s, 15-day retention, alert rules in `alerts.yml` |
+| Grafana | `ut-grafana` | 3000 | Dashboard *UAI Inference Observability*, provisioned from disk |
+| DCGM exporter | `ut-dcgm-exporter` | 9400 | GPU utilization, memory and power |
+
+Grafana ships with the placeholder password `utmonitor` and anonymous viewer
+access enabled, and all three ports are published on every interface — change
+`GF_SECURITY_ADMIN_PASSWORD` and bind the ports to loopback before the box is
+reachable beyond your network. See `monitoring/README.md` for the dashboard,
+the alerts and the operating notes.
 
 ## Documentation
 

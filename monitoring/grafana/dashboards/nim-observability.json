@@ -1,0 +1,84 @@
+{
+  "title": "UAI Inference Observability",
+  "uid": "uai-inference",
+  "schemaVersion": 39,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "type": "stat", "title": "Requests running", "id": 1,
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "targets": [{ "expr": "sum(vllm:num_requests_running{service=\"nim-llm\"})", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "green", "value": null } ] } }, "overrides": [] }
+    },
+    {
+      "type": "stat", "title": "Requests WAITING (queue = the 'hang')", "id": 2,
+      "gridPos": { "x": 4, "y": 0, "w": 5, "h": 4 },
+      "targets": [{ "expr": "sum(vllm:num_requests_waiting{service=\"nim-llm\"})", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] }
+    },
+    {
+      "type": "stat", "title": "GPU util", "id": 3,
+      "gridPos": { "x": 9, "y": 0, "w": 4, "h": 4 },
+      "targets": [{ "expr": "max(DCGM_FI_DEV_GPU_UTIL)", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "percent", "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 85 }, { "color": "red", "value": 95 } ] } }, "overrides": [] }
+    },
+    {
+      "type": "stat", "title": "KV cache used", "id": 4,
+      "gridPos": { "x": 13, "y": 0, "w": 4, "h": 4 },
+      "targets": [{ "expr": "max(vllm:kv_cache_usage_perc{service=\"nim-llm\"}) * 100", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "percent", "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 75 }, { "color": "red", "value": 90 } ] } }, "overrides": [] }
+    },
+    {
+      "type": "stat", "title": "MTP acceptance", "id": 5,
+      "gridPos": { "x": 17, "y": 0, "w": 4, "h": 4 },
+      "targets": [{ "expr": "100 * rate(vllm:spec_decode_num_accepted_tokens_total{service=\"nim-llm\"}[10m]) / rate(vllm:spec_decode_num_draft_tokens_total{service=\"nim-llm\"}[10m])", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "percent", "decimals": 1, "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "red", "value": null }, { "color": "yellow", "value": 60 }, { "color": "green", "value": 75 } ] } }, "overrides": [] }
+    },
+    {
+      "type": "timeseries", "title": "Saturation timeline — running vs waiting (waiting > 0 = users see a 'hang')", "id": 6,
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "vllm:num_requests_running", "legendFormat": "{{service}} running", "refId": "A" },
+        { "expr": "vllm:num_requests_waiting", "legendFormat": "{{service}} WAITING", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 15 } }, "overrides": [] }
+    },
+    {
+      "type": "timeseries", "title": "Latency — TTFT & end-to-end (p95)", "id": 7,
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "histogram_quantile(0.95, sum by (le, service) (rate(vllm:time_to_first_token_seconds_bucket[2m])))", "legendFormat": "{{service}} TTFT p95", "refId": "A" },
+        { "expr": "histogram_quantile(0.95, sum by (le, service) (rate(vllm:e2e_request_latency_seconds_bucket[2m])))", "legendFormat": "{{service}} e2e p95", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 10 } }, "overrides": [] }
+    },
+    {
+      "type": "timeseries", "title": "Token load — the CAUSE (prompt tokens/s = context pressure)", "id": 8,
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "sum by (service) (rate(vllm:prompt_tokens_total[1m]))", "legendFormat": "{{service}} prompt tok/s", "refId": "A" },
+        { "expr": "sum by (service) (rate(vllm:generation_tokens_total[1m]))", "legendFormat": "{{service}} generated tok/s", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 10 } }, "overrides": [] }
+    },
+    {
+      "type": "timeseries", "title": "KV cache % & preemptions (pressure/thrash)", "id": 9,
+      "gridPos": { "x": 12, "y": 12, "w": 6, "h": 8 },
+      "targets": [
+        { "expr": "vllm:kv_cache_usage_perc * 100", "legendFormat": "{{service}} KV %", "refId": "A" },
+        { "expr": "sum by (service) (rate(vllm:num_preemptions_total[5m])) * 60", "legendFormat": "{{service}} preempt/min", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 10 } }, "overrides": [] }
+    },
+    {
+      "type": "timeseries", "title": "GPU util & power (DCGM)", "id": 10,
+      "gridPos": { "x": 18, "y": 12, "w": 6, "h": 8 },
+      "targets": [
+        { "expr": "DCGM_FI_DEV_GPU_UTIL", "legendFormat": "GPU util %", "refId": "A" },
+        { "expr": "DCGM_FI_DEV_POWER_USAGE", "legendFormat": "power W", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 10 } }, "overrides": [] }
+    }
+  ]
+}
