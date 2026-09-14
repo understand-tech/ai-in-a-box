@@ -242,13 +242,25 @@ backups_reach_an_offsite_destination() {
         -e MINIO_ROOT_USER="$key" -e MINIO_ROOT_PASSWORD="$secret" \
         "$OBJECT_STORE_IMAGE" server /data >/dev/null 2>&1
 
+    # Answering on HTTP is the readiness signal, not the container running: the
+    # process is up well before it serves. Asking here also bounds the failure —
+    # restic retries an unreachable endpoint for minutes, and an unreachable
+    # endpoint is what a failure of this check looks like.
     local attempt ready=1
     for attempt in $(seq 1 20); do
-        docker exec "$store" mkdir -p "/data/$bucket" >/dev/null 2>&1 && { ready=0; break; }
+        if docker run --rm --network "$net" "$CURL_IMAGE" \
+            -sf -m 5 "http://${OFFSITE_ENDPOINT:-$store}:9000/minio/health/live" >/dev/null 2>&1; then
+            ready=0; break
+        fi
         sleep 2
     done
-    (( ready )) && { echo "the object store never came up"; docker rm -f "$store" >/dev/null 2>&1
-        docker network rm "$net" >/dev/null 2>&1; return 1; }
+    if (( ready )); then
+        echo "the destination never answered"
+        docker rm -f "$store" >/dev/null 2>&1
+        docker network rm "$net" >/dev/null 2>&1
+        return 1
+    fi
+    docker exec "$store" mkdir -p "/data/$bucket" >/dev/null 2>&1
 
     # Bounded, because restic retries an unreachable endpoint for a long time
     # and an unreachable endpoint is exactly what a failure of this check looks
@@ -261,17 +273,6 @@ backups_reach_an_offsite_destination() {
             -e AWS_ACCESS_KEY_ID="$key" -e AWS_SECRET_ACCESS_KEY="$secret" \
             --entrypoint sh "$RESTIC_IMAGE" -c "timeout 90 $1"
     }
-
-    # Asked before anything is sent: restic retries an unreachable endpoint for
-    # minutes, so without this a failing check costs the whole run rather than
-    # one line.
-    if ! docker run --rm --network "$net" "$CURL_IMAGE" \
-        -sf -m 5 "http://${OFFSITE_ENDPOINT:-$store}:9000/minio/health/live" >/dev/null 2>&1; then
-        echo "the destination does not answer"
-        docker rm -f "$store" >/dev/null 2>&1
-        docker network rm "$net" >/dev/null 2>&1
-        return 1
-    fi
 
     local verdict=1 before after
     before=$( cd "$source" && find . -type f | sort | while read -r f; do
