@@ -5,7 +5,8 @@
 | File | Purpose |
 |---|---|
 | `capabilities.sh` | Checks what the deployment can do, one line per capability. Needs Docker; renders configurations and exercises the backup, starts no application service. |
-| `invariants.sh` | Checks the repository against eight invariants. No dependencies beyond bash and coreutils, runs in under a second. |
+| `invariants.sh` | Checks the repository against ten invariants. No dependencies beyond bash and coreutils, runs in under a second. |
+| `discrimination.sh` | Breaks each check on purpose, on a copy, and expects it to say so. A check that survives its own mutation is decoration. |
 | `migration.sh` | Asks what an upgrade does to an install that already runs, starting from the environment file the earlier version shipped. Needs Docker and the git history. |
 | `migration-on-data.sh` | Runs that upgrade on a real database and document tree, beside whatever else the machine runs. Manual, not in CI. |
 | `machine-identity.sh` | Validates the certificate mechanism intended to replace the shared JWT_SECRET. **Not a product capability yet** — nothing here runs a CA. Nightly. |
@@ -100,6 +101,8 @@ produce a false positive eventually, and the whole thing gets switched off.
 |---|---|---|
 | `plaintext-secret` | A shipped secret is a shared secret | `JWT_SECRET` identical at every customer: a token minted at one is accepted at another |
 | `compose-secret-default` | A secret ships from more than one file | `MONGODB_PASSWORD` fell back to `12345678` in `compose.yaml`, which emptying `.env.example` would not have touched |
+| `divergent-default` | One variable, one default | `MONGODB_HOST` read `mongodb` for the App Builder and the empty string for seven services, so an `.env` missing the line started them against a database host of `""` |
+| `required-variable-missing` | A variable that stops the stack must be visible | `CA_PASSWORD` was required by `compose.yaml` and in no template: a copy of `.env.example` refused to start, naming a variable the customer had never seen |
 | `undeclared-variable` | A variable with no default must be declared | Compose substitutes an empty string, so the stack starts misconfigured instead of refusing to start |
 | `unlisted-port` | Reaching the network must be deliberate | Database and inference engines reachable from the LAN, inference without authentication |
 | `unpinned-image` | A tag moves, a digest does not | Two boxes reporting the same version run different software, and a diagnosis on one no longer transfers |
@@ -109,6 +112,54 @@ produce a false positive eventually, and the whole thing gets switched off.
 
 How each one decides is the `check_*` function of the same name in
 `invariants.sh`. They are short and read top to bottom.
+
+## Seeing them fail
+
+```bash
+./test/discrimination.sh
+```
+
+Every check above is only worth what it catches, and a check nobody has seen
+fail is a check nobody knows works. Two were found wrong by accident while
+something else was being written: one asked whether a service *mentions*
+`mongodb` rather than whether it opens a connection to it, and reported the
+frontend; another matched six volume names out of fourteen, so dropping the
+volume holding every backup archive would have passed green.
+
+So each one is now broken deliberately — on a copy of the repository, nothing
+here is touched — and expected to name itself:
+
+```
+Every invariant, seen failing
+  ✔ a secret shipped in the template
+  ✔ a secret defaulted in a compose file
+  ✔ one variable with two different defaults
+  ✔ a required variable absent from the template
+  ✔ a variable with no default and no value
+  ✔ a port published on every interface
+  ✔ verbose logs in the template
+  ✔ a documented path that does not exist
+
+Capabilities, seen failing
+  ✔ the authority removed from the stack
+  ✔ the authority root moved out of the backed-up path
+  ✔ the machine surface pointed at something else
+  ✔ a resource left unprefixed
+
+12 discriminate
+```
+
+**Add the mutation with the check.** A new `check_*` function without an entry
+here is a function nobody has watched work.
+
+`capabilities.sh` takes `CAPABILITY_FILTER` to run one line instead of all of
+them — the harness breaks one thing at a time, and re-running sixteen
+capabilities per mutation took five minutes where it now takes seventeen
+seconds.
+
+Two checks are not mutated here and say so: `unpinned-image` and
+`queue-eviction` are both in the baseline, so they already report on the
+repository as it stands.
 
 ## How the baseline works
 

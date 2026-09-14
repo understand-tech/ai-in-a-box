@@ -28,6 +28,10 @@ group() { printf '\n%s%s%s\n' "$BOLD" "$1" "$NC"; }
 
 capability() {
     local description=$1; shift
+    # CAPABILITY_FILTER runs one line instead of all of them: the discrimination
+    # harness breaks one thing at a time, and re-running the whole list for each
+    # costs a minute a mutation.
+    [[ -n "${CAPABILITY_FILTER:-}" && "$description" != *"$CAPABILITY_FILTER"* ]] && return 0
     local output
     if output=$("$@" 2>&1); then
         printf '  %s✔%s %s\n' "$GREEN" "$NC" "$description"
