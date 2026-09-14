@@ -114,13 +114,27 @@ docker exec ut-files-backup restic restore latest \
 ```
 
 **If the whole machine is gone**, point `restic` at the repository from
-anywhere:
+anywhere. From a local copy of the volume:
 
 ```bash
 docker run --rm -v /path/to/repository:/backup -v /somewhere:/out \
     -e RESTIC_REPOSITORY=/backup/restic -e RESTIC_PASSWORD='...' \
     restic/restic:0.18.1 restore latest --target /out
 ```
+
+Or straight from the offsite destination, with nothing of the appliance left:
+
+```bash
+docker run --rm -v /somewhere:/out \
+    -e RESTIC_REPOSITORY='s3:https://s3.eu-west-3.amazonaws.com/your-bucket/appliance' \
+    -e RESTIC_PASSWORD='...' \
+    -e AWS_ACCESS_KEY_ID='...' -e AWS_SECRET_ACCESS_KEY='...' \
+    restic/restic:0.18.1 restore latest --target /out
+```
+
+That second form is exercised on every push: a backup sent to an S3 endpoint,
+then restored from that endpoint alone, compared path by path and checksum by
+checksum — the authority's root included.
 
 `RESTIC_PASSWORD` is `BACKUP_FILES_PASSWORD` from `.env`. **Without it the
 snapshots cannot be read at all** — no support path, no recovery. It is printed
@@ -165,7 +179,14 @@ per application under `workspaces/*/mongo-data`, and the file backup excludes
 them on purpose: database files copied while they are written restore into a
 corrupt state. They need a dump each, which is pending a product decision.
 
-**Anything outside this machine.** The `restic` repository defaults to
-`/backup/restic` — the same volume as the database archives. Losing that volume
-loses both. Set `BACKUP_FILES_REPOSITORY` to an S3 or SFTP destination if the
-data matters more than the machine does.
+**Anything outside this machine, unless you configured it.** The `restic`
+repository defaults to `/backup/restic` — the same volume as the database
+archives. Losing that volume loses both. Set `BACKUP_FILES_REPOSITORY` to an S3
+or SFTP destination if the data matters more than the machine does; see
+[configuration](configuration.md#sending-backups-off-the-machine).
+
+**The database archives, wherever they go.** `restic` carries `DATA_ROOT`. The
+`mongodump` archives live in a Docker volume outside it, so an offsite
+destination protects the documents and the authority's root, not the database
+dumps. Restoring a database on a new machine means having copied an archive
+yourself.

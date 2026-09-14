@@ -73,17 +73,44 @@ BACKUP_FILES_KEEP_WEEKLY="4"
 BACKUP_FILES_KEEP_MONTHLY="6"
 ```
 
-And the destination, which defaults to this machine:
-
-```bash
-BACKUP_FILES_REPOSITORY="s3:s3.amazonaws.com/bucket/path"
-BACKUP_FILES_S3_KEY_ID="..."
-BACKUP_FILES_S3_SECRET="..."
-```
+### Sending backups off the machine
 
 **The default keeps everything on the machine it protects** — the `restic`
 repository sits in the same volume as the database archives. Against a disk
-failure or a theft, that is no protection at all.
+failure, a theft or a fire, that is no protection at all.
+
+Three settings change it:
+
+```bash
+BACKUP_FILES_REPOSITORY="s3:https://s3.eu-west-3.amazonaws.com/your-bucket/appliance"
+BACKUP_FILES_S3_KEY_ID="AKIA..."
+BACKUP_FILES_S3_SECRET="..."
+```
+
+Any S3-compatible endpoint works — AWS, MinIO, Scaleway, OVH. For SFTP instead,
+give `BACKUP_FILES_REPOSITORY="sftp:user@host:/path"` and put the key where the
+container can read it.
+
+```bash
+docker compose up -d files-backup
+docker compose logs -f files-backup
+```
+
+The first run initialises the repository and uploads everything; later runs send
+only what changed. Check it arrived:
+
+```bash
+docker exec ut-files-backup restic snapshots
+```
+
+**Keep `BACKUP_FILES_PASSWORD` somewhere else than the machine.** It encrypts
+the repository, so a remote copy is worth nothing without it — and a remote copy
+is exactly what you reach for when the machine is gone.
+
+What this covers, verified end to end on every push by
+`backups_reach_an_offsite_destination`: the documents, and the certificate
+authority's root, backed up to an S3 endpoint and restored from that endpoint
+alone, path by path and checksum by checksum.
 
 ### Load
 
