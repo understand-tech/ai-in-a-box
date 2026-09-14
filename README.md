@@ -32,6 +32,21 @@ off the box.
 | `ut-logs-archive` | Automated daily log archival with compression and retention |
 | `appbuilder/traefik/` | Static routing config for the App Builder's per-app router |
 | `docs/architecture.svg` | Source of the architecture diagram above |
+| `test/` | The checks, and what each one exists to catch — see `test/README.md` |
+
+## Operating procedures
+
+What to do, in order, for the five things an operator actually does. Each one
+has been run against a real appliance; where a step says what to expect, that is
+what it printed.
+
+| | When |
+|---|---|
+| [Installing](docs/install.md) | A new machine. One command, safe to re-run. |
+| [Configuring](docs/configuration.md) | Changing the address, the ports, the backup schedule, the load. |
+| [Certificates and DNS](docs/certificates-and-dns.md) | Which names to publish, who terminates TLS, and what the local authority does. |
+| [Updating](docs/update.md) | A new version. What it adds to an existing `.env`, and what changes that you will notice. |
+| [Restoring](docs/restore.md) | The database, the customer's files, or the certificate authority — separately. |
 
 ## Quick Start
 
