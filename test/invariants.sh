@@ -86,6 +86,21 @@ check_defaults_do_not_diverge() {
         | sed 's/^\${//; s/:-$//' | sort -u)"
 }
 
+# A variable marked ${VAR:?} stops the stack when absent, which is the point —
+# but only if whoever copies the template can see it needs a value. CA_PASSWORD
+# was required by compose.yaml and in no template at all.
+check_required_variables_appear_in_the_template() {
+    local declared var
+    declared=$(env_keys | sort -u)
+    while read -r var; do
+        [[ -n "$var" ]] || continue
+        grep -qxF "$var" <<< "$declared" && continue
+        report "required-variable-missing:${var}" \
+            "${var} is required by a compose file and absent from .env.example — a copy of the template will not start"
+    done <<< "$(grep -ohE '\$\{[A-Z_][A-Z0-9_]*:\?' "${COMPOSE_FILES[@]}" 2>/dev/null \
+        | sed 's/^\${//; s/:?$//' | sort -u)"
+}
+
 check_variables_without_default_are_declared() {
     local declared required var
     declared=$(env_keys | sort -u)
@@ -227,6 +242,7 @@ main() {
     check_plaintext_secrets
     check_compose_declares_no_secret_default
     check_defaults_do_not_diverge
+    check_required_variables_appear_in_the_template
     check_variables_without_default_are_declared
     check_published_ports_are_allowed
     check_images_are_pinned
