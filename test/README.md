@@ -6,6 +6,8 @@
 |---|---|
 | `capabilities.sh` | Checks what the deployment can do, one line per capability. Needs Docker; renders configurations and exercises the backup, starts no application service. |
 | `invariants.sh` | Checks the repository against eight invariants. No dependencies beyond bash and coreutils, runs in under a second. |
+| `migration.sh` | Asks what an upgrade does to an install that already runs, starting from the environment file the earlier version shipped. Needs Docker and the git history. |
+| `migration-on-data.sh` | Runs that upgrade on a real database and document tree, beside whatever else the machine runs. Manual, not in CI. |
 | `machine-identity.sh` | Validates the certificate mechanism intended to replace the shared JWT_SECRET. **Not a product capability yet** — nothing here runs a CA. Nightly. |
 | `database-restore.sh` | Proves a backup archive restores, end to end. Nightly. |
 | `known-issues.txt` | Problems that already exist and are accepted for now, with the reason next to each. |
@@ -15,7 +17,7 @@
 
 | Workflow | Trigger | Runs | Takes |
 |---|---|---|---|
-| `checks.yml` | every push and pull request | `invariants.sh`, `capabilities.sh` | under a minute |
+| `checks.yml` | every push and pull request | `invariants.sh`, `capabilities.sh`, `migration.sh` | under a minute |
 | `nightly.yml` | 3 a.m. and manual — **neither works yet**, see below | `machine-identity.sh`, `database-restore.sh` | about six minutes |
 
 Run the first two from anywhere:
@@ -171,12 +173,112 @@ Not implemented yet. Listed so the gap is visible rather than assumed covered.
 | `shellcheck` | Shell fails quietly | Unknown — it has never been run against these four scripts |
 | unit tests | Pure functions test without a machine | `env_set` does not recognise a commented-out variable and appends a duplicate |
 | stubbed installer | Idempotence is proven, not promised | A leaking token, a second run that is not a no-op, a missing terminal |
-| undocumented variable | A default nobody can find is not a setting | `NIM_LLM_BIND_ADDRESS` decides whether a compute node is reachable and appears in no `.env.example`; having a default, `undeclared-variable` stays silent |
-| Q3 → Q4 migration | Backward compatibility is proven on paper only | Unknown — `docker compose config` says the names are unchanged, no run has said the data survives |
+| undocumented variable | A default nobody can find is not a setting | Preventive: `NIM_LLM_BIND_ADDRESS` decided whether a compute node was reachable and appeared in no `.env.example`; having a default, `undeclared-variable` stayed silent |
+| upgrade on real data | A rendered configuration is not a running one | Unknown — `migration.sh` proves what the configuration does, not what a database with 2.4 GB of documents does |
 
 `compose config` has since landed as the first three capabilities, which is
 where a check belongs once it describes something the product does rather than
 something it must not do.
+
+## What the migration check says
+
+It answers one question: what happens to a customer who already runs this
+appliance when the next version lands. The starting point is `origin/main` by
+default, overridable with `MIGRATION_FROM`.
+
+```
+  ✔ an untouched environment file is refused, and says which variable
+      compose stops on: BACKUP_FILES_PASSWORD
+  ✔ the installer supplies every variable the new version requires
+  ✔ the stack then renders
+  ✔ the containers that lose a fixed name are named nowhere else
+      no longer reachable by name: ut-llm
+  ✔ a renamed container keeps its volumes
+```
+
+Two properties are worth reading twice. The installer one **sources
+`ut-install`** instead of reimplementing its logic, so the answer comes from
+the code a customer runs rather than from a copy that can drift — which is what
+the `BASH_SOURCE` guard at the bottom of the installer is for.
+
+The volume one is not about this configuration at all. It starts a container
+with a fixed name and a named volume, removes the fixed name, and checks the
+volume came back. That is what makes the rename safe, and it is a Compose
+behaviour rather than ours: if it ever changed, every customer would
+re-download the model weights on upgrade.
+
+## Migrating real data
+
+`migration-on-data.sh` does what the check above cannot: it fills a database,
+applies the new version to the same volume, and compares. It is manual, since
+it needs a machine with the images and several minutes.
+
+```bash
+./test/migration-on-data.sh
+MIGRATION_ARCHIVE=/path/to/mongo.archive.gz \
+MIGRATION_API_IMAGE=ghcr.io/understand-tech/ut-api-customer:latest-arm64 \
+  ./test/migration-on-data.sh
+```
+
+`MIGRATION_API_IMAGE` is needed because `.env.example` names `2.0-arm64` while
+the appliance runs `latest-arm64` — one more reason the `unpinned-image` check
+exists. Without an application image on the machine, the run stops after the
+data comparison and says so.
+
+With an archive it migrates real data; without one it generates 3000
+documents. It installs beside whatever the machine already runs — its own
+project, prefixes, data directory and host port — and starts only MongoDB,
+since the inference engines hold nothing an upgrade can lose and would compete
+for the GPU.
+
+**The starting version predates the prefix variables**, so its compose file
+names `ut-mongodb` and mounts `ut-mongodb-data`: the production names. Those
+are rewritten before anything starts, and a guard refuses to run if the
+rendered configuration still holds a name outside the run's namespace. Run it
+once with that guard removed and it will seed a live volume with test data.
+
+Verified on the test appliance against a production archive — 5 databases, 56
+collections, 7720 documents, 98 indexes — with twenty containers running
+throughout and twenty still running after:
+
+```
+3. filling it
+   restored from prod.archive.gz
+   app-builder[app_sessions:34/_id_+expires_at_1+owner_uid_1,audit_log:53/...]
+4. applying the new version
+5. comparing
+
+✔ the database keeps its shape — every database, collection, document count and index
+✔ the database keeps its contents — every document, field by field, checksum 2511543522
+✔ the files keep their names and contents — 200 files, checksum 2022053646
+
+6. starting the application on the migrated database
+
+✔ the application serves — /api/ answers 200
+✔ it reaches the database across the new network — a socket to mongodb:27017 opens from inside the container
+✔ starting it changed nothing — no schema migration ran behind the comparison
+```
+
+The last line is the one that makes the three above it mean anything. A
+comparison taken before the application starts proves nothing if the
+application rewrites the schema on first launch — the data would change after
+the check said it had not. It does not, and now that is a fact rather than an
+assumption.
+
+Reaching the database is checked by opening a socket rather than by counting
+MongoDB connections: the driver connects lazily, so the application answers on
+`/api/` having opened none. Every route that reads is behind authentication, so
+a request proving a read would need a token.
+
+Three comparisons, because the first two are not the same question. The shape
+catches a lost index — a uniqueness constraint or a table scan, silently. The
+contents catch a document that changed while the count did not. The files are
+compared one by one, by path and checksum, so a rename or a move is visible;
+concatenating them and checksumming the result was not enough.
+
+Both were checked against an alteration and its reversal: a changed field and a
+renamed file each move the checksum, and restoring them brings it back. File
+ownership and permissions are still not compared.
 
 ## What this does not prove
 

@@ -98,12 +98,14 @@ names_are_unchanged_by_default() {
 }
 
 overrides_isolate_every_resource() {
-    local rendered
+    local rendered stray
     rendered=$( cd "$WORK_DIR" && \
         COMPOSE_PROJECT_NAME=isolated RESOURCE_PREFIX=isolated CONTAINER_PREFIX=isolated \
         DATA_ROOT=/var/lib/isolated MONGODB_HOST_PORT=27118 \
         docker compose -f compose.yaml config 2>/dev/null )
-    ! grep -qE 'name: ut-mongodb-data|name: ut-backend-network|/var/lib/understandtech' <<< "$rendered"
+    stray=$(grep -oE '^ *(container_name|name): ut-[a-z0-9_-]+' <<< "$rendered" | awk '{print $2}' | sort -u)
+    [[ -n "$stray" ]] && { echo "not isolated: $(tr '\n' ' ' <<< "$stray")"; return 1; }
+    ! grep -q '/var/lib/understandtech' <<< "$rendered"
 }
 
 files_are_backed_up_and_restore_identically() {

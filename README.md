@@ -77,8 +77,15 @@ run compose from the repository root.
 
 ## Services
 
-Only Caddy, MongoDB, the NIM containers and the App Builder publish host ports.
-Everything else is reachable only from inside the Docker networks.
+Only Caddy and the App Builder publish host ports on every interface. MongoDB
+and the NIM containers are bound to loopback, so they are reachable from the
+machine itself and from nowhere else; a compute node that has to serve another
+machine overrides `NIM_LLM_BIND_ADDRESS`. Everything else is reachable only
+from inside the Docker networks.
+
+Three services carry no fixed container name, because a fixed name and
+`--scale` are mutually exclusive. Compose names them after the project, so the
+prefix follows `COMPOSE_PROJECT_NAME`.
 
 | Service | Container | Host port | Description |
 |---|---|---|---|
@@ -91,10 +98,10 @@ Everything else is reachable only from inside the Docker networks.
 | LLMs App | `ut-app-llms` | — | Model catalogue and playground, at `llms.understand.local` |
 | Assistants App | `ut-app-assistants` | — | Assistant builder, at `assistants.understand.local` |
 | Admin Portal | `ut-admin-portal` | — | Tenant and user administration, at `admin.understand.local` |
-| LLM | `ut-llm` | — | RAG, embeddings and reranking on GPU, `:8000` internal |
-| NIM LLM | `nim-llm` | 8001 | NVIDIA NIM serving the chat model (profile `nim`) |
-| NIM VLM | `nim-vlm` | 8002 | NVIDIA NIM serving the vision model (profile `nim`) |
-| MongoDB | `ut-mongodb` | 27018 | Document database (container port 27017) |
+| LLM | `understandtech-llm-*` | — | RAG, embeddings and reranking on GPU, `:8000` internal |
+| NIM LLM | `understandtech-nim-llm-*` | 127.0.0.1:8001 | NVIDIA NIM serving the chat model (profile `nim`) |
+| NIM VLM | `understandtech-nim-vlm-*` | 127.0.0.1:8002 | NVIDIA NIM serving the vision model (profile `nim`) |
+| MongoDB | `ut-mongodb` | 127.0.0.1:27018 | Document database (container port 27017) |
 | Redis | `ut-redis` | — | Task queue and cache |
 | MongoDB Backup | `ut-mongodb-backup` | — | Daily full-server dump of every database |
 | App Builder | `ut-app-builder` | 8011 (`APP_BUILDER_HOST_PORT`) | Builds and hosts generated apps (add-on) |

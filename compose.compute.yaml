@@ -9,10 +9,6 @@ name: ${COMPOSE_PROJECT_NAME:-understandtech}
 #   NIM_LLM_BIND_ADDRESS=<address of the interface the control plane reaches>
 #   NIM_VLM_BIND_ADDRESS=<same>
 #
-# Those two addresses are required here and nowhere else. compose.yaml binds the
-# NIM ports to 127.0.0.1, so a compute node left at the default serves nobody —
-# it would start, pass its healthcheck, and stay unreachable.
-#
 # Services are switched off by giving them a profile that is never enabled,
 # rather than by listing the survivors in a separate file. compose.yaml stays
 # the single definition of every service: this file only says which ones a
