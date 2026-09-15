@@ -145,8 +145,9 @@ Capabilities, seen failing
   ✔ the authority root moved out of the backed-up path
   ✔ the machine surface pointed at something else
   ✔ a resource left unprefixed
+  ✔ a backup destination that does not answer
 
-12 discriminate
+13 discriminate
 ```
 
 **Add the mutation with the check.** A new `check_*` function without an entry

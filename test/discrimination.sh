@@ -63,7 +63,7 @@ capability_discriminates() {
     find "$COPY" -name '*.bak' -delete 2>/dev/null
 
     local output
-    output=$( cd "$COPY" && CAPABILITY_FILTER="$expected" ./test/capabilities.sh 2>&1 )
+    output=$( cd "$COPY" && CAPABILITY_FILTER="$expected" OFFSITE_ENDPOINT="${OFFSITE_ENDPOINT:-}" ./test/capabilities.sh 2>&1 )
 
     if grep -q "✘ $expected" <<< "$output"; then
         printf '  %s✔%s %s\n' "$GREEN" "$NC" "$description"
@@ -132,6 +132,15 @@ capability_discriminates "the machine surface pointed at something else" \
 capability_discriminates "a resource left unprefixed" \
     "overriding the prefixes isolates every resource" \
     "sed -i.bak 's|name: \${RESOURCE_PREFIX:-ut}-redis-data|name: ut-redis-data|' compose.yaml"
+
+# This one has its own lever rather than a mutation: the check builds its
+# destination, so breaking it means pointing it elsewhere. Sending a backup to
+# somewhere that does not answer is also the failure an operator will actually
+# meet.
+OFFSITE_ENDPOINT=nowhere-at-all \
+capability_discriminates "a backup destination that does not answer" \
+    "backups can leave the machine" \
+    "true"
 
 printf '\n%s%d discriminate%s' "$GREEN" "$PASSED" "$NC"
 if (( FAILED )); then
