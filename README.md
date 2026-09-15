@@ -30,6 +30,7 @@ off the box.
 | `.env.example` | Template for `.env` — domain and TLS, image tags, credentials, model config |
 | `setup-autostart.sh` | Installs the systemd boot service and the mDNS alias publisher; `--check` validates domain/TLS settings |
 | `ut-logs-archive` | Automated daily log archival with compression and retention |
+| `ut-certificate` | Obtains and renews a publicly trusted certificate by DNS-01, so nothing has to be installed on user machines |
 | `appbuilder/traefik/` | Static routing config for the App Builder's per-app router |
 | `docs/architecture.svg` | Source of the architecture diagram above |
 | `test/` | The checks, and what each one exists to catch — see `test/README.md` |

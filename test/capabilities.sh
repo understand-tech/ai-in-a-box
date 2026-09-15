@@ -202,6 +202,34 @@ the_machine_surface_is_really_served_by_the_authority() {
     return "$verdict"
 }
 
+# Both directions of the same guard. A run that reaches the authority with an
+# impossible name burns a rate limit and reports something obscure; refusing
+# first costs nothing and names the reason.
+public_certificates_are_refused_where_impossible() {
+    local probe="$WORK_DIR/acme-local" output
+    mkdir -p "$probe"
+    cat > "$probe/.env" <<'EOF'
+UT_DOMAIN="understand.local"
+UT_ACME_EMAIL="ops@example.com"
+UT_ACME_DNS_PROVIDER="cloudflare"
+UT_ACME_DNS_ENV="CF_DNS_API_TOKEN=probe"
+EOF
+    output=$( UT_INSTALL_DIR="$probe" "$REPO_ROOT/ut-certificate" --check 2>&1 ) && {
+        echo "a .local domain was accepted"; return 1; }
+    grep -q 'no public authority issues' <<< "$output"
+}
+
+public_certificates_need_their_configuration() {
+    local probe="$WORK_DIR/acme-real" output
+    mkdir -p "$probe"
+    printf 'UT_DOMAIN="box.example.com"\n' > "$probe/.env"
+    output=$( UT_INSTALL_DIR="$probe" "$REPO_ROOT/ut-certificate" --check 2>&1 ) && {
+        echo "an empty configuration was accepted"; return 1; }
+    grep -q 'UT_ACME_DNS_PROVIDER is not set' <<< "$output" \
+        && grep -q 'builder.box.example.com' <<< "$output" \
+        && grep -q '\*.apps.box.example.com' <<< "$output"
+}
+
 files_are_backed_up_and_restore_identically() {
     local repo="$WORK_DIR/repo" src="$WORK_DIR/src" out="$WORK_DIR/out"
     mkdir -p "$src/app-data" "$src/appbuilder/workspaces/an-app/mongo-data" "$out"
@@ -340,6 +368,14 @@ capability "the machine-facing surface takes its certificate from that authority
     the_machine_surface_uses_the_local_authority
 capability "it does so whatever the customer chose for the public one" \
     the_machine_surface_survives_every_ingress_mode
+
+if [[ -x "$REPO_ROOT/ut-certificate" ]]; then
+    group "Public certificate"
+    capability "a name no authority can certify is refused before anything is asked" \
+        public_certificates_are_refused_where_impossible
+    capability "an incomplete configuration is named, with every hostname it would request" \
+        public_certificates_need_their_configuration
+fi
 capability "and it is really served by it, not just configured to be" \
     the_machine_surface_is_really_served_by_the_authority
 
