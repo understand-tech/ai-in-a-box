@@ -279,6 +279,10 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
         "the install stops, and says which volume" \
         "sed -i.bak 's|^    ! is_shipped_placeholder .*MONGODB_PASSWORD.*$|    true|' ut-install"
 
+    install_walk_discriminates "full address pools noticed only when it is too late" \
+        "the preflight stops before anything is written" \
+        "sed -i.bak 's|^    elif docker_can_still_allocate_a_network; then$|    elif true; then|' ut-install"
+
     install_walk_discriminates "two machines given the same secret" \
         "two installs do not share a secret" \
         "sed -i.bak 's|^random_alphanumeric() {$|random_alphanumeric() { printf %s the-same-everywhere; return 0;|' ut-install"

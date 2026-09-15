@@ -20,6 +20,7 @@ walked the installer from a known starting point.
 | 24 GB of RAM | below that, workers are starved | `--check`, warning |
 | `openssl` | certificate inspection in `ut-certificate` | the package depends on it |
 | A registry token | the images are private — anonymous pulls answer `403` | `ut-install` asks |
+| Docker address space for four networks | each network takes a block from a small pool | `--check`, blocking |
 | `git` | **only** when the release is cloned rather than packaged | `--check`, conditional |
 
 That last line was a defect: `git` was required unconditionally, so an install
@@ -38,6 +39,7 @@ builds it in a container, runs the installer, and checks the outcome.
 | **Already configured.** A complete `.env`, a running install. | Running the installer again changes nothing. |
 | **A database nobody has the password for.** A mongo volume is there, `.env` holds no password. | **Stops**, names the volume, gives the two ways out. |
 | **Two separate machines.** | They do not share a secret. |
+| **Docker's address pools are full.** A machine that has run generated applications. | **Stops in the preflight**, before writing anything, and says how to reclaim space. |
 
 ### Why the last two matter more than they look
 
@@ -52,6 +54,47 @@ why. Refusing is the only honest outcome.
 value identical everywhere means a token minted on one is accepted on another.
 Anything the installer generates has to differ between two runs, and that is
 worth checking rather than assuming.
+
+### Docker address pools, which run out quietly
+
+Docker hands each network a block from a small pool. **The stack takes four** —
+backend, frontend, data, and the certificate authority — and every generated
+application takes one more. Those survive the application being stopped: a
+machine that has hosted a few of them has no room left, and `docker network ls`
+gives no hint, because nothing reports how many blocks remain.
+
+Observed on a machine that had hosted App Builder applications: creation failed
+with
+
+```
+Error response from daemon: all predefined address pools have been fully subnetted
+```
+
+**after the installer had already written the settings, generated the secrets
+and pulled the images.** Asking the daemon for a network is the only reliable
+test, so the preflight now asks for one and throws it away.
+
+Reclaiming what nothing uses is usually enough:
+
+```bash
+docker network prune
+```
+
+On a machine that will keep generating applications, widen the pools instead:
+
+```bash
+sudo tee /etc/docker/daemon.json >/dev/null <<'EOF'
+{
+  "default-address-pools": [
+    { "base": "10.100.0.0/16", "size": 24 }
+  ]
+}
+EOF
+sudo systemctl restart docker
+```
+
+That gives 256 blocks rather than a few dozen. **Restarting Docker stops every
+container**, so do it before the stack is up, or accept the interruption.
 
 ## How far the walk goes, and why not further
 

@@ -62,7 +62,7 @@ case "$1 $2" in
     "info --format")      echo '{"nvidia":{}}' ;;
     "volume inspect")     [ "${MONGO_VOLUME_EXISTS:-no}" = yes ] ;;
     "network inspect")    exit 1 ;;
-    "network create")     exit 0 ;;
+    "network create")     exit "${NETWORK_CREATE_EXIT:-0}" ;;
     "compose pull")       exit "${PULL_EXIT:-0}" ;;
     *)                    exit 0 ;;
 esac
@@ -108,6 +108,7 @@ PROBE
     docker run --rm \
         -v "$WORK_DIR":/w -v "$WORK_DIR":/out \
         -e MONGO_VOLUME_EXISTS="${MONGO_VOLUME_EXISTS:-no}" \
+        -e NETWORK_CREATE_EXIT="${NETWORK_CREATE_EXIT:-0}" \
         debian:12-slim bash /w/walk-$state.sh >/dev/null 2>&1
 }
 
@@ -117,6 +118,7 @@ state_setup() {
         empty_settings) echo 'install -m 600 /dev/null /etc/understandtech/.env' ;;
         already_set)   echo 'install -m 600 /usr/share/understandtech/.env.example /etc/understandtech/.env' ;;
         no_settings_dir) echo 'rm -rf /etc/understandtech' ;;
+        pools_full)    echo ': # the daemon refuses through the stub' ;;
         orphan_volume) echo ': # the volume is asserted through the stub' ;;
         *)             echo ': ' ;;
     esac
@@ -193,6 +195,16 @@ running_it_again_changes_nothing() {
     return 1
 }
 
+the_preflight_stops_on_full_pools() {
+    local output
+    output=$(output_of pools_full)
+    grep -q 'address pools are full' <<< "$output" \
+        && grep -q 'docker network prune' <<< "$output" \
+        && ! grep -q 'Writing the configuration' <<< "$output" && return 0
+    echo "$output"
+    return 1
+}
+
 an_orphan_volume_stops_the_install() {
     local output
     output=$(output_of orphan_volume)
@@ -213,6 +225,7 @@ run_install_from_state empty_settings
 run_install_from_state already_set
 run_install_from_state no_settings_dir
 MONGO_VOLUME_EXISTS=yes run_install_from_state orphan_volume
+NETWORK_CREATE_EXIT=1 run_install_from_state pools_full
 
 printf '%sA machine with nothing on it%s\n' "$BOLD" "$NC"
 property "the install reaches the point where it pulls images" \
@@ -241,6 +254,10 @@ property "two installs do not share a secret" \
 printf '\n%sA machine already configured%s\n' "$BOLD" "$NC"
 property "running the installer again changes nothing" \
     running_it_again_changes_nothing
+
+printf '\n%sA machine whose Docker address pools are full%s\n' "$BOLD" "$NC"
+property "the preflight stops before anything is written" \
+    the_preflight_stops_on_full_pools
 
 printf '\n%sA database nobody has the password for%s\n' "$BOLD" "$NC"
 property "the install stops, and says which volume and what to do" \

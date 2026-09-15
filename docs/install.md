@@ -176,6 +176,12 @@ The two failures worth knowing in advance:
 **The GPU is not reachable from containers.** The preflight says so. Install the
 NVIDIA container toolkit, then re-run.
 
+**Docker has no address space left.** `Error response from daemon: all
+predefined address pools have been fully subnetted`. The stack needs four
+networks, and a machine that has hosted generated applications keeps theirs long
+after they stop. `sudo ut-install --check` catches it before anything is
+written. See [starting states](starting-states.md#docker-address-pools-which-run-out-quietly).
+
 **The address does not resolve.** The appliance starts, but nothing reaches it
 by name. Either add the DNS records — six names, see
 [certificates and DNS](certificates-and-dns.md) — or re-run with a `--domain`

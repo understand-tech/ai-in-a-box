@@ -207,6 +207,16 @@ nvidia_cdi_devices_declared() {
     return 1
 }
 
+# Docker hands each network a block from a small pool, and a machine that has
+# run generated applications keeps their networks long after they stop. Asking
+# for one is the only way to know there is room: nothing reports the count left.
+docker_can_still_allocate_a_network() {
+    local probe="ut-preflight-$$"
+    docker network create "$probe" >/dev/null 2>&1 || return 1
+    docker network rm "$probe" >/dev/null 2>&1 || true
+    return 0
+}
+
 preflight() {
     log_step "Checking the system"
     local blocking=0
@@ -272,6 +282,19 @@ preflight() {
     # Only the checkout path needs git. A release the package manager put in
     # place is never cloned, pulled or reset, so requiring git there would stop
     # an install that has everything it needs.
+    if ! command -v docker >/dev/null 2>&1; then
+        :
+    elif docker_can_still_allocate_a_network; then
+        log_info "Docker has address space left for the stack's networks"
+    else
+        log_error "Docker cannot create a network — its address pools are full."
+        log_error "  The stack needs four. Reclaim the ones nothing uses:"
+        log_error "    docker network prune"
+        log_error "  Or widen the pools in /etc/docker/daemon.json and restart docker:"
+        log_error '    { "default-address-pools": [ { "base": "10.100.0.0/16", "size": 24 } ] }'
+        blocking=1
+    fi
+
     if release_comes_from_the_package_manager; then
         log_info "Release managed by the package — git not needed"
     elif command -v git >/dev/null 2>&1; then
