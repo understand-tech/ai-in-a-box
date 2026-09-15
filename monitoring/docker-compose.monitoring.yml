@@ -1,0 +1,85 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# UT box observability — Prometheus + Grafana + DCGM (GPU) exporter.
+# Standalone compose project: joins the platform's existing networks, so the
+# main compose.yaml stays untouched.
+#
+#   cd monitoring
+#   docker compose -f docker-compose.monitoring.yml up -d
+#   → Grafana: http://<box>:3000  (admin / utmonitor — change it)
+#
+# Prometheus scrapes the NIMs by container DNS (nim-llm / nim-vlm) over the
+# shared network. If your platform networks are named differently, fix the
+# `networks:` block at the bottom.
+# ─────────────────────────────────────────────────────────────────────────────
+name: ut-monitoring
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: ut-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - ut-backend-network
+      - ut-frontend-network
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: ut-grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=utmonitor
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_USERS_DEFAULT_THEME=dark
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - ut-frontend-network
+    depends_on:
+      - prometheus
+
+  dcgm-exporter:
+    # GPU utilization / memory / power. Multi-arch (arm64 OK on GB10/Grace).
+    image: nvcr.io/nvidia/k8s/dcgm-exporter:3.3.7-3.5.0-ubuntu22.04
+    container_name: ut-dcgm-exporter
+    restart: unless-stopped
+    cap_add:
+      - SYS_ADMIN
+    ports:
+      - "9400:9400"
+    networks:
+      - ut-backend-network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+networks:
+  # The platform's networks, joined (not created) — names must match the
+  # `name:` fields in the main compose.yaml's networks block.
+  ut-backend-network:
+    external: true
+  ut-frontend-network:
+    external: true
+
+volumes:
+  prometheus-data:
+    name: ut-prometheus-data
+  grafana-data:
+    name: ut-grafana-data
