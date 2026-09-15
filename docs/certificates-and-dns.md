@@ -76,6 +76,51 @@ A missing or unreadable file stops Caddy from starting rather than degrading
 quietly — `caddy validate` reads the certificates for real, and it is also the
 healthcheck. `sudo ./ut-install --check` catches it before the first `up`.
 
+### `custom` with automatic renewal — nothing to install anywhere
+
+The `internal` mode asks every machine that uses the appliance to install a
+root: three procedures depending on the operating system, a file moved around
+by USB or e-mail, once per machine. On four hundred workstations without an IT
+department, that is the single heaviest thing about this product.
+
+A publicly trusted certificate removes it entirely — browsers already trust the
+authority. `ut-certificate` obtains and renews one.
+
+```bash
+./ut-certificate --check      # what is configured, and what expires when
+./ut-certificate              # obtain, or renew within 30 days of expiry
+./ut-certificate --install    # renew daily from cron
+```
+
+**Validation is DNS-01, so the appliance is never reached from the internet.**
+It proves the domain by writing a DNS record, not by answering a request.
+Nothing is exposed, no port is opened, and it works behind any firewall with
+outbound access.
+
+That is also the only method that can cover `*.apps.<domain>`: a wildcard two
+levels below the apex, which HTTP validation cannot prove.
+
+```bash
+UT_INGRESS_MODE="custom"
+UT_ACME_EMAIL="ops@example.com"
+UT_ACME_DNS_PROVIDER="cloudflare"
+UT_ACME_DNS_ENV="CF_DNS_API_TOKEN=xxxxx"
+```
+
+`lego dnshelp -c <provider>` lists what a given provider expects; about two
+hundred are supported. Credentials reach the tool through the environment, so
+they stay out of the process table and out of your shell history.
+
+**What it needs**, and what it therefore rules out:
+
+- a real domain — `.local` cannot be certified by anyone, and `--check` says so
+  rather than failing later;
+- outbound access to the authority — an air-gapped appliance keeps `internal`;
+- control of the DNS zone.
+
+Renewal restarts Caddy, because a reload does not pick up a replaced
+certificate. That is a few seconds of downtime every sixty days, at 03:17.
+
 ### `edge` — your load balancer terminates TLS
 
 ```bash

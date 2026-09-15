@@ -1,0 +1,278 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+INSTALL_DIR="${UT_INSTALL_DIR:-/opt/understandtech}"
+ENV_FILE="$INSTALL_DIR/.env"
+LEGO_IMAGE="${UT_LEGO_IMAGE:-goacme/lego:latest}"
+STATE_DIR="${UT_ACME_STATE:-/var/lib/understandtech/acme}"
+RENEW_BEFORE_DAYS=30
+CRON_MARKER="ut-certificate"
+
+if [[ -t 1 ]]; then
+    RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'; BOLD=$'\033[1m'; NC=$'\033[0m'
+else
+    RED=""; GREEN=""; YELLOW=""; BOLD=""; NC=""
+fi
+
+log()       { printf '%s\n' "$*"; }
+log_info()  { printf '%s[ ok ]%s %s\n' "$GREEN" "$NC" "$*"; }
+log_warn()  { printf '%s[warn]%s %s\n' "$YELLOW" "$NC" "$*"; }
+log_error() { printf '%s[fail]%s %s\n' "$RED" "$NC" "$*" >&2; }
+die()       { log_error "$*"; exit 1; }
+
+usage() {
+    cat <<'EOF'
+ut-certificate — obtains and renews a publicly trusted certificate.
+
+Removes the need to install a root on every machine that uses the appliance:
+the certificate comes from a public authority, so browsers already trust it.
+
+Validation is DNS-01, which means the appliance is never reached from the
+internet — it proves the domain by writing a DNS record, not by answering a
+request. Nothing has to be exposed.
+
+  ./ut-certificate --check      Report what is configured and what expires when
+  ./ut-certificate              Obtain or renew if within 30 days of expiry
+  ./ut-certificate --force      Renew even if it is not due
+  ./ut-certificate --install    Install the daily cron job
+  ./ut-certificate --uninstall  Remove it
+
+Configuration, in .env:
+
+  UT_ACME_EMAIL           where the authority sends expiry warnings
+  UT_ACME_DNS_PROVIDER    a provider lego knows: cloudflare, ovh, route53, gcloud…
+  UT_ACME_DNS_ENV         credentials it needs, as NAME=value, comma separated
+  UT_CERT_DIR             where the certificate is written (mounted by Caddy)
+
+  UT_ACME_SERVER          override the directory URL, for staging
+
+Example:
+
+  UT_ACME_EMAIL="ops@example.com"
+  UT_ACME_DNS_PROVIDER="cloudflare"
+  UT_ACME_DNS_ENV="CF_DNS_API_TOKEN=xxxxx"
+
+`lego dnshelp -c <provider>` lists what a given provider expects.
+EOF
+}
+
+env_get() {
+    local key=$1 value
+    [[ -f "$ENV_FILE" ]] || return 1
+    value=$(grep -m1 -E "^[[:space:]]*${key}=" "$ENV_FILE" 2>/dev/null) || return 1
+    value=${value#*=}
+    value=${value%\"}; value=${value#\"}
+    value=${value%\'}; value=${value#\'}
+    printf '%s' "$value"
+}
+
+# Every name Caddy serves. The last is a wildcard two levels below the apex,
+# which a *.<domain> wildcard does not cover — and which only DNS-01 can prove.
+certificate_names() {
+    local domain=$1
+    printf '%s\n' "$domain" "llms.$domain" "assistants.$domain" \
+        "admin.$domain" "builder.$domain" "*.apps.$domain"
+}
+
+certificate_exists() { [[ -f "$1" ]]; }
+
+# openssl answers this without anyone parsing a date: BSD and GNU `date` do not
+# read the same formats, and neither reads openssl's.
+expires_within() {
+    local file=$1 days=$2
+    [[ -f "$file" ]] || return 1
+    ! openssl x509 -in "$file" -noout -checkend $(( days * 86400 )) >/dev/null 2>&1
+}
+
+expiry_date() {
+    local file=$1 end
+    end=$(openssl x509 -in "$file" -noout -enddate 2>/dev/null) || return 1
+    printf '%s' "${end#notAfter=}"
+}
+
+read_configuration() {
+    DOMAIN=$(env_get UT_DOMAIN || true); DOMAIN=${DOMAIN:-understand.local}
+    EMAIL=$(env_get UT_ACME_EMAIL || true)
+    PROVIDER=$(env_get UT_ACME_DNS_PROVIDER || true)
+    DNS_ENV=$(env_get UT_ACME_DNS_ENV || true)
+    CERT_DIR=$(env_get UT_CERT_DIR || true); CERT_DIR=${CERT_DIR:-$INSTALL_DIR/caddy/certs}
+    ACME_SERVER=$(env_get UT_ACME_SERVER || true)
+}
+
+configuration_problems() {
+    local problems=()
+    [[ -n "$EMAIL" ]]    || problems+=("UT_ACME_EMAIL is not set")
+    [[ -n "$PROVIDER" ]] || problems+=("UT_ACME_DNS_PROVIDER is not set")
+    [[ -n "$DNS_ENV" ]]  || problems+=("UT_ACME_DNS_ENV is not set — the provider needs credentials")
+    case "$DOMAIN" in
+        *.local|localhost|"")
+            problems+=("UT_DOMAIN is ${DOMAIN:-empty}: no public authority issues for that — keep UT_INGRESS_MODE=internal") ;;
+    esac
+    (( ${#problems[@]} == 0 )) && return 0
+    printf '%s\n' "${problems[@]}"
+    return 1
+}
+
+# Credentials reach lego through the environment rather than a command line, so
+# they stay out of the process table and out of any shell history.
+lego_environment_arguments() {
+    local pair
+    printf '%s' "$DNS_ENV" | tr ',' '\n' | while IFS= read -r pair; do
+        [[ -n "$pair" ]] || continue
+        printf -- '-e\n%s\n' "$pair"
+    done
+}
+
+run_lego() {
+    local action=$1 name args=()
+    while IFS= read -r name; do
+        [[ -n "$name" ]] || continue
+        args+=(-d "$name")
+    done < <(certificate_names "$DOMAIN")
+
+    local env_args=()
+    while IFS= read -r item; do
+        [[ -n "$item" ]] || continue
+        env_args+=("$item")
+    done < <(lego_environment_arguments)
+
+    local server_args=()
+    [[ -n "$ACME_SERVER" ]] && server_args=(--server "$ACME_SERVER")
+
+    docker run --rm \
+        -v "$STATE_DIR":/.lego \
+        "${env_args[@]}" \
+        "$LEGO_IMAGE" \
+        --accept-tos --email "$EMAIL" --dns "$PROVIDER" \
+        "${args[@]}" "${server_args[@]}" --path /.lego "$action"
+}
+
+issued_certificate() { printf '%s/certificates/%s.crt' "$STATE_DIR" "$DOMAIN"; }
+issued_key()         { printf '%s/certificates/%s.key' "$STATE_DIR" "$DOMAIN"; }
+
+install_into_cert_dir() {
+    install -d -m 755 "$CERT_DIR"
+    install -m 644 "$(issued_certificate)" "$CERT_DIR/fullchain.pem"
+    install -m 600 "$(issued_key)" "$CERT_DIR/privkey.pem"
+}
+
+# A reload is not enough: Caddy keeps the certificate it loaded in memory and
+# re-reads the configuration without re-reading a file whose path has not
+# changed. A renewal that ends in a reload serves the expired one.
+restart_caddy() {
+    ( cd "$INSTALL_DIR" && docker compose restart caddy >/dev/null 2>&1 ) \
+        || log_warn "Could not restart Caddy — it still serves the previous certificate"
+}
+
+do_check() {
+    read_configuration
+    log "${BOLD}Configuration${NC}"
+    printf '  domain    %s\n' "$DOMAIN"
+    printf '  provider  %s\n' "${PROVIDER:-not set}"
+    printf '  email     %s\n' "${EMAIL:-not set}"
+    printf '  writes to %s\n' "$CERT_DIR"
+    [[ -n "$ACME_SERVER" ]] && printf '  authority %s\n' "$ACME_SERVER"
+
+    log ""
+    log "${BOLD}Names it would request${NC}"
+    certificate_names "$DOMAIN" | sed 's/^/  /'
+
+    log ""
+    local problems
+    if problems=$(configuration_problems); then
+        log_info "Configuration is complete"
+    else
+        printf '%s\n' "$problems" | sed "s/^/  ${RED}·${NC} /"
+        return 1
+    fi
+
+    log ""
+    local installed="$CERT_DIR/fullchain.pem"
+    if ! certificate_exists "$installed"; then
+        log_warn "No certificate installed yet"
+    elif expires_within "$installed" 0; then
+        log_error "The installed certificate has expired — it ran to $(expiry_date "$installed")"
+    elif expires_within "$installed" "$RENEW_BEFORE_DAYS"; then
+        log_warn "Expires $(expiry_date "$installed") — within ${RENEW_BEFORE_DAYS} days, a renewal is due"
+    else
+        log_info "Expires $(expiry_date "$installed")"
+    fi
+}
+
+do_renew() {
+    local force=${1:-false}
+    read_configuration
+
+    local problems
+    problems=$(configuration_problems) || {
+        printf '%s\n' "$problems" | sed 's/^/  /' >&2
+        die "Incomplete configuration — see ./ut-certificate --check"
+    }
+
+    install -d -m 700 "$STATE_DIR"
+
+    local action="run"
+    if certificate_exists "$(issued_certificate)"; then
+        action="renew"
+        if [[ "$force" != true ]] && ! expires_within "$(issued_certificate)" "$RENEW_BEFORE_DAYS"; then
+            log_info "Expires $(expiry_date "$(issued_certificate)") — nothing to do"
+            return 0
+        fi
+    fi
+
+    local before=""
+    [[ -f "$CERT_DIR/fullchain.pem" ]] && before=$(openssl x509 -in "$CERT_DIR/fullchain.pem" -noout -fingerprint 2>/dev/null || true)
+
+    log "Asking the authority (${action}, DNS-01 through ${PROVIDER})"
+    run_lego "$action" || die "The authority did not issue — nothing was changed"
+
+    [[ -f "$(issued_certificate)" ]] || die "lego reported success but wrote no certificate"
+    install_into_cert_dir
+
+    local after
+    after=$(openssl x509 -in "$CERT_DIR/fullchain.pem" -noout -fingerprint 2>/dev/null || true)
+    if [[ "$before" == "$after" ]]; then
+        log_info "Certificate unchanged — Caddy left alone"
+        return 0
+    fi
+
+    log_info "New certificate installed in ${CERT_DIR}"
+    restart_caddy
+    log_info "Caddy restarted"
+}
+
+do_install() {
+    local self; self=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")
+    local entry="17 3 * * * ${self} >> /var/log/ut-certificate.log 2>&1"
+
+    if crontab -l 2>/dev/null | grep -q "$CRON_MARKER"; then
+        log_info "Already installed"
+        return 0
+    fi
+    ( crontab -l 2>/dev/null; printf '%s\n' "$entry" ) | crontab -
+    log_info "Daily at 03:17 — renews only within ${RENEW_BEFORE_DAYS} days of expiry"
+}
+
+do_uninstall() {
+    crontab -l 2>/dev/null | grep -v "$CRON_MARKER" | crontab - || true
+    log_info "Removed"
+}
+
+main() {
+    case "${1:-}" in
+        --check)     do_check ;;
+        --force)     do_renew true ;;
+        --install)   do_install ;;
+        --uninstall) do_uninstall ;;
+        -h|--help)   usage ;;
+        "")          do_renew false ;;
+        *)           usage; exit 1 ;;
+    esac
+}
+
+# An `if` rather than `&&`: a false condition would be the script's exit status,
+# so sourcing it for tests would fail under `set -e`.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
