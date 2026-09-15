@@ -152,6 +152,67 @@ To inspect what it is serving:
 docker exec ut-step-ca step certificate inspect /home/step/certs/root_ca.crt --short
 ```
 
+## Adding a second machine
+
+A compute node serves inference to the machine that holds the data. Part of
+this works today, part does not, and the difference matters before you promise
+anything to a customer.
+
+### What works
+
+The role itself. `compose.compute.yaml` keeps the inference engines and Caddy
+and switches off everything belonging to the control plane, so the second
+machine runs no database and no application:
+
+```bash
+COMPOSE_FILE="compose.yaml:compose.compute.yaml"
+COMPOSE_PROFILES="nim"
+NIM_LLM_BIND_ADDRESS=<address the control plane reaches>
+NIM_VLM_BIND_ADDRESS=<same>
+```
+
+**Those two addresses are required on a compute node and nowhere else.** Left
+at their default the engines listen on loopback, so the node starts, passes its
+healthcheck, and serves nobody — a failure that reads as a model problem rather
+than a binding one.
+
+`llm` is switched off there too, and that is a limitation rather than a choice:
+it carries the embedding and reranking work, but it also reads the customer's
+documents and talks to MongoDB, so it cannot run on a machine that holds
+neither. A compute node therefore serves generation and vision, where the GPU
+time goes, while indexing stays on the machine with the data.
+
+### What does not work yet
+
+**Enrolling that machine against the authority.** There is no `ut-enrol`, and
+no `ut-revoke`. The mechanism is proven — `test/machine-identity.sh` checks ten
+properties offline, including that a single-use token issues a certificate,
+that replaying it is refused, that renewal needs no token, and that a revoked
+node cannot renew even after expiry — but nothing in the product performs it.
+
+Until then, a compute node is reachable on an address you opened, with no
+certificate proving which machine it is. On a network you control, between two
+machines you own, that is a deliberate and bounded choice. It is not mutual
+authentication.
+
+### The order these have to be built in
+
+**Revocation comes before the first enrolment**, and this is not a preference.
+
+The authority issues certificates lasting seven days with
+`allowRenewalAfterExpiry` on, so a machine switched off longer than that
+recovers by itself — which is what an appliance in a rack needs. That setting
+also removes the only revocation mechanism available without a distribution
+list: letting the certificate lapse.
+
+With nothing enrolled, there is nothing to revoke and no risk. The day a second
+machine holds a certificate, the absence of `ut-revoke` means **any machine that
+ever held one can reactivate itself indefinitely** — worse than either
+alternative. Measured, not assumed: explicit revocation refuses renewal
+immediately, expired or not.
+
+So: `ut-revoke` and its procedure, then enrolment. Not the reverse.
+
 ## Changing the address later
 
 `UT_DOMAIN` is the only place the name is written; every URL derives from it.
