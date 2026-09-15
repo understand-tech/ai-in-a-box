@@ -11,10 +11,11 @@ gateway, and GPU inference. Nothing leaves the network.
 
 Caddy terminates TLS for every hostname and is the only container publishing
 80/443. Every hostname derives from one setting, `UT_DOMAIN` — see
-[Domain, TLS and proxy](#domain-tls-and-proxy). Each `.local` name is announced
+[Domain, TLS and proxy](#domain-tls-and-proxy). On a `.local` address each name is announced
 separately over mDNS by the `ut-mdns-alias` systemd unit, because mDNS has no
 wildcards; that includes the apex, so the box's own host name does not have to
-match the domain. Everything the platform stores or infers on sits on
+match the domain. On any other domain the names come from your own DNS and that
+unit is not installed. Everything the platform stores or infers on sits on
 `ut-backend-network`, which is `internal: true` — those containers have no route
 off the box.
 
@@ -28,7 +29,7 @@ off the box.
 | `caddy/ingress-*.caddy` | One per ingress mode — global options and the `(tls)` snippets |
 | `caddy/certs/` | Where a `custom`-mode certificate goes (gitignored) |
 | `.env.example` | Template for `.env` — domain and TLS, image tags, credentials, model config |
-| `setup-autostart.sh` | Installs the systemd boot service and the mDNS alias publisher; `--check` validates domain/TLS settings |
+| `setup-autostart.sh` | Installs the systemd boot service, and the mDNS alias publisher on a `.local` domain only; `--check` validates domain/TLS settings |
 | `ut-logs-archive` | Automated daily log archival with compression and retention |
 | `ut-certificate` | Obtains and renews a publicly trusted certificate by DNS-01, so nothing has to be installed on user machines |
 | `appbuilder/traefik/` | Static routing config for the App Builder's per-app router |
@@ -58,8 +59,8 @@ cd ~/understand-tech
 cp .env.example .env
 chmod 600 .env
 # Edit .env — set MONGODB_USERNAME, MONGODB_PASSWORD, JWT_SECRET at minimum.
-# Leave UT_DOMAIN alone for a single box on understand.local; see
-# "Domain, TLS and proxy" to serve another name or a second appliance.
+# Set UT_DOMAIN to the address the box answers on. understand.local works on
+# one flat network and cannot be certified; see "Domain, TLS and proxy".
 
 # 2. Create the network the App Builder's generated apps attach to (once per
 #    box). .env.example ships with the add-on enabled, so this is required
@@ -77,7 +78,8 @@ docker compose up -d
 # 5. Verify
 docker compose ps
 
-# 6. Make it survive a reboot (installs the systemd units and the mDNS names)
+# 6. Make it survive a reboot (installs the boot service, and the mDNS names
+#    when UT_DOMAIN ends in .local)
 sudo ./setup-autostart.sh
 ```
 
@@ -154,8 +156,9 @@ so they get compose-generated names rather than fixed `container_name` values.
 
 ## Hostnames
 
-Every name is derived from `UT_DOMAIN`, which defaults to `understand.local`.
-The table shows that default; change the one setting and all six follow.
+Every name is derived from `UT_DOMAIN`. The installer asks for it and falls
+back to `understand.local`, which is what the table shows; change the one
+setting and all six follow.
 
 | Hostname | Served by | Notes |
 |---|---|---|
@@ -167,9 +170,11 @@ The table shows that default; change the one setting and all six follow.
 | `<app>.apps.understand.local` | `app-builder-traefik` | One per generated app, plus `--staging` and `--prod` |
 
 Caddy serves the generated apps from a single wildcard site, so no config change
-is needed per app — but each hostname is announced over mDNS individually
-because mDNS has no wildcards. The alias service rescans the App Builder's
-traefik directory every 10 seconds, so a new app resolves within about that long.
+is needed per app. On a `.local` address each hostname is announced over mDNS
+individually because mDNS has no wildcards, and the alias service rescans the
+App Builder's traefik directory every 10 seconds, so a new app resolves within
+about that long. On your own domain a single `*.apps.<UT_DOMAIN>` record covers
+them all.
 
 ## Domain, TLS and proxy
 
@@ -255,10 +260,10 @@ image the stack runs. It changes nothing.
 
 ### Names outside `.local`
 
-mDNS answers for `.local` and nothing else, so on any other domain the
-`ut-mdns-alias` service detects it, reports that mDNS does not apply and stops
-cleanly instead of retrying forever. Create the records in your own DNS,
-pointing at the box or at the proxy in front of it:
+mDNS answers for `.local` and nothing else, so on any other domain
+`setup-autostart.sh` installs no publisher at all and asks for no Avahi. A box
+that had one before moving off `.local` has it disabled on the next run. Create
+the records in your own DNS, pointing at the box or at the proxy in front of it:
 
 ```
 <domain>  llms.<domain>  assistants.<domain>  admin.<domain>  builder.<domain>  *.apps.<domain>

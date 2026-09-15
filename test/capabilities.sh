@@ -98,6 +98,175 @@ renders_valid_configuration() {
     ( cd "$WORK_DIR" && docker compose "$@" config >/dev/null )
 }
 
+write_mdns_probe() {
+    cat > "$WORK_DIR/mdns-probe.sh" <<'PROBE'
+set -u
+mkdir -p /fix /stub
+printf 'UT_DOMAIN="%s"\n' "$DOMAIN" > /fix/.env
+
+cat > /stub/systemctl <<'STUB'
+#!/bin/sh
+printf '%s\n' "$*" >> /stub/calls
+case "$1" in
+    is-enabled) [ "${ALREADY_ENABLED}" = yes ] ;;
+    is-active)  exit 1 ;;
+    *)          exit 0 ;;
+esac
+STUB
+chmod +x /stub/systemctl
+: > /stub/calls
+
+PATH=/stub:$PATH bash /setup-autostart.sh --mdns --dir /fix 2>&1
+printf 'EXIT=%s\n' "$?"
+printf -- '--- installed ---\n'
+ls /usr/local/bin/ut-mdns-alias /etc/systemd/system/ut-mdns-alias.service 2>/dev/null
+printf -- '--- systemctl ---\n'
+cat /stub/calls
+PROBE
+}
+
+installing_mdns_reports() {
+    local domain=$1 already_enabled=${2:-no}
+    write_mdns_probe
+    docker run --rm \
+        -v "$REPO_ROOT/setup-autostart.sh":/setup-autostart.sh:ro \
+        -v "$WORK_DIR/mdns-probe.sh":/mdns-probe.sh:ro \
+        -e DOMAIN="$domain" -e ALREADY_ENABLED="$already_enabled" \
+        bash:5 bash /mdns-probe.sh 2>&1
+}
+
+a_local_domain_publishes_over_mdns() {
+    local report
+    report=$(installing_mdns_reports understand.local)
+    if grep -q '^/usr/local/bin/ut-mdns-alias$' <<< "$report" \
+        && grep -q '^/etc/systemd/system/ut-mdns-alias.service$' <<< "$report" \
+        && grep -q '^enable ut-mdns-alias$' <<< "$report"; then
+        return 0
+    fi
+    echo "$report"
+    return 1
+}
+
+a_real_domain_installs_no_mdns_publisher() {
+    local report installed
+    report=$(installing_mdns_reports box.example.com)
+    installed=${report#*--- installed ---}
+    installed=${installed%%--- systemctl ---*}
+    if grep -q 'ut-mdns-alias' <<< "$installed"; then
+        echo "the publisher was installed anyway:"; echo "$report"; return 1
+    fi
+    if grep -q 'apt-get install.*avahi' <<< "$report"; then
+        echo "Avahi is still asked for:"; echo "$report"; return 1
+    fi
+    if ! grep -q '^EXIT=0$' <<< "$report"; then
+        echo "$report"; return 1
+    fi
+}
+
+moving_off_local_withdraws_the_publisher() {
+    local report
+    report=$(installing_mdns_reports box.example.com yes)
+    if grep -q '^disable --now ut-mdns-alias$' <<< "$report"; then
+        return 0
+    fi
+    echo "$report"
+    return 1
+}
+
+installer_domain_decision() {
+    local given=$1 already_configured=${2:-} decide=${3:-read_domain} probe
+    probe=$(mktemp -d "$WORK_DIR/installer.XXXXXX")
+    [[ -n "$already_configured" ]] && printf 'UT_DOMAIN="%s"\n' "$already_configured" > "$probe/.env"
+    env UT_DOMAIN="$given" UT_INSTALL_DIR="$probe" DECIDE="$decide" bash -c '
+        set +u
+        source "$1/ut-install" >/dev/null 2>&1
+        set +eE
+        trap - ERR
+        if [[ "$DECIDE" == read_domain ]]; then
+            read_domain < /dev/null 2>&1
+        else
+            DOMAIN=$("$DECIDE")
+        fi
+        printf "DOMAIN=%s\n" "$DOMAIN"
+    ' _ "$REPO_ROOT"
+}
+
+an_address_given_up_front_is_taken_as_it_is() {
+    local report
+    report=$(installer_domain_decision box.example.com)
+    if grep -q '^DOMAIN=box.example.com$' <<< "$report" && ! grep -q 'mDNS' <<< "$report"; then
+        return 0
+    fi
+    echo "$report"
+    return 1
+}
+
+an_unattended_install_falls_back_and_says_so() {
+    local report
+    report=$(installer_domain_decision "")
+    if grep -q '^DOMAIN=understand.local$' <<< "$report" && grep -q 'mDNS-only' <<< "$report"; then
+        return 0
+    fi
+    echo "$report"
+    return 1
+}
+
+the_preflight_checks_the_address_in_use() {
+    local report
+    report=$(installer_domain_decision "" box.example.com domain_to_check)
+    if grep -q '^DOMAIN=box.example.com$' <<< "$report"; then
+        return 0
+    fi
+    echo "$report"
+    return 1
+}
+
+installer_domain_answer() {
+    local answer=$1 already_configured=${2:-} probe
+    probe=$(mktemp -d "$WORK_DIR/prompt.XXXXXX")
+    [[ -n "$already_configured" ]] && printf 'UT_DOMAIN="%s"\n' "$already_configured" > "$probe/.env"
+    cat > "$probe/run.sh" <<EOF
+set +u
+UT_INSTALL_DIR="$probe" source "$REPO_ROOT/ut-install" >/dev/null 2>&1
+set +eE
+trap - ERR
+read_domain
+printf 'DOMAIN=%s\n' "\$DOMAIN"
+EOF
+    python3 "$SCRIPT_DIR/answer-a-prompt.py" "$probe/run.sh" "$answer" | tr -d '\r'
+}
+
+an_answer_at_the_prompt_is_taken() {
+    local report
+    report=$(installer_domain_answer ia.exemple.fr)
+    if grep -q '^DOMAIN=ia.exemple.fr$' <<< "$report"; then
+        return 0
+    fi
+    echo "$report"
+    return 1
+}
+
+an_empty_answer_keeps_the_configured_address() {
+    local report
+    report=$(installer_domain_answer "" box.example.com)
+    if grep -q '^DOMAIN=box.example.com$' <<< "$report" \
+        && grep -q 'Leave empty to keep box.example.com' <<< "$report"; then
+        return 0
+    fi
+    echo "$report"
+    return 1
+}
+
+an_address_already_configured_is_kept() {
+    local report
+    report=$(installer_domain_decision "" box.example.com)
+    if grep -q '^DOMAIN=box.example.com$' <<< "$report"; then
+        return 0
+    fi
+    echo "$report"
+    return 1
+}
+
 names_are_unchanged_by_default() {
     local rendered
     rendered=$(compose_config -f compose.yaml)
@@ -378,6 +547,34 @@ if [[ -x "$REPO_ROOT/ut-certificate" ]]; then
 fi
 capability "and it is really served by it, not just configured to be" \
     the_machine_surface_is_really_served_by_the_authority
+
+if [[ -f "$REPO_ROOT/setup-autostart.sh" ]]; then
+    group "Name resolution"
+    capability "a real domain installs no mDNS publisher and asks for no Avahi" \
+        a_real_domain_installs_no_mdns_publisher
+    capability "a .local domain still publishes its names over mDNS" \
+        a_local_domain_publishes_over_mdns
+    capability "moving off .local withdraws a publisher installed earlier" \
+        moving_off_local_withdraws_the_publisher
+fi
+
+if [[ -x "$REPO_ROOT/ut-install" ]]; then
+    capability "an address given up front is taken as it is" \
+        an_address_given_up_front_is_taken_as_it_is
+    capability "an unattended install falls back to the mDNS name, and says so" \
+        an_unattended_install_falls_back_and_says_so
+    capability "an address the machine already answers on is never replaced by the fallback" \
+        an_address_already_configured_is_kept
+    capability "the preflight resolves the address in use, not the fallback" \
+        the_preflight_checks_the_address_in_use
+
+    if command -v python3 >/dev/null 2>&1; then
+        capability "the address typed at the prompt is the one it takes" \
+            an_answer_at_the_prompt_is_taken
+        capability "answering nothing at the prompt keeps what the machine already answers on" \
+            an_empty_answer_keeps_the_configured_address
+    fi
+fi
 
 group "Backward compatibility"
 capability "an untouched install keeps its container, volume, network and data names" \

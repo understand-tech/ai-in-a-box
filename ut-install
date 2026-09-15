@@ -11,7 +11,8 @@ INSTALL_DIR="${UT_INSTALL_DIR:-/opt/understandtech}"
 DATA_DIR="/var/lib/understandtech"
 LOG_FILE="/var/log/ut-install.log"
 TARGET_USER="${SUDO_USER:-root}"
-DOMAIN="${UT_DOMAIN:-understand.local}"
+DOMAIN="${UT_DOMAIN:-}"
+FALLBACK_DOMAIN="understand.local"
 
 MIN_DOCKER_MAJOR=24
 MIN_DISK_BYTES=$((250 * 1000 * 1000 * 1000))
@@ -77,9 +78,11 @@ Options
                        is not silently discarded.
   --token-file PATH    Read the registry token from a file instead of a prompt.
   --dir PATH           Install directory (default: /opt/understandtech).
-  --domain NAME        Address the platform is served at
-                       (default: understand.local).
-  --no-autostart       Skip the boot service and the mDNS publisher.
+  --domain NAME        Address the platform is served at. Asked for when it is
+                       not given, offering the address this machine already
+                       answers on, or understand.local on a first install.
+  --no-autostart       Skip the boot service and the mDNS publisher, which is
+                       installed on a .local domain only.
   --skip-pull          Do not pull images. Useful when they are already local.
   --health-timeout N   Seconds to wait for services (default: 3600).
   -h, --help           This message.
@@ -262,6 +265,70 @@ preflight() {
 token_required() {
     checkout_exists && registry_credentials_stored && return 1
     return 0
+}
+
+configured_domain() { env_get "$INSTALL_DIR/.env" UT_DOMAIN 2>/dev/null || true; }
+
+domain_to_check() {
+    local candidate="$DOMAIN"
+    [[ -n "$candidate" ]] || candidate=$(configured_domain)
+    printf '%s' "${candidate:-$FALLBACK_DOMAIN}"
+}
+
+# A terminal on stdin does not imply a controlling terminal: a process started
+# without one has an open /dev/tty node that cannot be opened.
+terminal_is_reachable() { ( exec 3<> /dev/tty ) 2>/dev/null; }
+
+describe_domain() {
+    case "$1" in
+        *.local)
+            log_warn "${1} is mDNS-only: it does not cross a router, and no"
+            log_warn "public authority certifies it — every machine will need the root installed" ;;
+        *)
+            log_info "${1} — publish its six names in your DNS, see docs/certificates-and-dns.md" ;;
+    esac
+}
+
+read_domain() {
+    [[ -n "$DOMAIN" ]] && return 0
+
+    local current suggested
+    current=$(configured_domain)
+    suggested="${current:-$FALLBACK_DOMAIN}"
+
+    if [[ ! -t 0 ]]; then
+        DOMAIN="$suggested"
+        if [[ -n "$current" ]]; then
+            log_info "No --domain given and no terminal to ask on — keeping ${DOMAIN}"
+        else
+            log_warn "No --domain given and no terminal to ask on — using ${DOMAIN}"
+            describe_domain "$DOMAIN"
+        fi
+        return 0
+    fi
+
+    log_step "The address this appliance answers on"
+    log "  A name from the customer's DNS zone lets browsers trust it without"
+    log "  installing anything on their machines. See docs/certificates-and-dns.md."
+    log ""
+    if [[ -n "$current" ]]; then
+        log "  Leave empty to keep ${current}, which this machine already answers on."
+    else
+        log "  Leave empty to use ${FALLBACK_DOMAIN}, which works on a flat local"
+        log "  network and nowhere else."
+    fi
+    log ""
+    local answer=""
+    if terminal_is_reachable; then
+        printf '  Domain [%s]: ' "$suggested" > /dev/tty
+        read -r answer < /dev/tty || answer=""
+    else
+        printf '  Domain [%s]: ' "$suggested"
+        read -r answer || answer=""
+    fi
+    DOMAIN="${answer:-$suggested}"
+
+    describe_domain "$DOMAIN"
 }
 
 read_token() {
@@ -690,6 +757,7 @@ main() {
     parse_arguments "$@"
 
     if [[ "$ACTION" == "check" ]]; then
+        DOMAIN=$(domain_to_check)
         preflight
         exit 0
     fi
@@ -698,6 +766,7 @@ main() {
 
     start_logging
     preflight
+    read_domain
     read_token
     step_registry_login
     step_fetch_repo
