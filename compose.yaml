@@ -193,6 +193,16 @@ services:
       GATEWAY_VLM_MODEL: ${GATEWAY_VLM_MODEL:-}
       GATEWAY_PUBLIC_URL: ${GATEWAY_PUBLIC_URL:-}
       GATEWAY_RPM_PER_KEY: ${GATEWAY_RPM_PER_KEY:-}
+      # Prompt-size admission cap (est. tokens/request, local upstreams only).
+      # Default 65536 in code; 0 disables. Rejects with the provider-exact
+      # context_length_exceeded 400 so coding CLIs auto-compact — never trims.
+      GATEWAY_MAX_PROMPT_TOKENS: ${GATEWAY_MAX_PROMPT_TOKENS:-}
+      # Per-user sub-buckets for shared service keys: keys listed here may
+      # assert X-UT-Acting-User (per-person rate slices + attribution).
+      # Defaults to the app builder's key so the feature works out of the box.
+      GATEWAY_TRUSTED_PROXY_KEYS: ${GATEWAY_TRUSTED_PROXY_KEYS:-${APP_BUILDER_GATEWAY_API_KEY:-}}
+      GATEWAY_RPM_PER_USER: ${GATEWAY_RPM_PER_USER:-}
+      GATEWAY_RPM_PER_KEY_TOTAL: ${GATEWAY_RPM_PER_KEY_TOTAL:-}
       API_KEY_HASH_NEW_KEYS: ${API_KEY_HASH_NEW_KEYS:-}
       API_KEY_HASH_LAZY_MIGRATION: ${API_KEY_HASH_LAZY_MIGRATION:-}
       GATEWAY_MODELS: ${GATEWAY_MODELS:-}
@@ -342,6 +352,16 @@ services:
       GATEWAY_VLM_MODEL: ${GATEWAY_VLM_MODEL:-}
       GATEWAY_PUBLIC_URL: ${GATEWAY_PUBLIC_URL:-}
       GATEWAY_RPM_PER_KEY: ${GATEWAY_RPM_PER_KEY:-}
+      # Prompt-size admission cap (est. tokens/request, local upstreams only).
+      # Default 65536 in code; 0 disables. Rejects with the provider-exact
+      # context_length_exceeded 400 so coding CLIs auto-compact — never trims.
+      GATEWAY_MAX_PROMPT_TOKENS: ${GATEWAY_MAX_PROMPT_TOKENS:-}
+      # Per-user sub-buckets for shared service keys: keys listed here may
+      # assert X-UT-Acting-User (per-person rate slices + attribution).
+      # Defaults to the app builder's key so the feature works out of the box.
+      GATEWAY_TRUSTED_PROXY_KEYS: ${GATEWAY_TRUSTED_PROXY_KEYS:-${APP_BUILDER_GATEWAY_API_KEY:-}}
+      GATEWAY_RPM_PER_USER: ${GATEWAY_RPM_PER_USER:-}
+      GATEWAY_RPM_PER_KEY_TOTAL: ${GATEWAY_RPM_PER_KEY_TOTAL:-}
       API_KEY_HASH_NEW_KEYS: ${API_KEY_HASH_NEW_KEYS:-}
       API_KEY_HASH_LAZY_MIGRATION: ${API_KEY_HASH_LAZY_MIGRATION:-}
       GATEWAY_MODELS: ${GATEWAY_MODELS:-}

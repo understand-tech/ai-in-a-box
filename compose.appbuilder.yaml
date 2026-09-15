@@ -38,6 +38,12 @@ services:
       AGENT_BACKEND: ${APP_BUILDER_AGENT_BACKEND:-deepagents}
       AGENT_MAX_OUTPUT_TOKENS: ${APP_BUILDER_AGENT_MAX_OUTPUT_TOKENS:-8192}
       AGENT_MODEL_CONTEXT_TOKENS: ${APP_BUILDER_AGENT_CONTEXT_TOKENS:-24576}
+      # Live progress UX: token streaming powers the 'Writing <file> — N
+      # tokens' line and the no-first-token watchdog ('Waiting for
+      # capacity'). Set APP_LLM_STREAMING=0 to revert to whole-message LLM
+      # calls (also disables the watchdog — safe escape hatch).
+      APP_LLM_STREAMING: ${APP_BUILDER_LLM_STREAMING:-}
+      PROGRESS_WAIT_SECS: ${APP_BUILDER_PROGRESS_WAIT_SECS:-}
       ANTHROPIC_API_KEY: ${APP_BUILDER_ANTHROPIC_API_KEY:-}
       UT_LLM_BASE_URL: http://host.docker.internal:${APP_BUILDER_LLM_PROXY_PORT:-8011}/api/llm/anthropic
       MONGO_HOST: ${MONGODB_HOST:-mongodb}
