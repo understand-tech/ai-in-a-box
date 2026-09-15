@@ -33,7 +33,7 @@ SHIPPED_PLACEHOLDERS=(
     "" "12345678" "password" "SECRET" "SJKFVK" "FVVE" "SJBVSJB" "ut"
     "czIzgahTJGzdG3b1XtEgGIWPvwhdfBvhVd1JjzetjWQ"
 )
-GENERATED_SECRET_KEYS=(JWT_SECRET STATE_SECRET OPENID_SECRET_KEY ADMIN_SETUP_PASSWORD BACKUP_FILES_PASSWORD CA_PASSWORD)
+GENERATED_SECRET_KEYS=(JWT_SECRET STATE_SECRET OPENID_SECRET_KEY ADMIN_SETUP_PASSWORD BACKUP_FILES_PASSWORD CA_PASSWORD GPU_VM_API_TOKEN)
 STEP_CA_UID=1000
 CA_CERT_DURATION=168h
 
@@ -443,6 +443,30 @@ step_fetch_repo() {
     log_info "Cloned ${REPO_REF} into ${INSTALL_DIR}"
 }
 
+settings_carry_database_credentials() {
+    local env_file=$1
+    ! is_shipped_placeholder "$(env_get "$env_file" MONGODB_PASSWORD || true)"
+}
+
+# Generating a new password here would not reach the database — mongo reads it
+# once, when it creates its data directory — so the stack would start and fail
+# to connect, with nothing saying why.
+die_on_a_database_nobody_has_the_password_for() {
+    local env_file=$1 prefix volume
+    prefix=$(env_get "$env_file" RESOURCE_PREFIX 2>/dev/null || true)
+    volume="${prefix:-ut}-mongodb-data"
+
+    log_error "A database volume is already here, and ${env_file} holds no password for it."
+    log_error "  volume: ${volume}"
+    log_error ""
+    log_error "Either put the password this database was created with back into"
+    log_error "MONGODB_USERNAME and MONGODB_PASSWORD, or discard the volume and"
+    log_error "everything in it:"
+    log_error ""
+    log_error "  docker volume rm ${volume}"
+    exit 1
+}
+
 generate_database_credentials() {
     local env_file=$1 user
 
@@ -450,6 +474,8 @@ generate_database_credentials() {
     # data directory. Rotating it later changes nothing in the database and just
     # stops every service from connecting.
     if database_already_initialised "$env_file"; then
+        settings_carry_database_credentials "$env_file" \
+            || die_on_a_database_nobody_has_the_password_for "$env_file"
         log_info "Database already initialised — leaving its credentials alone"
         return 0
     fi
@@ -490,16 +516,28 @@ generate_application_secrets() {
     return 0
 }
 
+# The release directory reaches the settings through a link into /etc, and GNU cp
+# refuses to write through one whose target does not exist yet. Creating the
+# target first is also what makes a second run a no-op.
+create_settings_file_behind() {
+    local link=$1 target
+    [[ -L "$link" && ! -e "$link" ]] || return 0
+    target=$(readlink "$link")
+    install -d -m 750 "$(dirname "$target")"
+    install -m 600 /dev/null "$target"
+}
+
 step_configure() {
     log_step "Writing the configuration"
 
     local env_file="$INSTALL_DIR/.env"
+    create_settings_file_behind "$env_file"
 
-    if [[ -f "$env_file" ]]; then
+    if [[ -s "$env_file" ]]; then
         log_info "Keeping the existing .env"
     else
         [[ -f "$INSTALL_DIR/.env.example" ]] || die "No .env.example in ${INSTALL_DIR}."
-        cp "$INSTALL_DIR/.env.example" "$env_file"
+        cat "$INSTALL_DIR/.env.example" > "$env_file"
         log_info "Created .env from .env.example"
     fi
     chmod 600 "$env_file"
