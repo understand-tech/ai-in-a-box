@@ -269,10 +269,15 @@ preflight() {
         log_warn "Memory: $((ram_kb / 1024 / 1024)) GB — low, workers may be starved"
     fi
 
-    if command -v git >/dev/null 2>&1; then
+    # Only the checkout path needs git. A release the package manager put in
+    # place is never cloned, pulled or reset, so requiring git there would stop
+    # an install that has everything it needs.
+    if release_comes_from_the_package_manager; then
+        log_info "Release managed by the package — git not needed"
+    elif command -v git >/dev/null 2>&1; then
         log_info "git present"
     else
-        log_error "git is not installed."
+        log_error "git is not installed, and the release has to be cloned."
         blocking=1
     fi
 
@@ -537,7 +542,7 @@ step_configure() {
         log_info "Keeping the existing .env"
     else
         [[ -f "$INSTALL_DIR/.env.example" ]] || die "No .env.example in ${INSTALL_DIR}."
-        cat "$INSTALL_DIR/.env.example" > "$env_file"
+        cp "$INSTALL_DIR/.env.example" "$env_file"
         log_info "Created .env from .env.example"
     fi
     chmod 600 "$env_file"

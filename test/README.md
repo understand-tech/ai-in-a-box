@@ -6,6 +6,7 @@
 |---|---|
 | `capabilities.sh` | Checks what the deployment can do, one line per capability. Needs Docker; renders configurations and exercises the backup, starts no application service. |
 | `invariants.sh` | Checks the repository against ten invariants. No dependencies beyond bash and coreutils, runs in under a second. |
+| `fresh-install.sh` | Walks the installer from each state a machine is really found in, up to the image pull. Needs Docker; about two minutes. See [starting states](../docs/starting-states.md). |
 | `discrimination.sh` | Breaks each check on purpose, on a copy, and expects it to say so. A check that survives its own mutation is decoration. |
 | `migration.sh` | Asks what an upgrade does to an install that already runs, starting from the environment file the earlier version shipped. Needs Docker and the git history. |
 | `migration-on-data.sh` | Runs that upgrade on a real database and document tree, beside whatever else the machine runs. Manual, not in CI. |

@@ -26,6 +26,10 @@ jobs:
       - name: Capabilities
         run: ./test/capabilities.sh
 
+      # A release that cannot install on a bare machine must not be published.
+      - name: A fresh install, walked
+        run: ./test/fresh-install.sh
+
       - name: Build the package
         run: ./packaging/build-deb.sh "$VERSION"
 
