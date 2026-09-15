@@ -12,6 +12,41 @@ running the same command again.
   machine really is on a flat local network — see
   [certificates and DNS](certificates-and-dns.md).
 
+## Getting the release
+
+Two ways, and the difference is what verifies it.
+
+### From the package
+
+```bash
+sudo apt-get install ./understandtech_2026.09.1_all.deb
+```
+
+The package puts the release in `/usr/share/understandtech`, the tools in
+`/usr/bin`, and prepares `/etc/understandtech` — which it deliberately leaves
+empty, because what goes there is yours and an upgrade must never touch it.
+
+**A package carried in by hand is verified by nothing.** `dpkg` ships with
+`no-debsig`, so it installs a local file without checking any signature. Check
+it yourself first — no network needed:
+
+```bash
+./ut-verify understandtech_2026.09.1_all.deb
+```
+
+It refuses a package that was altered, signed by another key, or not signed at
+all. `./ut-verify --fingerprint` prints the key it carries, to compare with the
+fingerprint published out of band.
+
+An APT repository is coming, and it removes this step: APT verifies a signed
+index before downloading anything.
+
+### From a git checkout
+
+What a development machine does: `ut-install` clones the repository and updates
+it on request. Which path is in use is decided by where the release sits, so the
+two never collide.
+
 ## Check before you touch anything
 
 ```bash

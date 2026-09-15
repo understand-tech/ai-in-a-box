@@ -32,6 +32,8 @@ off the box.
 | `setup-autostart.sh` | Installs the systemd boot service, and the mDNS alias publisher on a `.local` domain only; `--check` validates domain/TLS settings |
 | `ut-logs-archive` | Automated daily log archival with compression and retention |
 | `ut-certificate` | Obtains and renews a publicly trusted certificate by DNS-01, so nothing has to be installed on user machines |
+| `ut-verify` | Checks a package's signature offline, for a machine with no network — `dpkg` verifies nothing on its own |
+| `packaging/build-deb.sh` | Builds the Debian package: release in `/usr/share`, settings in `/etc`, data in `/var/lib` |
 | `appbuilder/traefik/` | Static routing config for the App Builder's per-app router |
 | `docs/architecture.svg` | Source of the architecture diagram above |
 | `test/` | The checks, and what each one exists to catch — see `test/README.md` |

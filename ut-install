@@ -7,7 +7,9 @@ REPO_REF="${UT_REPO_REF:-main}"
 REGISTRY="${UT_REGISTRY:-ghcr.io}"
 REGISTRY_USER="${UT_REGISTRY_USER:-dgx-access}"
 
-INSTALL_DIR="${UT_INSTALL_DIR:-/opt/understandtech}"
+PACKAGE_SHARE_DIR="/usr/share/understandtech"
+CHECKOUT_INSTALL_DIR="/opt/understandtech"
+INSTALL_DIR="${UT_INSTALL_DIR:-}"
 DATA_DIR="/var/lib/understandtech"
 LOG_FILE="/var/log/ut-install.log"
 TARGET_USER="${SUDO_USER:-root}"
@@ -77,7 +79,9 @@ Options
                        Off by default so a support fix applied on the machine
                        is not silently discarded.
   --token-file PATH    Read the registry token from a file instead of a prompt.
-  --dir PATH           Install directory (default: /opt/understandtech).
+  --dir PATH           Install directory. Defaults to /usr/share/understandtech
+                       when installed from the package, /opt/understandtech
+                       otherwise.
   --domain NAME        Address the platform is served at. Asked for when it is
                        not given, offering the address this machine already
                        answers on, or understand.local on a first install.
@@ -166,6 +170,25 @@ appbuilder_enabled() {
 }
 
 checkout_exists() { [[ -d "$INSTALL_DIR/.git" ]]; }
+
+# The package owns /usr/share/understandtech: the release arrives and leaves with
+# apt, so there is nothing here to clone, pull or reset.
+release_comes_from_the_package_manager() {
+    [[ "$INSTALL_DIR" == "$PACKAGE_SHARE_DIR" && -f "$INSTALL_DIR/compose.yaml" ]]
+}
+
+running_from_the_package() {
+    [[ "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" == "/usr/bin" ]]
+}
+
+resolve_install_dir() {
+    [[ -n "$INSTALL_DIR" ]] && return 0
+    if running_from_the_package && [[ -f "$PACKAGE_SHARE_DIR/compose.yaml" ]]; then
+        INSTALL_DIR="$PACKAGE_SHARE_DIR"
+    else
+        INSTALL_DIR="$CHECKOUT_INSTALL_DIR"
+    fi
+}
 
 registry_credentials_stored() { grep -q "$REGISTRY" /root/.docker/config.json 2>/dev/null; }
 
@@ -262,8 +285,10 @@ preflight() {
     log_info "System ready"
 }
 
+release_is_present() { checkout_exists || release_comes_from_the_package_manager; }
+
 token_required() {
-    checkout_exists && registry_credentials_stored && return 1
+    release_is_present && registry_credentials_stored && return 1
     return 0
 }
 
@@ -388,6 +413,12 @@ assert_token_absent_from_git_config() {
 
 step_fetch_repo() {
     log_step "Fetching the deployment files"
+
+    if release_comes_from_the_package_manager; then
+        log_info "Release installed by the package at ${INSTALL_DIR}"
+        log_info "Updates come from 'apt upgrade understandtech', not from here"
+        return 0
+    fi
 
     if checkout_exists; then
         if $DO_UPDATE; then
@@ -755,6 +786,7 @@ parse_arguments() {
 
 main() {
     parse_arguments "$@"
+    resolve_install_dir
 
     if [[ "$ACTION" == "check" ]]; then
         DOMAIN=$(domain_to_check)

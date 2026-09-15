@@ -29,8 +29,8 @@ fresh_copy() {
     mkdir -p "$COPY"
     ( cd "$REPO_ROOT" && tar -cf - .env.example compose.yaml compose.appbuilder.yaml \
         compose.compute.yaml compose.no-gpu.yaml Caddyfile caddy backup-files.sh \
-        setup-autostart.sh ut-logs-archive ut-install appbuilder docs \
-        README.md test 2>/dev/null ) | tar -xf - -C "$COPY" 2>/dev/null
+        setup-autostart.sh ut-logs-archive ut-install ut-certificate ut-verify appbuilder docs \
+        packaging README.md test .github 2>/dev/null ) | tar -xf - -C "$COPY" 2>/dev/null
 }
 
 # A check nobody has seen fail is a check nobody knows works. Each entry breaks
@@ -65,7 +65,9 @@ capability_discriminates() {
     local output
     output=$( cd "$COPY" && CAPABILITY_FILTER="$expected" OFFSITE_ENDPOINT="${OFFSITE_ENDPOINT:-}" ./test/capabilities.sh 2>&1 )
 
-    if grep -q "✘ $expected" <<< "$output"; then
+    # The filter matches anywhere in a capability's description, so the failing
+    # line is found the same way rather than assuming the filter starts it.
+    if grep '✘' <<< "$output" | grep -qF "$expected"; then
         printf '  %s✔%s %s\n' "$GREEN" "$NC" "$description"
         PASSED=$((PASSED + 1))
     else
@@ -173,6 +175,60 @@ if grep -q 'read_domain' "$REPO_ROOT/ut-install"; then
             "answering nothing at the prompt keeps what the machine already answers on" \
             "sed -i.bak 's|^    suggested=\"\${current:-\$FALLBACK_DOMAIN}\"$|    suggested=\"\$FALLBACK_DOMAIN\"|' ut-install"
     fi
+fi
+
+if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
+    capability_discriminates "a command left out of the package" \
+        "the release installs as a package" \
+        "sed -i.bak 's|install -m 755 \"\$REPO_ROOT/ut-install\" \"\$root/usr/bin/\"|true|' packaging/build-deb.sh"
+
+    capability_discriminates "the settings directory left world-readable" \
+        "the settings directory is prepared" \
+        "sed -i.bak 's|install -d -m 750 /etc/understandtech|install -d -m 755 /etc/understandtech|' packaging/build-deb.sh"
+
+    capability_discriminates "the settings unreachable from the project directory" \
+        "the settings are read from where the release lives" \
+        "sed -i.bak 's|ln -s \"/\$CONFIG_DIR/.env\" \"\$root/\$SHARE_DIR/.env\"|true|' packaging/build-deb.sh"
+
+    capability_discriminates "an upgrade that empties the customer's settings" \
+        "an upgrade replaces the release and keeps the settings" \
+        "sed -i.bak 's|    install -d -m 750 /etc/understandtech|    install -d -m 750 /etc/understandtech\n    : > /etc/understandtech/.env|' packaging/build-deb.sh"
+
+    capability_discriminates "a removal that takes the settings and the data with it" \
+        "removing the package leaves the settings and the data behind" \
+        "sed -i.bak 's|^# /etc/understandtech and /var/lib/understandtech are deliberately left behind:|rm -rf /etc/understandtech /var/lib/understandtech|' packaging/build-deb.sh"
+
+    capability_discriminates "the installed command cloning over its own release" \
+        "installed from the package, it clones nothing" \
+        "sed -i.bak 's|        INSTALL_DIR=\"\$PACKAGE_SHARE_DIR\"|        INSTALL_DIR=\"\$CHECKOUT_INSTALL_DIR\"|' ut-install"
+
+    capability_discriminates "the registry token asked for on every run" \
+        "a registry login already stored is not asked for a second time" \
+        "sed -i.bak 's|^release_is_present() { checkout_exists .. release_comes_from_the_package_manager; }|release_is_present() { checkout_exists; }|' ut-install"
+
+    capability_discriminates "a dependency nobody calls" \
+        "every dependency it declares" \
+        "sed -i.bak 's|^Depends: openssl|Depends: curl, openssl|' packaging/build-deb.sh"
+fi
+
+if [[ -x "$REPO_ROOT/ut-verify" ]]; then
+    capability_discriminates "a verification that refuses what the release signed" \
+        "a package the release signed is accepted" \
+        "sed -i.bak 's|-signature \"\$signature\"|-signature /dev/null|' ut-verify"
+
+    capability_discriminates "a verification that accepts anything" \
+        "not signed at all is refused" \
+        "sed -i.bak 's|^    if openssl dgst .*; then$|    if true; then|' ut-verify"
+
+    capability_discriminates "a shipped key that is not the signing key" \
+        "the key ut-verify carries is the key the release is signed with" \
+        "openssl ecparam -name prime256v1 -genkey -noout -out /tmp/other-\$\$.pem 2>/dev/null && openssl ec -in /tmp/other-\$\$.pem -pubout -out packaging/release.pub 2>/dev/null"
+fi
+
+if [[ -d "$REPO_ROOT/.github/workflows" ]]; then
+    capability_discriminates "a workflow GitHub cannot read" \
+        "every workflow is one GitHub can read" \
+        "printf 'NOT_INDENTED\n' >> .github/workflows/release.yml"
 fi
 
 # This one has its own lever rather than a mutation: the check builds its

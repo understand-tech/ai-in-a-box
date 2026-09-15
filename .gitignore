@@ -3,3 +3,6 @@
 # Operator-supplied certificates (UT_INGRESS_MODE="custom")
 caddy/certs/*
 !caddy/certs/.gitkeep
+
+# Built packages
+dist/
