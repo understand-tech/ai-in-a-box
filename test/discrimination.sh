@@ -117,6 +117,26 @@ discriminates "a documented path that does not exist" \
     "missing-documented-path:nowhere.yaml" \
     "printf '\nSee \`nowhere.yaml\` for details.\n' >> README.md"
 
+install_walk_discriminates() {
+    local description=$1 expected=$2 mutation=$3
+    fresh_copy
+    ( cd "$COPY" && eval "$mutation" ) >/dev/null 2>&1
+    find "$COPY" -name '*.bak' -delete 2>/dev/null
+
+    local output
+    output=$( cd "$COPY" && PROPERTY_FILTER="$expected" ./test/fresh-install.sh 2>&1 )
+
+    if grep '✘' <<< "$output" | grep -qF "$expected"; then
+        printf '  %s✔%s %s\n' "$GREEN" "$NC" "$description"
+        PASSED=$((PASSED + 1))
+    else
+        printf '  %s✘%s %s\n' "$RED" "$NC" "$description"
+        printf '%s      "%s" was expected to fail and did not%s\n' "$DIM" "$expected" "$NC"
+        FAILED=$((FAILED + 1))
+        FAILURES+=("$description")
+    fi
+}
+
 printf '\n%sCapabilities, seen failing%s\n\n' "$BOLD" "$NC"
 
 capability_discriminates "the authority removed from the stack" \
@@ -239,6 +259,30 @@ OFFSITE_ENDPOINT=nowhere-at-all \
 capability_discriminates "a backup destination that does not answer" \
     "backups can leave the machine" \
     "true"
+
+if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
+    printf '\n%sA fresh install, seen failing%s\n\n' "$BOLD" "$NC"
+
+    install_walk_discriminates "writing through a link whose directory is gone" \
+        "it is recreated rather than reported as a broken link" \
+        "sed -i.bak 's|^    create_settings_file_behind \"\$env_file\"$|    :|' ut-install"
+
+    install_walk_discriminates "an empty settings file kept as if configured" \
+        "and the result still renders" \
+        "sed -i.bak 's|^    if \[\[ -s \"\$env_file\" \]\]; then$|    if [[ -f \"\$env_file\" ]]; then|' ut-install"
+
+    install_walk_discriminates "a required variable nobody generates" \
+        "every variable the stack requires has a value" \
+        "sed -i.bak 's| CA_PASSWORD GPU_VM_API_TOKEN)| CA_PASSWORD)|' ut-install"
+
+    install_walk_discriminates "a database nobody has the password for, accepted" \
+        "the install stops, and says which volume" \
+        "sed -i.bak 's|^    ! is_shipped_placeholder .*MONGODB_PASSWORD.*$|    true|' ut-install"
+
+    install_walk_discriminates "two machines given the same secret" \
+        "two installs do not share a secret" \
+        "sed -i.bak 's|^random_alphanumeric() {$|random_alphanumeric() { printf %s the-same-everywhere; return 0;|' ut-install"
+fi
 
 printf '\n%s%d discriminate%s' "$GREEN" "$PASSED" "$NC"
 if (( FAILED )); then
