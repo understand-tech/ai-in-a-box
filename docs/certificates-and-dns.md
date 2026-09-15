@@ -66,11 +66,33 @@ UT_APPS_KEY_FILE="/etc/caddy/certs/apps-privkey.pem"
 ```
 
 **Renewal is yours.** Nothing on the appliance watches the expiry date. Replace
-the files and restart Caddy:
+the files and **restart** Caddy:
 
 ```bash
 docker compose restart caddy
 ```
+
+**A reload is not enough, and this is the trap.** Caddy keeps the certificate
+it loaded in memory. `caddy reload` re-reads the configuration and reports
+success — but the file path has not changed, so it does not read the file
+again.
+
+Measured on Caddy 2 with a certificate replaced on disk:
+
+| | Certificate served |
+|---|---|
+| At startup | the first one |
+| After replacing the files | the first one — nothing happens |
+| After `caddy reload`, acknowledged | the first one — still |
+| After `docker compose restart caddy` | the new one |
+
+So a renewal that ends with a reload leaves the appliance serving the expired
+certificate, with nothing saying so until a browser refuses it.
+
+This is not held by a check. One was written and removed: it passed locally and
+failed on CI for reasons that took longer to chase than the behaviour is likely
+to change. If a future Caddy picks the file up on reload, this table is what
+goes out of date.
 
 A missing or unreadable file stops Caddy from starting rather than degrading
 quietly — `caddy validate` reads the certificates for real, and it is also the
