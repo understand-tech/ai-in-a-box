@@ -220,6 +220,16 @@ a_replaced_certificate_needs_a_restart() {
         docker run --rm --network "$net" "$CURL_IMAGE" -skv --max-time 8 \
             https://probe.test/ 2>&1 | grep -oE 'CN=[a-z0-9.-]+' | head -1
     }
+    # Polled rather than slept on: a runner that has to pull the images first
+    # takes far longer than any fixed wait worth writing.
+    wait_until_serving() {
+        local want=$1 attempt
+        for attempt in $(seq 1 20); do
+            [[ "$(served_name)" == "$want" ]] && return 0
+            sleep 3
+        done
+        return 1
+    }
 
     printf '{\n    auto_https disable_redirects\n}\nhttps://probe.test {\n    tls /certs/fullchain.pem /certs/privkey.pem\n    respond "served" 200\n}\n' \
         > "$work/Caddyfile"
@@ -229,18 +239,16 @@ a_replaced_certificate_needs_a_restart() {
     docker run -d --name "$proxy" --network "$net" --network-alias probe.test \
         -v "$work/Caddyfile":/etc/caddy/Caddyfile:ro -v "$work/certs":/certs:ro \
         "$CADDY_IMAGE" >/dev/null 2>&1
-    sleep 8
 
     local verdict=1
-    if [[ "$(served_name)" == "CN=alpha.test" ]]; then
+    if wait_until_serving "CN=alpha.test"; then
         make_certificate bravo.test
         docker exec "$proxy" caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1
         sleep 5
         served=$(served_name)
         if [[ "$served" == "CN=alpha.test" ]]; then
             docker restart "$proxy" >/dev/null 2>&1
-            sleep 8
-            [[ "$(served_name)" == "CN=bravo.test" ]] && verdict=0 \
+            wait_until_serving "CN=bravo.test" && verdict=0 \
                 || echo "a restart did not pick the new certificate up either"
         else
             echo "a reload picked it up — the renewal procedure can be simplified"
