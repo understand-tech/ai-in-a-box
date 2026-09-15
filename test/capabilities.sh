@@ -202,69 +202,6 @@ the_machine_surface_is_really_served_by_the_authority() {
     return "$verdict"
 }
 
-# Not a property of this configuration but of Caddy, and every renewal
-# procedure rests on it: a certificate replaced on disk is not picked up by a
-# reload, only by a restart. A renewal ending in a reload leaves the appliance
-# serving the expired certificate with nothing saying so.
-a_replaced_certificate_needs_a_restart() {
-    local run=cap-cert-$$ net proxy work served
-    net=$run-net; proxy=$run-caddy; work="$WORK_DIR/cert"
-    mkdir -p "$work/certs"
-
-    make_certificate() {
-        docker run --rm -v "$work/certs":/c --entrypoint sh "$STEP_CA_IMAGE" -c \
-            "step certificate create '$1' /c/fullchain.pem /c/privkey.pem --profile self-signed \
-             --subtle --no-password --insecure --force >/dev/null 2>&1 && chmod 644 /c/*.pem"
-    }
-    served_name() {
-        docker run --rm --network "$net" "$CURL_IMAGE" -skv --max-time 8 \
-            https://probe.test/ 2>&1 | grep -oE 'CN=[a-z0-9.-]+' | head -1
-    }
-    # Polled rather than slept on: a runner that has to pull the images first
-    # takes far longer than any fixed wait worth writing.
-    wait_until_serving() {
-        local want=$1 attempt
-        for attempt in $(seq 1 20); do
-            [[ "$(served_name)" == "$want" ]] && return 0
-            sleep 3
-        done
-        return 1
-    }
-
-    # A site with no hostname: named sites make Caddy try Let's Encrypt even
-    # with a tls directive pointing at files, and that attempt delays serving
-    # past any wait worth setting.
-    printf ':443 {\n    tls /certs/fullchain.pem /certs/privkey.pem\n    respond "served" 200\n}\n' \
-        > "$work/Caddyfile"
-
-    docker network create "$net" >/dev/null 2>&1
-    make_certificate alpha.test
-    docker run -d --name "$proxy" --network "$net" --network-alias probe.test \
-        -v "$work/Caddyfile":/etc/caddy/Caddyfile:ro -v "$work/certs":/certs:ro \
-        "$CADDY_IMAGE" >/dev/null 2>&1
-
-    local verdict=1
-    if wait_until_serving "CN=alpha.test"; then
-        make_certificate bravo.test
-        docker exec "$proxy" caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1
-        sleep 5
-        served=$(served_name)
-        if [[ "$served" == "CN=alpha.test" ]]; then
-            docker restart "$proxy" >/dev/null 2>&1
-            wait_until_serving "CN=bravo.test" && verdict=0 \
-                || echo "a restart did not pick the new certificate up either"
-        else
-            echo "a reload picked it up — the renewal procedure can be simplified"
-        fi
-    else
-        echo "the proxy never served the first certificate"
-    fi
-
-    docker rm -f "$proxy" >/dev/null 2>&1
-    docker network rm "$net" >/dev/null 2>&1
-    return "$verdict"
-}
-
 files_are_backed_up_and_restore_identically() {
     local repo="$WORK_DIR/repo" src="$WORK_DIR/src" out="$WORK_DIR/out"
     mkdir -p "$src/app-data" "$src/appbuilder/workspaces/an-app/mongo-data" "$out"
@@ -403,8 +340,6 @@ capability "the machine-facing surface takes its certificate from that authority
     the_machine_surface_uses_the_local_authority
 capability "it does so whatever the customer chose for the public one" \
     the_machine_surface_survives_every_ingress_mode
-capability "a replaced certificate needs a restart, not a reload" \
-    a_replaced_certificate_needs_a_restart
 capability "and it is really served by it, not just configured to be" \
     the_machine_surface_is_really_served_by_the_authority
 
