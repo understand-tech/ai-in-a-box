@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+# The public half of the release signing key. Short enough to compare by eye
+# against the fingerprint published out of band, which is the point: this script
+# is the trust anchor of an offline install, so it has to be readable in full
+# before it is run.
+RELEASE_PUBLIC_KEY='-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEIeeiLHqWayycgLe6biw7lXXcdsMO
+62Aggan6cqsWHSgzZiJavGHBySYn+I1uzEOn8paEHBZkBtNO4gUDVhv3Sw==
+-----END PUBLIC KEY-----'
+
+if [[ -t 1 ]]; then
+    RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; BOLD=$'\033[1m'; NC=$'\033[0m'
+else
+    RED=""; GREEN=""; BOLD=""; NC=""
+fi
+
+usage() {
+    cat <<'EOF'
+ut-verify — checks that a package really comes from UnderstandTech.
+
+  ./ut-verify understandtech_2026.09.1_all.deb
+
+Expects the signature beside it, named after the package with .sig appended.
+Needs nothing but openssl, and no network: this is the check for an install
+that has neither.
+
+  ./ut-verify --fingerprint    print the signing key's fingerprint
+
+Installing from the APT repository does not need this. APT checks a signed
+index before downloading anything. This is for a package carried in by hand,
+which dpkg installs without verifying anything at all.
+EOF
+}
+
+fail() { printf '%s[fail]%s %s\n' "$RED" "$NC" "$*" >&2; exit 1; }
+
+key_file() {
+    local file
+    file=$(mktemp)
+    printf '%s\n' "$RELEASE_PUBLIC_KEY" > "$file"
+    printf '%s' "$file"
+}
+
+print_fingerprint() {
+    local key; key=$(key_file)
+    printf 'SHA256: %s\n' \
+        "$(openssl pkey -pubin -in "$key" -outform DER | openssl dgst -sha256 -r | cut -d' ' -f1)"
+    rm -f "$key"
+}
+
+verify() {
+    local package=$1 signature="${1}.sig" key
+
+    [[ -f "$package" ]]   || fail "No such package: ${package}"
+    [[ -f "$signature" ]] || fail "No signature beside it: ${signature}"
+    command -v openssl >/dev/null 2>&1 || fail "openssl is required"
+
+    key=$(key_file)
+    if openssl dgst -sha256 -verify "$key" -signature "$signature" "$package" >/dev/null 2>&1; then
+        rm -f "$key"
+        printf '%s[ ok ]%s %s\n' "$GREEN" "$NC" "$(basename "$package") is signed by UnderstandTech"
+        printf '      %sInstall it:%s sudo apt-get install ./%s\n' "$BOLD" "$NC" "$(basename "$package")"
+        return 0
+    fi
+    rm -f "$key"
+    fail "$(basename "$package") is NOT signed by this key — do not install it"
+}
+
+main() {
+    case "${1:-}" in
+        ""|-h|--help)  usage; [[ -z "${1:-}" ]] && exit 1 || exit 0 ;;
+        --fingerprint) print_fingerprint ;;
+        *)             verify "$1" ;;
+    esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

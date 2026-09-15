@@ -14,6 +14,8 @@
 | `known-issues.txt` | Problems that already exist and are accepted for now, with the reason next to each. |
 | `allowed-ports.txt` | Ports intentionally published on every interface. |
 | `answer-a-prompt.py` | Drives an interactive prompt from a pseudo-terminal, so the install questions are exercised rather than assumed. |
+| `../packaging/build-deb.sh` | Builds the Debian package the checks below install, upgrade and remove. |
+| `../ut-verify` | Checks a package's signature offline. Its own key is checked against `packaging/release.pub`. |
 
 ## Where they run
 
@@ -60,6 +62,21 @@ Name resolution
   ✔ the address typed at the prompt is the one it takes
   ✔ answering nothing at the prompt keeps what the machine already answers on
 
+Distribution
+  ✔ the release installs as a package, in its own place
+  ✔ the settings directory is prepared, and the package puts nothing in it
+  ✔ the settings are read from where the release lives
+  ✔ an upgrade replaces the release and keeps the settings
+  ✔ installed from the package, it clones nothing and uses what is there
+  ✔ removing the package leaves the settings and the data behind
+  ✔ a registry login already stored is not asked for a second time
+  ✔ every dependency it declares is one the shipped tools really call
+
+Offline verification
+  ✔ a package the release signed is accepted
+  ✔ one that was altered, signed by another key, or not signed at all is refused
+  ✔ the key ut-verify carries is the key the release is signed with
+
 Backward compatibility
   ✔ an untouched install keeps its container, volume, network and data names
 
@@ -74,7 +91,7 @@ Backup
   ✔ a missing backup is visible, and recovers when one appears
   ✔ backups can leave the machine, and come back from where they went
 
-27 verified
+38 verified
 ```
 
 The list grows with the branch, not with the file: each block is guarded by the
@@ -179,10 +196,33 @@ Capabilities, seen failing
   ✔ the preflight resolving the fallback instead
   ✔ the typed answer discarded
   ✔ the prompt offering the fallback over the configured address
+  ✔ a command left out of the package
+  ✔ the settings directory left world-readable
+  ✔ the settings unreachable from the project directory
+  ✔ an upgrade that empties the customer's settings
+  ✔ a removal that takes the settings and the data with it
+  ✔ the installed command cloning over its own release
+  ✔ the registry token asked for on every run
+  ✔ a dependency nobody calls
+  ✔ a verification that refuses what the release signed
+  ✔ a verification that accepts anything
+  ✔ a shipped key that is not the signing key
   ✔ a backup destination that does not answer
 
-22 discriminate
+33 discriminate
 ```
+
+**The harness is held to the same rule as what it checks.** Three defects in
+these checks were caught by running the breaking direction, and each one looked
+green: `capability_discriminates` matched `✘ <filter>` as a prefix, so a filter
+falling mid-description reported a working check as decoration; the workflow
+check read zero files, because that image runs `yq` as its entrypoint and a bare
+`sh -c` arrived as arguments to it; and a missing directory reached the check as
+an empty mount, which reads as nothing to complain about.
+
+All three failed in the safe direction — they under-reported. That is the
+argument for the rule: a check nobody has watched fail is a check nobody knows
+works, and the ones written today are no exception.
 
 **Both directions, every time.** A capability that only proves the new path
 works says nothing about the one it replaced: the mDNS entries above break the
@@ -203,8 +243,10 @@ here is a function nobody has watched work.
 
 `capabilities.sh` takes `CAPABILITY_FILTER` to run one line instead of all of
 them — the harness breaks one thing at a time, and re-running all
-twenty-seven capabilities per mutation took five minutes where it now takes
-seventeen seconds.
+thirty-eight capabilities per mutation took five minutes where it now takes
+seventeen seconds. The seven packaging lines share one container for the same
+reason: building, installing, upgrading and purging costs about twenty seconds,
+and asking it seven times costs seven times that for the same answers.
 
 Two checks are not mutated here and say so: `unpinned-image` and
 `queue-eviction` are both in the baseline, so they already report on the

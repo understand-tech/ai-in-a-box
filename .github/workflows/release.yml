@@ -1,0 +1,72 @@
+name: release
+run-name: Release ${{ github.ref_name }}
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the version from the tag
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      # A release that fails its own checks is worse than no release: it is
+      # installed before anyone notices.
+      - name: Repository invariants
+        run: ./test/invariants.sh
+
+      - name: Capabilities
+        run: ./test/capabilities.sh
+
+      - name: Build the package
+        run: ./packaging/build-deb.sh "$VERSION"
+
+      - name: Sign it
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          [ -n "$RELEASE_SIGNING_KEY" ] || {
+            echo "::error::RELEASE_SIGNING_KEY is not set — nothing would verify this release"
+            exit 1
+          }
+          key=$(mktemp)
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$RELEASE_SIGNING_KEY" > "$key"
+          deb="dist/understandtech_${VERSION}_all.deb"
+          openssl dgst -sha256 -sign "$key" -out "${deb}.sig" "$deb"
+
+      # Proves the secret matches the public key shipped in ut-verify. Without
+      # this step a mismatched key produces a signature nobody can check, and
+      # the failure only shows up on a customer's offline machine.
+      - name: Verify what was just signed
+        run: ./ut-verify "dist/understandtech_${VERSION}_all.deb"
+
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cp ut-verify packaging/release.pub dist/
+          ( cd dist && sha256sum understandtech_*.deb understandtech_*.deb.sig ut-verify release.pub > SHA256SUMS )
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sed "s/VERSION/${VERSION}/g" packaging/release-notes.md > dist/notes.md
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$VERSION" \
+            --notes-file dist/notes.md \
+            dist/understandtech_"$VERSION"_all.deb \
+            dist/understandtech_"$VERSION"_all.deb.sig \
+            dist/ut-verify \
+            dist/release.pub \
+            dist/SHA256SUMS

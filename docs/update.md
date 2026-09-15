@@ -18,6 +18,24 @@ An archive you have not verified is not a backup. See
 
 ## 2 · Update
 
+### Installed from the package
+
+```bash
+sudo apt-get install --only-upgrade understandtech
+sudo ut-install
+```
+
+The upgrade replaces `/usr/share/understandtech` and **never touches
+`/etc/understandtech`**, so your settings and generated secrets survive it —
+they are not in the package, so there is nothing for it to overwrite. Data in
+`/var/lib/understandtech` is untouched, and stays behind even if the package is
+removed.
+
+`ut-install` then generates whatever new variables the release made mandatory,
+and restarts the stack.
+
+### Installed from a git checkout
+
 ```bash
 cd /opt/understandtech
 sudo ./ut-install --update

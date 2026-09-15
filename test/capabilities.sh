@@ -267,6 +267,253 @@ an_address_already_configured_is_kept() {
     return 1
 }
 
+write_package_probe() {
+    cat > "$WORK_DIR/package-probe.sh" <<'PROBE'
+set -u
+export OUT_DIR=/out
+/src/packaging/build-deb.sh 2026.09.1 >/dev/null
+/src/packaging/build-deb.sh 2026.09.2 >/dev/null
+
+say() { printf '%s=%s\n' "$1" "$2"; }
+present_dir()  { [ -d "$1" ] && echo present || echo gone; }
+present_file() { [ -f "$1" ] && echo present || echo gone; }
+
+dpkg -i --force-depends /out/understandtech_2026.09.1_all.deb >/dev/null 2>&1
+say INSTALLED_VERSION "$(dpkg-query -W -f='${Version}' understandtech 2>/dev/null)"
+say RELEASE_FILE      "$(present_file /usr/share/understandtech/compose.yaml)"
+say COMMAND           "$([ -x /usr/bin/ut-install ] && echo present || echo gone)"
+say CONFIG_DIR_MODE   "$(stat -c '%a' /etc/understandtech 2>/dev/null)"
+say DATA_DIR          "$(present_dir /var/lib/understandtech)"
+say SETTINGS_SHIPPED  "$(dpkg -L understandtech | grep -c '^/etc/understandtech/.' || true)"
+
+printf 'UT_DOMAIN="box.client.fr"\n' > /etc/understandtech/.env
+say READ_THROUGH_LINK "$(cat /usr/share/understandtech/.env 2>/dev/null || echo unreadable)"
+
+ask_the_installed_command() {
+    bash -c '
+        set +u
+        source /usr/bin/ut-install >/dev/null 2>&1
+        set +eE
+        trap - ERR
+        resolve_install_dir
+        printf "%s " "$INSTALL_DIR"
+        release_comes_from_the_package_manager && printf "skipped" || printf "clones"
+    '
+}
+say INSTALL_DIR_AND_FETCH "$(ask_the_installed_command)"
+
+mkdir -p /root/.docker
+printf '{"auths":{"ghcr.io":{}}}\n' > /root/.docker/config.json
+say TOKEN_ASKED_AGAIN "$(bash -c '
+    set +u
+    source /usr/bin/ut-install >/dev/null 2>&1
+    set +eE
+    trap - ERR
+    resolve_install_dir
+    token_required && echo yes || echo no
+')"
+
+mkdir -p /var/lib/understandtech/app-data
+echo document > /var/lib/understandtech/app-data/one
+
+dpkg -i --force-depends /out/understandtech_2026.09.2_all.deb >/dev/null 2>&1
+say UPGRADED_VERSION       "$(dpkg-query -W -f='${Version}' understandtech 2>/dev/null)"
+say SETTINGS_AFTER_UPGRADE "$(cat /etc/understandtech/.env 2>/dev/null || echo gone)"
+say RELEASE_AFTER_UPGRADE  "$(present_file /usr/share/understandtech/compose.yaml)"
+
+dpkg --purge --force-depends understandtech >/dev/null 2>&1
+say RELEASE_AFTER_PURGE  "$(present_dir /usr/share/understandtech)"
+say SETTINGS_AFTER_PURGE "$(present_file /etc/understandtech/.env)"
+say DATA_AFTER_PURGE     "$(present_file /var/lib/understandtech/app-data/one)"
+PROBE
+}
+
+# One container answers every question below: building, installing, upgrading
+# and purging costs about twenty seconds, and asking it four times costs four
+# times that for the same answers.
+package_lifecycle_report() {
+    local cached="$WORK_DIR/package-lifecycle.txt"
+    if [[ ! -s "$cached" ]]; then
+        write_package_probe
+        mkdir -p "$WORK_DIR/pkg"
+        docker run --rm \
+            -v "$REPO_ROOT":/src:ro \
+            -v "$WORK_DIR/pkg":/out \
+            -v "$WORK_DIR/package-probe.sh":/probe.sh:ro \
+            debian:12-slim bash /probe.sh > "$cached" 2>&1
+    fi
+    cat "$cached"
+}
+
+reports() {
+    local key=$1 expected=$2 report
+    report=$(package_lifecycle_report)
+    if grep -qx "${key}=${expected}" <<< "$report"; then
+        return 0
+    fi
+    echo "expected ${key}=${expected}, report was:"
+    echo "$report"
+    return 1
+}
+
+the_release_installs_to_its_own_place() {
+    reports RELEASE_FILE present \
+        && reports COMMAND present \
+        && reports INSTALLED_VERSION 2026.09.1
+}
+
+the_settings_directory_is_prepared_but_never_filled() {
+    reports CONFIG_DIR_MODE 750 && reports SETTINGS_SHIPPED 0
+}
+
+the_settings_are_read_from_where_the_release_lives() {
+    reports READ_THROUGH_LINK 'UT_DOMAIN="box.client.fr"'
+}
+
+an_upgrade_replaces_the_release_and_keeps_the_settings() {
+    reports UPGRADED_VERSION 2026.09.2 \
+        && reports RELEASE_AFTER_UPGRADE present \
+        && reports SETTINGS_AFTER_UPGRADE 'UT_DOMAIN="box.client.fr"'
+}
+
+the_installed_command_takes_the_release_that_is_there() {
+    reports INSTALL_DIR_AND_FETCH '/usr/share/understandtech skipped'
+}
+
+a_registry_login_already_stored_is_not_asked_for_again() {
+    reports TOKEN_ASKED_AGAIN no
+}
+
+removing_the_package_leaves_the_settings_and_the_data() {
+    reports RELEASE_AFTER_PURGE gone \
+        && reports SETTINGS_AFTER_PURGE present \
+        && reports DATA_AFTER_PURGE present
+}
+
+# A dependency nobody calls is a package installed on the customer's machine for
+# nothing; one that is called without a guard and not declared is an install
+# that fails on a machine missing it.
+shipped_commands() {
+    printf '%s\n' "$REPO_ROOT/ut-install" "$REPO_ROOT/ut-certificate" \
+        "$REPO_ROOT/ut-logs-archive" "$REPO_ROOT/setup-autostart.sh" \
+        "$REPO_ROOT/backup-files.sh"
+}
+
+declared_dependencies() {
+    grep -m1 '^Depends:' "$REPO_ROOT/packaging/build-deb.sh" \
+        | sed 's/^Depends: //' | tr ',' '\n' | tr -d ' ' | grep -v '^$'
+}
+
+every_declared_dependency_is_really_used() {
+    local dependency unused=()
+    while IFS= read -r dependency; do
+        [[ -n "$dependency" ]] || continue
+        grep -qhE "(^|[^-[:alnum:]])${dependency}[[:space:]]" $(shipped_commands) \
+            || unused+=("$dependency")
+    done < <(declared_dependencies)
+    (( ${#unused[@]} == 0 )) && return 0
+    echo "declared but never called: ${unused[*]}"
+    return 1
+}
+
+# ut-verify is the trust anchor of an offline install, so the key it carries and
+# the key the release is signed with have to be the same one — and a signature
+# is only worth what it refuses.
+signature_verdicts() {
+    local work="$WORK_DIR/signing"
+    mkdir -p "$work"
+    if [[ ! -s "$work/verdicts.txt" ]]; then
+        openssl ecparam -name prime256v1 -genkey -noout -out "$work/release.key" 2>/dev/null
+        openssl ec -in "$work/release.key" -pubout -out "$work/release.pub" 2>/dev/null
+        openssl ecparam -name prime256v1 -genkey -noout -out "$work/other.key" 2>/dev/null
+
+        # ut-verify carries its key in a variable, so the probe swaps in one it
+        # holds the private half of, and signs with that half.
+        python3 - "$REPO_ROOT/ut-verify" "$work/release.pub" "$work/ut-verify" <<'SWAP'
+import pathlib, re, sys
+original, pub, out = (pathlib.Path(a) for a in sys.argv[1:4])
+text = original.read_text()
+swapped = re.sub(r"RELEASE_PUBLIC_KEY='[^']*'",
+                 "RELEASE_PUBLIC_KEY='" + pub.read_text().strip() + "'", text, count=1)
+out.write_text(swapped)
+SWAP
+        chmod +x "$work/ut-verify"
+
+        head -c 200000 /dev/urandom > "$work/package.deb"
+        openssl dgst -sha256 -sign "$work/release.key" -out "$work/package.deb.sig" "$work/package.deb"
+
+        {
+            printf 'SIGNED_BY_THE_RELEASE_KEY=%s\n' \
+                "$("$work/ut-verify" "$work/package.deb" >/dev/null 2>&1 && echo accepted || echo refused)"
+
+            cp "$work/package.deb" "$work/tampered.deb"
+            printf 'x' >> "$work/tampered.deb"
+            cp "$work/package.deb.sig" "$work/tampered.deb.sig"
+            printf 'TAMPERED_PACKAGE=%s\n' \
+                "$("$work/ut-verify" "$work/tampered.deb" >/dev/null 2>&1 && echo accepted || echo refused)"
+
+            cp "$work/package.deb" "$work/foreign.deb"
+            openssl dgst -sha256 -sign "$work/other.key" -out "$work/foreign.deb.sig" "$work/foreign.deb"
+            printf 'SIGNED_BY_ANOTHER_KEY=%s\n' \
+                "$("$work/ut-verify" "$work/foreign.deb" >/dev/null 2>&1 && echo accepted || echo refused)"
+
+            cp "$work/package.deb" "$work/unsigned.deb"
+            printf 'NO_SIGNATURE_AT_ALL=%s\n' \
+                "$("$work/ut-verify" "$work/unsigned.deb" >/dev/null 2>&1 && echo accepted || echo refused)"
+        } > "$work/verdicts.txt"
+    fi
+    cat "$work/verdicts.txt"
+}
+
+verdict_is() {
+    local key=$1 expected=$2 verdicts
+    verdicts=$(signature_verdicts)
+    grep -qx "${key}=${expected}" <<< "$verdicts" && return 0
+    echo "expected ${key}=${expected}, verdicts were:"; echo "$verdicts"; return 1
+}
+
+a_package_the_release_signed_is_accepted() {
+    verdict_is SIGNED_BY_THE_RELEASE_KEY accepted
+}
+
+a_package_nobody_signed_is_refused() {
+    verdict_is TAMPERED_PACKAGE refused \
+        && verdict_is SIGNED_BY_ANOTHER_KEY refused \
+        && verdict_is NO_SIGNATURE_AT_ALL refused
+}
+
+the_shipped_key_is_the_one_the_release_is_signed_with() {
+    local embedded versioned
+    embedded=$("$REPO_ROOT/ut-verify" --fingerprint)
+    versioned="SHA256: $(openssl pkey -pubin -in "$REPO_ROOT/packaging/release.pub" -outform DER 2>/dev/null \
+        | openssl dgst -sha256 -r | cut -d' ' -f1)"
+    [[ "$embedded" == "$versioned" ]] && return 0
+    echo "ut-verify carries ${embedded}, packaging/release.pub is ${versioned}"
+    return 1
+}
+
+# GitHub reports an unparseable workflow after the push that broke it, on the
+# run that was supposed to do the work.
+every_workflow_parses() {
+    local verdict read_count
+    # --entrypoint: this image runs yq, so a bare "sh -c" would arrive as
+    # arguments to yq and read nothing at all.
+    verdict=$(docker run --rm --entrypoint sh \
+        -v "$REPO_ROOT/.github/workflows":/w:ro mikefarah/yq:4 \
+        -c 'n=0; for f in /w/*.yml; do [ -f "$f" ] || continue; n=$((n+1));
+            yq eval "." "$f" >/dev/null 2>&1 || echo "broken:$f"; done; echo "count:$n"')
+
+    if grep -q '^broken:' <<< "$verdict"; then
+        echo "$verdict"; return 1
+    fi
+    # A missing directory is one docker creates empty, and a check that reads
+    # nothing passes without reading anything.
+    read_count=$(sed -n 's/^count://p' <<< "$verdict")
+    [[ "${read_count:-0}" -ge 1 ]] && return 0
+    echo "no workflow was read — verdict was: ${verdict:-<empty>}"
+    return 1
+}
+
 names_are_unchanged_by_default() {
     local rendered
     rendered=$(compose_config -f compose.yaml)
@@ -574,6 +821,41 @@ if [[ -x "$REPO_ROOT/ut-install" ]]; then
         capability "answering nothing at the prompt keeps what the machine already answers on" \
             an_empty_answer_keeps_the_configured_address
     fi
+fi
+
+if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
+    group "Distribution"
+    capability "the release installs as a package, in its own place" \
+        the_release_installs_to_its_own_place
+    capability "the settings directory is prepared, and the package puts nothing in it" \
+        the_settings_directory_is_prepared_but_never_filled
+    capability "the settings are read from where the release lives" \
+        the_settings_are_read_from_where_the_release_lives
+    capability "an upgrade replaces the release and keeps the settings" \
+        an_upgrade_replaces_the_release_and_keeps_the_settings
+    capability "installed from the package, it clones nothing and uses what is there" \
+        the_installed_command_takes_the_release_that_is_there
+    capability "a registry login already stored is not asked for a second time" \
+        a_registry_login_already_stored_is_not_asked_for_again
+    capability "removing the package leaves the settings and the data behind" \
+        removing_the_package_leaves_the_settings_and_the_data
+    capability "every dependency it declares is one the shipped tools really call" \
+        every_declared_dependency_is_really_used
+fi
+
+if [[ -x "$REPO_ROOT/ut-verify" ]]; then
+    group "Offline verification"
+    capability "a package the release signed is accepted" \
+        a_package_the_release_signed_is_accepted
+    capability "one that was altered, signed by another key, or not signed at all is refused" \
+        a_package_nobody_signed_is_refused
+    capability "the key ut-verify carries is the key the release is signed with" \
+        the_shipped_key_is_the_one_the_release_is_signed_with
+fi
+
+if [[ -d "$REPO_ROOT/.github/workflows" ]]; then
+    capability "every workflow is one GitHub can read" \
+        every_workflow_parses
 fi
 
 group "Backward compatibility"
