@@ -1,0 +1,32 @@
+# Mode "edge" — TLS is terminated upstream, by a reverse proxy or a load
+# balancer that holds the certificate.
+#
+# Caddy then serves plain HTTP. UT_CADDY_SCHEME="http" is what decides that,
+# by prefixing every site address in the Caddyfile: a site on http:// gets no
+# certificate and no 80-to-443 redirect.
+#
+# `auto_https off` does not replace that prefix. With a bare site address Caddy
+# still listens on :443 only, and the load balancer knocking on :80 finds
+# nobody home.
+#
+# trusted_proxies is what makes Caddy honour the upstream's X-Forwarded-*
+# headers. Without it the applications see "X-Forwarded-Proto: http" and build
+# absolute URLs on http, which breaks the OIDC round trip. Narrow
+# UT_TRUSTED_PROXIES to the network the proxy speaks from: the private_ranges
+# default lets any machine on the LAN spoof its source address.
+
+{
+    servers {
+        trusted_proxies static {$UT_TRUSTED_PROXIES:private_ranges}
+        client_ip_headers X-Forwarded-For
+    }
+}
+
+# No tls directive: the certificate lives upstream, and Caddy rejects a `tls`
+# on a site served over http://.
+
+(tls) {
+}
+
+(tls_apps) {
+}

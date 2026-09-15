@@ -1,0 +1,34 @@
+groups:
+  - name: llm-saturation
+    rules:
+      # THE "hang" detector: any sustained queue means every new request is
+      # waiting behind long-context work. This fires well before users notice.
+      - alert: LLMRequestsQueueing
+        expr: vllm:num_requests_waiting > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }}: requests queueing for 2m+"
+          description: >
+            {{ $value }} request(s) waiting on {{ $labels.service }} —
+            capacity saturated (long contexts or too many concurrent
+            sessions). New requests will look 'hung' to clients.
+
+      - alert: LLMKVCachePressure
+        expr: vllm:kv_cache_usage_perc > 0.90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }}: KV cache > 90% for 5m"
+          description: "Preemption/recompute thrash imminent; check context sizes."
+
+      - alert: LLMTargetDown
+        expr: up{job="vllm"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.service }} metrics endpoint down"
+          description: "Engine unreachable — actual outage, not saturation."

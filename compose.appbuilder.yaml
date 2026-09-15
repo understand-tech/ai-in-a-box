@@ -27,9 +27,12 @@ services:
       SESSION_COOKIE_SECURE: ${APP_BUILDER_SESSION_COOKIE_SECURE:-1}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       UNDERSTAND_APP_URL: ${APP_BUILDER_UT_API_URL:-http://api:8501}
-      UNDERSTAND_FRONTEND_URL: ${VITE_UT_APP_URL:-https://understand.local}
-      ADMIN_DASHBOARD_URL: ${APP_BUILDER_ADMIN_URL:-https://admin.understand.local}
-      APPBUILDER_BASE_URL: ${APP_BUILDER_BASE_URL:-https://builder.understand.local}
+      # Derived from UT_DOMAIN / UT_PUBLIC_SCHEME as in compose.yaml, but
+      # spelled out: compose.yaml's YAML anchors do not cross the file
+      # boundary.
+      UNDERSTAND_FRONTEND_URL: ${VITE_UT_APP_URL:-${UT_PUBLIC_SCHEME:-https}://${UT_DOMAIN:-understand.local}}
+      ADMIN_DASHBOARD_URL: ${APP_BUILDER_ADMIN_URL:-${UT_PUBLIC_SCHEME:-https}://admin.${UT_DOMAIN:-understand.local}}
+      APPBUILDER_BASE_URL: ${APP_BUILDER_BASE_URL:-${UT_PUBLIC_SCHEME:-https}://builder.${UT_DOMAIN:-understand.local}}
       UNDERSTAND_API_URL: ${APP_BUILDER_UT_V3_URL:-http://ut-api-v3}
       API_V3_OPENAPI_URL: ${APP_BUILDER_UT_CUSTOMER_URL:-http://api-customer:8501}/api/v3/openapi.json
       UT_GATEWAY_BASE_URL: ${APP_BUILDER_GATEWAY_URL:-http://api-customer:8501/api/llm}
@@ -48,7 +51,10 @@ services:
       REPO_ROOT_HOST: /var/lib/understandtech/appbuilder
       WORKSPACES_DIR: /var/lib/understandtech/appbuilder/workspaces
       TRAEFIK_DYNAMIC_DIR: /var/lib/understandtech/appbuilder/traefik-dynamic
-      PREVIEW_DOMAIN_SUFFIX: ${APP_BUILDER_PREVIEW_SUFFIX:-apps.understand.local}
+      # Suffix for generated apps. Changing it later does not rename the apps
+      # already built: their traefik files still carry the old hostname until
+      # they are redeployed from the App Builder.
+      PREVIEW_DOMAIN_SUFFIX: ${APP_BUILDER_PREVIEW_SUFFIX:-apps.${UT_DOMAIN:-understand.local}}
       TRAEFIK_URL: http://app-builder-traefik:80
       ORCHESTRATOR_INTERNAL_URL: http://app-builder:8001
       ORCHESTRATOR_TRAEFIK_SERVICE: builder-api
