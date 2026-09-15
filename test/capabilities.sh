@@ -231,7 +231,10 @@ a_replaced_certificate_needs_a_restart() {
         return 1
     }
 
-    printf '{\n    auto_https disable_redirects\n}\nhttps://probe.test {\n    tls /certs/fullchain.pem /certs/privkey.pem\n    respond "served" 200\n}\n' \
+    # A site with no hostname: named sites make Caddy try Let's Encrypt even
+    # with a tls directive pointing at files, and that attempt delays serving
+    # past any wait worth setting.
+    printf ':443 {\n    tls /certs/fullchain.pem /certs/privkey.pem\n    respond "served" 200\n}\n' \
         > "$work/Caddyfile"
 
     docker network create "$net" >/dev/null 2>&1
