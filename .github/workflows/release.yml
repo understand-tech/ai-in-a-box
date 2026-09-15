@@ -62,9 +62,16 @@ jobs:
         run: |
           set -euo pipefail
           sed "s/VERSION/${VERSION}/g" packaging/release-notes.md > dist/notes.md
+
+          # A version carrying a suffix — 2026.09.0-rc1 — is a candidate, and
+          # marking it keeps it off the repository page as the one to install.
+          prerelease=()
+          case "$VERSION" in *-*) prerelease=(--prerelease) ;; esac
+
           gh release create "$GITHUB_REF_NAME" \
             --title "$VERSION" \
             --notes-file dist/notes.md \
+            "${prerelease[@]}" \
             dist/understandtech_"$VERSION"_all.deb \
             dist/understandtech_"$VERSION"_all.deb.sig \
             dist/ut-verify \
