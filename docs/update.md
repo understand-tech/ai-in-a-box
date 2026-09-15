@@ -30,6 +30,12 @@ not disappear silently.
 The installer then does what it always does — and that is the point. It **adds
 what is missing** rather than failing on it.
 
+It asks for the address again, and offers the one the machine already answers
+on. Answering nothing keeps it. An unattended update — no terminal to ask on —
+keeps it without asking. Passing `--domain` is what changes it, and changing it
+is a move, not an update: see
+[changing the address later](certificates-and-dns.md#changing-the-address-later).
+
 ## What an update adds to an existing `.env`
 
 New versions make variables mandatory. An `.env` written before them does not

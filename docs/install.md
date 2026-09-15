@@ -37,6 +37,21 @@ It will ask for the registry token, or read it from `--token-file`, or take it
 from `UT_REGISTRY_TOKEN`. It is never passed on a command line and never written
 to the log.
 
+**Leave `--domain` out and it asks.** On a first install, answering nothing
+takes `understand.local`, which resolves over mDNS on one flat network and
+nowhere else, and which no public authority will certify — so every machine that
+uses the appliance then has to install its root by hand. An unattended install
+with no terminal to ask on takes the same fallback and says so in the log.
+
+On a machine that is already configured it offers the address that machine
+answers on, and answering nothing keeps it. Re-running the installer never
+changes the address by itself.
+
+A real domain is what removes that, and it also decides what the installer sets
+up: the mDNS publisher is installed only for a `.local` address. On your own
+domain nothing is published here and Avahi is not needed — the six names come
+from your zone.
+
 What it does, in order: fetches the repository, writes `.env`, **generates every
 secret**, checks the address resolves, prepares the certificate authority
 directory, creates the App Builder network, pulls the images, starts the stack,
@@ -78,7 +93,7 @@ signed by an authority only this machine knows. That is expected — see
 |---|---|
 | `--check` | Before anything. Changes nothing. |
 | `--dir PATH` | Install somewhere other than `/opt/understandtech`. |
-| `--domain NAME` | The address the platform answers on. |
+| `--domain NAME` | The address the platform answers on. Asked for when omitted. |
 | `--token-file PATH` | Read the registry token from a file instead of a prompt. |
 | `--skip-pull` | Images are already on the machine — an air-gapped install. |
 | `--no-autostart` | Do not install the boot service. |

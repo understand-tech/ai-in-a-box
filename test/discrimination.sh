@@ -133,6 +133,48 @@ capability_discriminates "a resource left unprefixed" \
     "overriding the prefixes isolates every resource" \
     "sed -i.bak 's|name: \${RESOURCE_PREFIX:-ut}-redis-data|name: ut-redis-data|' compose.yaml"
 
+if grep -q 'mdns_applies' "$REPO_ROOT/setup-autostart.sh"; then
+    capability_discriminates "the mDNS publisher installed on a real domain" \
+        "a real domain installs no mDNS publisher" \
+        "sed -i.bak 's|^    if ! mdns_applies; then|    if false; then|' setup-autostart.sh"
+
+    capability_discriminates "the mDNS publisher skipped on a .local domain" \
+        "a .local domain still publishes its names over mDNS" \
+        "sed -i.bak 's|^    if ! mdns_applies; then|    if true; then|' setup-autostart.sh"
+
+    capability_discriminates "a stale publisher left enabled after the move" \
+        "moving off .local withdraws a publisher installed earlier" \
+        "sed -i.bak 's|^        withdraw_mdns_publisher$|        :|' setup-autostart.sh"
+fi
+
+if grep -q 'read_domain' "$REPO_ROOT/ut-install"; then
+    capability_discriminates "the address defaulted silently again" \
+        "an unattended install falls back to the mDNS name" \
+        "sed -i.bak 's|^DOMAIN=\"\${UT_DOMAIN:-}\"|DOMAIN=\"\${UT_DOMAIN:-understand.local}\"|' ut-install"
+
+    capability_discriminates "the address given up front overwritten by the fallback" \
+        "an address given up front is taken as it is" \
+        "sed -i.bak 's|^    \[\[ -n \"\$DOMAIN\" \]\] \&\& return 0$|    :|' ut-install"
+
+    capability_discriminates "the address already on the machine ignored" \
+        "an address the machine already answers on is never replaced" \
+        "sed -i.bak 's|^    suggested=\"\${current:-\$FALLBACK_DOMAIN}\"$|    suggested=\"\$FALLBACK_DOMAIN\"|' ut-install"
+
+    capability_discriminates "the preflight resolving the fallback instead" \
+        "the preflight resolves the address in use" \
+        "sed -i.bak 's#candidate=\$(configured_domain)#candidate=\"\"#' ut-install"
+
+    if command -v python3 >/dev/null 2>&1; then
+        capability_discriminates "the typed answer discarded" \
+            "the address typed at the prompt is the one it takes" \
+            "sed -i.bak 's|^    DOMAIN=\"\${answer:-\$suggested}\"$|    DOMAIN=\"\$suggested\"|' ut-install"
+
+        capability_discriminates "the prompt offering the fallback over the configured address" \
+            "answering nothing at the prompt keeps what the machine already answers on" \
+            "sed -i.bak 's|^    suggested=\"\${current:-\$FALLBACK_DOMAIN}\"$|    suggested=\"\$FALLBACK_DOMAIN\"|' ut-install"
+    fi
+fi
+
 # This one has its own lever rather than a mutation: the check builds its
 # destination, so breaking it means pointing it elsewhere. Sending a backup to
 # somewhere that does not answer is also the failure an operator will actually

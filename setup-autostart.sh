@@ -4,7 +4,9 @@
 # Installs two systemd units:
 #   understandtech.service  - brings the compose stack up on boot
 #   ut-mdns-alias.service   - publishes the .local names over mDNS, all of them
-#                             derived from UT_DOMAIN in .env
+#                             derived from UT_DOMAIN in .env. Installed only
+#                             when UT_DOMAIN ends in .local; on a real domain
+#                             the names come from the operator's own DNS.
 #
 # It does not pull images, create stack resources, or start anything. Deploy
 # the stack the normal way (docker compose pull && docker compose up -d); this
@@ -12,7 +14,7 @@
 #
 # Usage: sudo ./setup-autostart.sh [OPTIONS]
 #   --install     Install and enable both units (default)
-#   --mdns        Install only the mDNS aliases (satellite + generated apps)
+#   --mdns        Install only the mDNS aliases, on a .local domain only
 #   --check       Check the domain / TLS / proxy settings, changing nothing
 #   --uninstall   Remove the units
 #   --status      Show unit status
@@ -384,7 +386,32 @@ DEFAULTS_EOF
     fi
 }
 
+# mDNS answers for .local and nothing else (RFC 6762).
+mdns_applies() {
+    local domain
+    domain="$(env_value UT_DOMAIN)"; domain="${domain:-understand.local}"
+    [[ "$domain" == *.local ]]
+}
+
+withdraw_mdns_publisher() {
+    systemctl is-enabled --quiet "$MDNS_SERVICE_NAME" 2>/dev/null || return 0
+    if systemctl disable --now "$MDNS_SERVICE_NAME" >/dev/null 2>&1; then
+        log_info "Disabled $MDNS_SERVICE_NAME — it published names this box no longer answers on"
+    else
+        log_warn "Could not disable $MDNS_SERVICE_NAME — it will keep stopping itself at boot"
+    fi
+}
+
 install_mdns_alias() {
+    if ! mdns_applies; then
+        local domain; domain="$(env_value UT_DOMAIN)"
+        log_step "Skipping the mDNS publisher"
+        log_info "$domain is outside .local — its names come from your own DNS,"
+        log_info "so nothing is published here and Avahi is not needed."
+        withdraw_mdns_publisher
+        return 0
+    fi
+
     log_step "Installing mDNS alias publisher..."
 
     install_mdns_defaults
@@ -654,23 +681,6 @@ SYSTEMD_EOF
     scheme="$(env_value UT_PUBLIC_SCHEME)"; scheme="${scheme:-https}"
 
     echo ""
-    if [[ "$domain" != *.local ]]; then
-        # The publisher stops itself with exit 10 in this case; say so here
-        # rather than leaving the operator to read journalctl to find out why
-        # nothing was published.
-        log_info "UT_DOMAIN=\"$domain\" is outside .local — mDNS does not apply and nothing was published."
-        echo ""
-        echo -e "${GREEN}Create these records in your own DNS, pointing at this box (or at the"
-        echo -e "load balancer in front of it):${NC}"
-        echo "  $domain"
-        echo "  llms.$domain"
-        echo "  assistants.$domain"
-        echo "  admin.$domain"
-        echo "  builder.$domain          (App Builder, if installed)"
-        echo "  *.apps.$domain           (one per generated app)"
-        return 0
-    fi
-
     echo -e "${GREEN}Published names:${NC}"
     echo "  $scheme://$domain"
     echo "  $scheme://llms.$domain"
@@ -879,12 +889,12 @@ show_help() {
     echo ""
     echo "Usage: sudo $0 [OPTION]"
     echo ""
-    echo "Installs the boot service and the mDNS alias publisher. It does not"
-    echo "pull images or start the stack."
+    echo "Installs the boot service, and the mDNS alias publisher when UT_DOMAIN"
+    echo "ends in .local. It does not pull images or start the stack."
     echo ""
     echo "Options:"
-    echo "  --install     Install and enable both units (default)"
-    echo "  --mdns        Install only the mDNS aliases (satellite apps + generated apps)"
+    echo "  --install     Install and enable the units (default)"
+    echo "  --mdns        Install only the mDNS aliases, on a .local domain only"
     echo "  --check       Check the domain / TLS / proxy settings without changing anything"
     echo "  --uninstall   Remove both units"
     echo "  --status      Show unit and container status"

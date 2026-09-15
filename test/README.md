@@ -13,6 +13,7 @@
 | `database-restore.sh` | Proves a backup archive restores, end to end. Nightly. |
 | `known-issues.txt` | Problems that already exist and are accepted for now, with the reason next to each. |
 | `allowed-ports.txt` | Ports intentionally published on every interface. |
+| `answer-a-prompt.py` | Drives an interactive prompt from a pseudo-terminal, so the install questions are exercised rather than assumed. |
 
 ## Where they run
 
@@ -37,6 +38,28 @@ Deployment topologies
   ✔ the App Builder overlay renders on top of it
   ✔ the control-plane role leaves out the inference engines
 
+Machine identity
+  ✔ the appliance runs its own certificate authority
+  ✔ its root sits where the file backup looks
+  ✔ the machine-facing surface takes its certificate from that authority
+  ✔ it does so whatever the customer chose for the public one
+
+Public certificate
+  ✔ a name no authority can certify is refused before anything is asked
+  ✔ an incomplete configuration is named, with every hostname it would request
+  ✔ and it is really served by it, not just configured to be
+
+Name resolution
+  ✔ a real domain installs no mDNS publisher and asks for no Avahi
+  ✔ a .local domain still publishes its names over mDNS
+  ✔ moving off .local withdraws a publisher installed earlier
+  ✔ an address given up front is taken as it is
+  ✔ an unattended install falls back to the mDNS name, and says so
+  ✔ an address the machine already answers on is never replaced by the fallback
+  ✔ the preflight resolves the address in use, not the fallback
+  ✔ the address typed at the prompt is the one it takes
+  ✔ answering nothing at the prompt keeps what the machine already answers on
+
 Backward compatibility
   ✔ an untouched install keeps its container, volume, network and data names
 
@@ -49,13 +72,15 @@ Multi-machine roles
 Backup
   ✔ files are backed up and restore identically
   ✔ a missing backup is visible, and recovers when one appears
+  ✔ backups can leave the machine, and come back from where they went
 
-10 verified
+27 verified
 ```
 
 The list grows with the branch, not with the file: each block is guarded by the
-overlay it needs, so a branch without `compose.compute.yaml` prints four
-capabilities instead of ten rather than failing.
+overlay, script or interpreter it needs, so a branch without
+`compose.compute.yaml` prints fewer capabilities rather than failing, and the
+two that drive a prompt are skipped where there is no `python3`.
 
 That list is the point. Each line is a capability the product is expected to
 have, checked on every push — so the output doubles as the specification, and a
@@ -145,18 +170,41 @@ Capabilities, seen failing
   ✔ the authority root moved out of the backed-up path
   ✔ the machine surface pointed at something else
   ✔ a resource left unprefixed
+  ✔ the mDNS publisher installed on a real domain
+  ✔ the mDNS publisher skipped on a .local domain
+  ✔ a stale publisher left enabled after the move
+  ✔ the address defaulted silently again
+  ✔ the address given up front overwritten by the fallback
+  ✔ the address already on the machine ignored
+  ✔ the preflight resolving the fallback instead
+  ✔ the typed answer discarded
+  ✔ the prompt offering the fallback over the configured address
   ✔ a backup destination that does not answer
 
-13 discriminate
+22 discriminate
 ```
+
+**Both directions, every time.** A capability that only proves the new path
+works says nothing about the one it replaced: the mDNS entries above break the
+guard open and closed, and the address entries break the fallback in each
+direction, because a guard that never fires and a guard that always fires are
+both wrong and only one of them is obvious.
+
+**The install questions are driven, not assumed.** `answer-a-prompt.py` opens a
+pseudo-terminal, types an answer and reads back what the installer decided. It
+earned its place immediately: the first run showed that a terminal on stdin does
+not imply a controlling terminal, so `/dev/tty` could not be opened, the prompt
+was lost and the address silently fell back — the exact defect the prompt was
+written to remove. The pty it creates is deliberately not a controlling
+terminal, which is what keeps that case covered.
 
 **Add the mutation with the check.** A new `check_*` function without an entry
 here is a function nobody has watched work.
 
 `capabilities.sh` takes `CAPABILITY_FILTER` to run one line instead of all of
-them — the harness breaks one thing at a time, and re-running sixteen
-capabilities per mutation took five minutes where it now takes seventeen
-seconds.
+them — the harness breaks one thing at a time, and re-running all
+twenty-seven capabilities per mutation took five minutes where it now takes
+seventeen seconds.
 
 Two checks are not mutated here and say so: `unpinned-image` and
 `queue-eviction` are both in the baseline, so they already report on the
@@ -224,7 +272,7 @@ Not implemented yet. Listed so the gap is visible rather than assumed covered.
 | `caddy adapt` | Either the domain is configurable or it is not | A broken interpolation: the six hostnames no longer match the real address |
 | `shellcheck` | Shell fails quietly | Unknown — it has never been run against these four scripts |
 | unit tests | Pure functions test without a machine | `env_set` does not recognise a commented-out variable and appends a duplicate |
-| stubbed installer | Idempotence is proven, not promised | A leaking token, a second run that is not a no-op, a missing terminal |
+| stubbed installer | Idempotence is proven, not promised | A leaking token, a second run that is not a no-op. The missing terminal is now covered: `read_domain` falls back and says so |
 | undocumented variable | A default nobody can find is not a setting | Preventive: `NIM_LLM_BIND_ADDRESS` decided whether a compute node was reachable and appeared in no `.env.example`; having a default, `undeclared-variable` stayed silent |
 | upgrade on real data | A rendered configuration is not a running one | Unknown — `migration.sh` proves what the configuration does, not what a database with 2.4 GB of documents does |
 

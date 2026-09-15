@@ -24,6 +24,17 @@ certificates.
 
 A single A record per name, pointing at the machine. Nothing else is required.
 
+`understand.local` is the exception, and the only one: mDNS answers for `.local`
+and nothing else, so on that address the appliance publishes the names itself
+through `ut-mdns-alias` and Avahi. That reaches one flat network segment, never
+crosses a router, and no public authority will ever certify it.
+
+**The installer follows the address.** Give it a `.local` name and it installs
+the mDNS publisher; give it anything else and it installs neither the publisher
+nor a dependency on Avahi, because the names are yours to publish. Changing
+`UT_DOMAIN` off `.local` later and re-running `setup-autostart.sh` disables the
+publisher that was installed before.
+
 ## Choosing how TLS is terminated
 
 `UT_INGRESS_MODE` has three values. Pick by what you have, not by what sounds
