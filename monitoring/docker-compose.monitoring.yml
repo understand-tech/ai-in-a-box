@@ -56,6 +56,13 @@ services:
     image: nvcr.io/nvidia/k8s/dcgm-exporter:3.3.7-3.5.0-ubuntu22.04
     container_name: ut-dcgm-exporter
     restart: unless-stopped
+    # Custom counter set: the default omits PROF (bandwidth/SM/tensor) and
+    # FB (VRAM) fields the dashboard's GPU deep-dive row needs. If a PROF
+    # field is unsupported on a given GPU, the exporter logs it and serves
+    # the rest — the panel just stays empty on that box.
+    command: ["-f", "/etc/dcgm-exporter/counters.csv"]
+    volumes:
+      - ./dcgm-counters.csv:/etc/dcgm-exporter/counters.csv:ro
     cap_add:
       - SYS_ADMIN
     ports:
@@ -69,6 +76,37 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+
+  node-exporter:
+    # Host CPU / memory / disk / filesystem. Multi-arch (arm64 OK).
+    image: prom/node-exporter:v1.8.2
+    container_name: ut-node-exporter
+    restart: unless-stopped
+    pid: host
+    command:
+      - --path.rootfs=/host
+    volumes:
+      - /:/host:ro,rslave
+    networks:
+      - ut-backend-network
+
+  cadvisor:
+    # Per-container CPU/mem + restart detection (container_start_time_seconds
+    # changes on every restart). Multi-arch (arm64 OK on v0.49+).
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: ut-cadvisor
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    networks:
+      - ut-backend-network
 
 networks:
   # The platform's networks, joined (not created) — names must match the
