@@ -185,8 +185,8 @@ archives. Losing that volume loses both. Set `BACKUP_FILES_REPOSITORY` to an S3
 or SFTP destination if the data matters more than the machine does; see
 [configuration](configuration.md#sending-backups-off-the-machine).
 
-**The database archives, wherever they go.** `restic` carries `DATA_ROOT`. The
-`mongodump` archives live in a Docker volume outside it, so an offsite
-destination protects the documents and the authority's root, not the database
-dumps. Restoring a database on a new machine means having copied an archive
-yourself.
+**The archive left behind on the machine.** `restic` carries the `mongodump`
+archives along with `DATA_ROOT`, so an offsite destination protects the database
+as well as the documents and the authority's root. It does not remove what it
+copied: **the archive stays readable, without a password**, in its volume for as
+long as `BACKUP_CLEANUP_TIME` keeps it — 30 days by default.

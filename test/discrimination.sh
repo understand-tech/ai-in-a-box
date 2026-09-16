@@ -260,6 +260,10 @@ capability_discriminates "a backup destination that does not answer" \
     "backups can leave the machine" \
     "true"
 
+capability_discriminates "the dumps looked for where they are not" \
+    "the database leaves with them" \
+    "sed -i.bak 's|BACKUP_DUMPS:-/backup|BACKUP_DUMPS:-/nowhere|' backup-files.sh"
+
 if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
     printf '\n%sA fresh install, seen failing%s\n\n' "$BOLD" "$NC"
 
