@@ -524,6 +524,12 @@ The builder is at `https://builder.understand.local`; each generated app gets
 their own compose projects and reach the builder's model proxy at
 `host.docker.internal:<port>` — docker DNS cannot get them there.
 
+Optionally, the builder can push each generated app's code to GitLab. It is off
+until the `APP_BUILDER_TOKEN_ENCRYPTION_KEY` (token flow) or the
+`APP_BUILDER_GITLAB_CLIENT_ID` / `_SECRET` pair (gitlab.com OAuth flow) are set
+in `.env`; see the comments there, and the setup guide at
+https://docs.understand.tech.
+
 ## Observability
 
 An optional Prometheus / Grafana / DCGM stack under `monitoring/`, there to answer
