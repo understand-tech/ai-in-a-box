@@ -53,8 +53,10 @@ services:
       # Two independent flows; each one hides itself when its variables are
       # empty, so an install that sets none of these keeps today's behaviour.
       # TOKEN_ENCRYPTION_KEY enables the personal-access-token flow (and
-      # encrypts every stored token); the three GITLAB_* values enable the
-      # one-click gitlab.com OAuth flow.
+      # encrypts every stored token); the client id and secret enable the
+      # one-click gitlab.com OAuth flow. The redirect URI follows UT_DOMAIN
+      # like APPBUILDER_BASE_URL above, and the host allowlist is optional,
+      # so neither ships in .env.example — both stay overridable here.
       TOKEN_ENCRYPTION_KEY: ${APP_BUILDER_TOKEN_ENCRYPTION_KEY:-}
       GITLAB_CLIENT_ID: ${APP_BUILDER_GITLAB_CLIENT_ID:-}
       GITLAB_CLIENT_SECRET: ${APP_BUILDER_GITLAB_CLIENT_SECRET:-}
