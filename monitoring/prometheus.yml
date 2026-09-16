@@ -21,6 +21,35 @@ scrape_configs:
     static_configs:
       - targets: ["dcgm-exporter:9400"]
 
+  # LLM gateway metrics (cap rejections, rate limits, per-key volume).
+  # Requires a ut-api image containing app/routers/llm_gateway/prom.py.
+  - job_name: gateway
+    static_configs:
+      - targets: ["ut-api:8501"]
+        labels: { service: ut-api }
+      - targets: ["ut-api-customer:8501"]
+        labels: { service: ut-api-customer }
+
+  # Host CPU / memory / disk.
+  - job_name: node
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  # Per-container stats + restart detection.
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
+
+  # Edge status codes (what users actually see). Requires the Caddyfile to
+  # enable metrics — add to its global options block:
+  #     {
+  #         servers { metrics }
+  #     }
+  # then `docker restart ut-caddy`. Until then this target shows as down.
+  - job_name: caddy
+    static_configs:
+      - targets: ["ut-caddy:2019"]
+
   - job_name: prometheus
     static_configs:
       - targets: ["localhost:9090"]
