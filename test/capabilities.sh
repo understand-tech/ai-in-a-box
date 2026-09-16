@@ -738,6 +738,66 @@ backups_reach_an_offsite_destination() {
     return "$verdict"
 }
 
+the_database_leaves_the_machine_with_the_files() {
+    local run=cap-dump-offsite-$$ net store bucket=appliance-dumps
+    local key=capability-key secret=capability-secret-value
+    local source="$WORK_DIR/dump-offsite/data" dumps="$WORK_DIR/dump-offsite/backup"
+    local restored="$WORK_DIR/dump-offsite/out"
+    local archive=mongo_ut-db_2026-09-16.archive.gz
+    net=$run-net; store=$run-store
+    mkdir -p "$source/app-data" "$dumps" "$restored"
+
+    echo "customer notes" > "$source/app-data/notes.txt"
+    head -c 50000 /dev/urandom > "$dumps/$archive"
+
+    docker network create "$net" >/dev/null 2>&1
+    docker run -d --name "$store" --network "$net" \
+        -e MINIO_ROOT_USER="$key" -e MINIO_ROOT_PASSWORD="$secret" \
+        "$OBJECT_STORE_IMAGE" server /data >/dev/null 2>&1
+
+    local attempt ready=1
+    for attempt in $(seq 1 20); do
+        if docker run --rm --network "$net" "$CURL_IMAGE" \
+            -sf -m 5 "http://${OFFSITE_ENDPOINT:-$store}:9000/minio/health/live" >/dev/null 2>&1; then
+            ready=0; break
+        fi
+        sleep 2
+    done
+    if (( ready )); then
+        echo "the destination never answered"
+        docker rm -f "$store" >/dev/null 2>&1
+        docker network rm "$net" >/dev/null 2>&1
+        return 1
+    fi
+    docker exec "$store" mkdir -p "/data/$bucket" >/dev/null 2>&1
+
+    # The dump volume is mounted where the stack mounts it, so this exercises
+    # backup-files.sh as it runs on a box rather than a rearranged copy of it.
+    offsite_with_dumps() {
+        docker run --rm --network "$net" -v "$source":/data:ro -v "$dumps":/backup \
+            -v "$restored":/out \
+            -v "$REPO_ROOT/backup-files.sh":/usr/local/bin/backup-files:ro \
+            -e RESTIC_REPOSITORY="s3:http://${OFFSITE_ENDPOINT:-$store}:9000/$bucket" \
+            -e RESTIC_PASSWORD=capability-test \
+            -e AWS_ACCESS_KEY_ID="$key" -e AWS_SECRET_ACCESS_KEY="$secret" \
+            --entrypoint sh "$RESTIC_IMAGE" -c "timeout 90 $1"
+    }
+
+    local verdict=1
+    if offsite_with_dumps /usr/local/bin/backup-files >/dev/null 2>&1 \
+        && offsite_with_dumps "restic restore latest --target /out" >/dev/null 2>&1; then
+        [[ -f "$restored/backup/$archive" && -f "$restored/data/app-data/notes.txt" ]] && verdict=0
+    fi
+
+    if (( verdict )); then
+        echo "the database dump is not in what left the machine"
+    fi
+
+    docker rm -f "$store" >/dev/null 2>&1
+    docker network rm "$net" >/dev/null 2>&1
+    return "$verdict"
+}
+
 a_missing_backup_is_visible() {
     local dir="$WORK_DIR/hc" status
     mkdir -p "$dir"
@@ -886,6 +946,8 @@ if [[ -f "$REPO_ROOT/backup-files.sh" ]]; then
         a_missing_backup_is_visible
     capability "backups can leave the machine, and come back from where they went" \
         backups_reach_an_offsite_destination
+    capability "the database leaves with them, not only the files" \
+        the_database_leaves_the_machine_with_the_files
 fi
 
 printf '\n%s%d verified%s' "$GREEN" "$PASSED" "$NC"

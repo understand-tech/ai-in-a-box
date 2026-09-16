@@ -3,6 +3,7 @@
 set -eu
 
 SOURCE_DIR="${BACKUP_SOURCE:-/data}"
+DUMP_DIR="${BACKUP_DUMPS:-/backup}"
 KEEP_DAILY="${BACKUP_FILES_KEEP_DAILY:-7}"
 KEEP_WEEKLY="${BACKUP_FILES_KEEP_WEEKLY:-4}"
 KEEP_MONTHLY="${BACKUP_FILES_KEEP_MONTHLY:-6}"
@@ -19,8 +20,16 @@ restic snapshots >/dev/null 2>&1 || {
 # workspaces/*/mongo-data, so those are left out rather than backed up
 # unreliably — they need a dump each, which belongs with the decision on
 # whether the builder keeps generating containerised apps at all.
-log "backing up ${SOURCE_DIR}"
-restic backup "$SOURCE_DIR" \
+set -- "$SOURCE_DIR"
+if [ -d "$DUMP_DIR" ]; then
+    set -- "$@" "$DUMP_DIR"
+fi
+
+# The repository usually lives inside DUMP_DIR, so without this exclusion restic
+# would take a snapshot of itself, growing on every run.
+log "backing up $*"
+restic backup "$@" \
+    --exclude "$RESTIC_REPOSITORY" \
     --exclude '*/mongo-data' \
     --exclude '*/node_modules' \
     --tag files
