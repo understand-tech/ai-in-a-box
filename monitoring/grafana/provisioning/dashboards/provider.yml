@@ -1,0 +1,7 @@
+apiVersion: 1
+providers:
+  - name: ut-dashboards
+    folder: Understand Tech
+    type: file
+    options:
+      path: /var/lib/grafana/dashboards

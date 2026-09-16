@@ -3,7 +3,8 @@
 #
 # Installs two systemd units:
 #   understandtech.service  - brings the compose stack up on boot
-#   ut-mdns-alias.service   - publishes the .local names over mDNS
+#   ut-mdns-alias.service   - publishes the .local names over mDNS, all of them
+#                             derived from UT_DOMAIN in .env
 #
 # It does not pull images, create stack resources, or start anything. Deploy
 # the stack the normal way (docker compose pull && docker compose up -d); this
@@ -12,6 +13,7 @@
 # Usage: sudo ./setup-autostart.sh [OPTIONS]
 #   --install     Install and enable both units (default)
 #   --mdns        Install only the mDNS aliases (satellite + generated apps)
+#   --check       Check the domain / TLS / proxy settings, changing nothing
 #   --uninstall   Remove the units
 #   --status      Show unit status
 #   --dir PATH    Install directory (default: the directory holding this script)
@@ -105,6 +107,24 @@ compose() {
     ( cd "$INSTALL_DIR" && "$DOCKER_BIN" compose "$@" )
 }
 
+# Read one variable out of the install directory's .env. Deliberately not
+# `source`: compose keeps quoting that a shell strips, and .env holds a JSON
+# GATEWAY_MODELS value whose braces and quotes a shell would glob or execute.
+# Prints nothing when the file or the variable is absent, so callers apply
+# their own default.
+env_value() {
+    local var="$1" file="${2:-$INSTALL_DIR/.env}" raw
+    [[ -r "$file" ]] || return 0
+    raw="$(sed -n "s/^[[:space:]]*${var}[[:space:]]*=[[:space:]]*//p" "$file" | tail -n1)"
+    [[ -n "$raw" ]] || return 0
+    case "$raw" in
+        \"*) raw="${raw#\"}"; raw="${raw%%\"*}" ;;
+        \'*) raw="${raw#\'}"; raw="${raw%%\'*}" ;;
+        *)   raw="${raw%%[[:space:]#]*}" ;;
+    esac
+    printf '%s' "$raw"
+}
+
 check_prerequisites() {
     log_step "Checking prerequisites..."
 
@@ -138,9 +158,177 @@ check_prerequisites() {
             exit 1
         fi
         log_info "Prerequisites satisfied (install directory: $INSTALL_DIR)"
+
+        # Reported, not fatal: installing the units is still the right thing to
+        # do on a box whose ingress settings are not finished yet.
+        echo ""
+        if ! check_ingress; then
+            log_warn "Ingress configuration has errors — see above. The units install anyway;"
+            log_warn "fix them before 'docker compose up -d' or Caddy will not start."
+        fi
     else
         log_warn "No .env in $INSTALL_DIR yet — units installed anyway."
         log_warn "The stack will boot once you create it: cp .env.example .env"
+    fi
+}
+
+# The ingress settings interact in ways that neither `docker compose config`
+# nor `caddy validate` catches on its own:
+#   - a typo in UT_INGRESS_MODE leaves the bind-mount source missing, and
+#     docker silently creates a directory there instead of failing;
+#   - UT_INGRESS_MODE=edge with UT_CADDY_SCHEME=https adapts cleanly, then
+#     listens on :443 holding no certificate, so the load balancer's requests
+#     to :80 reach nothing at all;
+#   - a missing certificate file in custom mode stops Caddy from starting,
+#     because validating the config provisions the TLS app for real.
+# Catching these here means the operator finds out before the first `up`
+# rather than from a restart loop. Returns non-zero when something is wrong.
+check_ingress() {
+    local errors=0
+    local domain mode caddy_scheme public_scheme cert_dir
+
+    domain="$(env_value UT_DOMAIN)";               domain="${domain:-understand.local}"
+    mode="$(env_value UT_INGRESS_MODE)";           mode="${mode:-internal}"
+    caddy_scheme="$(env_value UT_CADDY_SCHEME)";   caddy_scheme="${caddy_scheme:-https}"
+    public_scheme="$(env_value UT_PUBLIC_SCHEME)"; public_scheme="${public_scheme:-https}"
+    cert_dir="$(env_value UT_CERT_DIR)";           cert_dir="${cert_dir:-$INSTALL_DIR/caddy/certs}"
+
+    log_step "Checking ingress configuration..."
+    echo "  UT_DOMAIN          $domain"
+    echo "  UT_INGRESS_MODE    $mode"
+    echo "  UT_CADDY_SCHEME    $caddy_scheme  (the scheme Caddy listens on)"
+    echo "  UT_PUBLIC_SCHEME   $public_scheme  (the scheme the apps advertise)"
+    echo ""
+
+    local fragment="$INSTALL_DIR/caddy/ingress-${mode}.caddy"
+    if [[ ! -f "$fragment" ]]; then
+        local available
+        available="$(cd "$INSTALL_DIR/caddy" 2>/dev/null && ls ingress-*.caddy 2>/dev/null \
+            | sed -e 's/^ingress-//' -e 's/\.caddy$//' | tr '\n' ' ')"
+        log_error "UT_INGRESS_MODE=\"$mode\" has no fragment at $fragment"
+        log_error "Available modes: ${available:-none found}"
+        errors=$((errors + 1))
+    fi
+
+    case "$mode" in
+        edge)
+            if [[ "$caddy_scheme" != http ]]; then
+                log_error "UT_INGRESS_MODE=\"edge\" requires UT_CADDY_SCHEME=\"http\" (it is \"$caddy_scheme\")."
+                log_error "On https Caddy listens on :443 expecting to hold the certificate itself,"
+                log_error "and the plain HTTP your proxy sends to :80 reaches nothing."
+                errors=$((errors + 1))
+            fi
+            if [[ -z "$(env_value UT_TRUSTED_PROXIES)" ]]; then
+                log_warn "UT_TRUSTED_PROXIES is unset, so every private range is trusted to set"
+                log_warn "X-Forwarded-*. Narrow it to the network your proxy speaks from."
+            fi
+            ;;
+        internal|custom)
+            if [[ "$caddy_scheme" != https ]]; then
+                log_error "UT_CADDY_SCHEME=\"$caddy_scheme\" only makes sense with UT_INGRESS_MODE=\"edge\"."
+                errors=$((errors + 1))
+            fi
+            ;;
+    esac
+
+    if [[ "$mode" == custom ]]; then
+        local cfile kfile cert key f
+        cfile="$(env_value UT_CERT_FILE)"; cfile="${cfile:-/etc/caddy/certs/fullchain.pem}"
+        kfile="$(env_value UT_KEY_FILE)";  kfile="${kfile:-/etc/caddy/certs/privkey.pem}"
+        # Those are paths inside the container, and UT_CERT_DIR is what gets
+        # mounted there — translate before looking for them on the host.
+        cert="${cfile/#\/etc\/caddy\/certs/$cert_dir}"
+        key="${kfile/#\/etc\/caddy\/certs/$cert_dir}"
+
+        for f in "$cert" "$key"; do
+            if [[ ! -r "$f" ]]; then
+                log_error "custom mode, but $f is missing or unreadable."
+                errors=$((errors + 1))
+            fi
+        done
+
+        # A certificate covering only the apex leaves the four satellite names
+        # on a mismatch every browser refuses, and that is easier to diagnose
+        # now than from a TLS error later.
+        if [[ -r "$cert" ]] && command -v openssl &>/dev/null; then
+            local sans h missing=()
+            sans="$(openssl x509 -noout -ext subjectAltName -in "$cert" 2>/dev/null | tr -d ' ')"
+            for h in "$domain" "llms.$domain" "assistants.$domain" "admin.$domain" "builder.$domain"; do
+                [[ "$sans" == *"DNS:$h"* || "$sans" == *"DNS:*.${h#*.}"* ]] || missing+=("$h")
+            done
+            (( ${#missing[@]} )) && log_warn "Certificate SANs do not cover: ${missing[*]}"
+            if [[ "$sans" != *"DNS:*.apps.$domain"* ]]; then
+                log_warn "No *.apps.$domain SAN — App Builder generated apps will fail TLS."
+                log_warn "Supply a second wildcard via UT_APPS_CERT_FILE / UT_APPS_KEY_FILE."
+            fi
+        fi
+    fi
+
+    if [[ "$domain" != *.local ]]; then
+        log_info "Outside .local: mDNS does not apply, so create these records in your own DNS,"
+        log_info "pointing at this box (or at the proxy in front of it):"
+        echo "    $domain  llms.$domain  assistants.$domain  admin.$domain  builder.$domain  *.apps.$domain"
+    fi
+
+    # The decisive check: adapt and provision the config with the very image
+    # the stack runs. Skipped rather than pulled when that image is not local,
+    # so an air-gapped box never stalls here.
+    local caddy_image
+    caddy_image="$(sed -n 's/^[[:space:]]*image:[[:space:]]*\(caddy:[^[:space:]]*\).*/\1/p' \
+        "$INSTALL_DIR/compose.yaml" 2>/dev/null | head -n1)"
+    if [[ -f "$fragment" && -n "$caddy_image" ]] && "$DOCKER_BIN" image inspect "$caddy_image" &>/dev/null; then
+        local -a args=(--rm
+            -v "$INSTALL_DIR/Caddyfile:/etc/caddy/Caddyfile:ro"
+            -v "$fragment:/etc/caddy/ingress.caddy:ro"
+            -e "UT_DOMAIN=$domain" -e "UT_CADDY_SCHEME=$caddy_scheme")
+        [[ -d "$cert_dir" ]] && args+=(-v "$cert_dir:/etc/caddy/certs:ro")
+        # Passed only when non-empty on purpose: Caddy applies a placeholder's
+        # default when the variable is absent, but a variable that is present
+        # and empty expands to nothing and breaks the directive.
+        local v
+        for v in UT_TRUSTED_PROXIES UT_CERT_FILE UT_KEY_FILE UT_APPS_CERT_FILE UT_APPS_KEY_FILE; do
+            local val; val="$(env_value "$v")"
+            [[ -n "$val" ]] && args+=(-e "$v=$val")
+        done
+
+        local out
+        if out="$("$DOCKER_BIN" run "${args[@]}" "$caddy_image" \
+                  caddy validate --config /etc/caddy/Caddyfile 2>&1)"; then
+            log_info "Caddy accepts the resulting configuration"
+        else
+            log_error "'caddy validate' rejects the resulting configuration:"
+            printf '%s\n' "$out" | grep -E '^Error|error' | head -3 | sed 's/^/    /'
+            errors=$((errors + 1))
+        fi
+    fi
+
+    (( errors == 0 ))
+}
+
+do_check() {
+    banner "UnderstandTech Ingress Check"
+
+    detect_docker
+
+    if [[ ! -f "$INSTALL_DIR/.env" ]]; then
+        log_error "No .env in $INSTALL_DIR — nothing to check yet."
+        echo "  cp .env.example .env"
+        exit 1
+    fi
+
+    if ! compose config -q; then
+        log_error "'docker compose config' failed — fix the errors above first"
+        exit 1
+    fi
+
+    echo ""
+    if check_ingress; then
+        echo ""
+        log_info "Ingress configuration looks consistent."
+    else
+        echo ""
+        log_error "Ingress configuration has errors — fix them before 'docker compose up -d'."
+        exit 1
     fi
 }
 
@@ -149,23 +337,48 @@ install_mdns_defaults() {
     # the next --mdns run. The helper itself is regenerated every time.
     if [[ -f "$MDNS_DEFAULTS" ]]; then
         log_info "Keeping existing $MDNS_DEFAULTS"
+
+        # A literal UT_MDNS_ALIASES predates domain derivation and wins over
+        # it, so it keeps publishing the names it was written with. Harmless
+        # until the operator moves the box to another domain, at which point
+        # the published names and UT_DOMAIN silently disagree.
+        local literal domain
+        literal="$(sed -n 's/^[[:space:]]*UT_MDNS_ALIASES[[:space:]]*=[[:space:]]*//p' "$MDNS_DEFAULTS" | tail -n1)"
+        domain="$(env_value UT_DOMAIN)"
+        if [[ -n "$literal" && -n "$domain" && "$literal" != *"$domain"* ]]; then
+            log_warn "$MDNS_DEFAULTS pins a literal UT_MDNS_ALIASES that does not mention"
+            log_warn "UT_DOMAIN=\"$domain\" — those names take precedence over derivation."
+            log_warn "Comment the UT_MDNS_ALIASES line out to publish names derived from UT_DOMAIN."
+        fi
         return 0
     fi
 
-    if write_file_atomic "$MDNS_DEFAULTS" 644 << 'DEFAULTS_EOF'
-# Extra mDNS names published for this appliance, space separated.
+    if {
+        cat << 'DEFAULTS_EOF'
+# mDNS publishing for this appliance.
+#
 # setup-autostart.sh creates this file once and never overwrites it, so edits
 # made here survive re-running the installer. Apply changes with:
 #   sudo systemctl restart ut-mdns-alias
-UT_MDNS_ALIASES="llms.understand.local assistants.understand.local admin.understand.local builder.understand.local"
 
-# Hostname suffix for App Builder generated apps. One name is published per
-# app; mDNS has no wildcards.
-UT_MDNS_APPS_SUFFIX="apps.understand.local"
+# Install directory, which is where UT_DOMAIN is read from .env. That variable
+# is the appliance's single source of truth for its name: every published
+# record below is derived from it.
+UT_INSTALL_DIR="@INSTALL_DIR@"
+
+# By default the names come from UT_DOMAIN: the apex, then llms. assistants.
+# admin. builder., plus one name per App Builder generated app. Uncomment to
+# pin a literal list instead — it will then stop following UT_DOMAIN.
+#UT_MDNS_ALIASES="llms.understand.local assistants.understand.local admin.understand.local builder.understand.local"
+
+# Hostname suffix for App Builder generated apps. Derived from UT_DOMAIN when
+# unset. One name is published per app; mDNS has no wildcards.
+#UT_MDNS_APPS_SUFFIX="apps.understand.local"
 
 # How often the generated-app list is rescanned, in seconds.
 UT_MDNS_SCAN_INTERVAL="10"
 DEFAULTS_EOF
+    } | sed -e "s|@INSTALL_DIR@|${INSTALL_DIR}|g" | write_file_atomic "$MDNS_DEFAULTS" 644
     then
         log_info "Defaults written: $MDNS_DEFAULTS"
     fi
@@ -180,36 +393,81 @@ install_mdns_alias() {
 
     if write_file_atomic "$MDNS_HELPER" 755 << 'HELPER_EOF'
 #!/bin/sh
-# Publish extra mDNS names for the satellite apps behind Caddy.
+# Publish the mDNS names of this appliance and its satellite apps behind Caddy.
 #
-# Avahi answers for this machine's own host name only, so a name one level
-# down like llms.understand.local needs a record of its own. Each name is
-# published as an A record pointing at this host's primary address; the
-# reverse (PTR) entry is skipped so the host's own reverse lookup is untouched.
+# Every name is derived from UT_DOMAIN in the install directory's .env, so a
+# second box on the same network only needs its own UT_DOMAIN. Avahi answers
+# for this machine's own host name only, so both the apex and a name one level
+# down like llms.<UT_DOMAIN> need a record of their own. Each is published as
+# an A record pointing at this host's primary address; the reverse (PTR) entry
+# is skipped so the host's own reverse lookup is untouched.
 #
 # The address is re-derived on every start, so when it changes we exit and let
 # systemd restart us — the restart is the republish.
 #
 # App Builder installs get one extra name per generated app. mDNS has no
-# wildcards, so *.apps.understand.local cannot resolve on its own — every
-# app hostname has to be announced individually. The App Builder writes one
+# wildcards, so *.apps.<UT_DOMAIN> cannot resolve on its own — every app
+# hostname has to be announced individually. The App Builder writes one
 # traefik file per app, which makes that directory the list of names to
 # publish: it is rescanned every SCAN_INTERVAL seconds, so a new app becomes
 # resolvable within that window and a deleted one stops resolving.
 set -eu
 
-# Defaults. Override them in /etc/default/ut-mdns-alias — this file is
-# regenerated by setup-autostart.sh, so edits to it do not survive.
-ALIASES="llms.understand.local assistants.understand.local admin.understand.local builder.understand.local"
-APPS_SUFFIX="apps.understand.local"
+# Configuration lives in /etc/default/ut-mdns-alias, which setup-autostart.sh
+# creates once and never overwrites — edits to it survive a reinstall. This
+# helper script is the part that gets regenerated.
+UT_INSTALL_DIR="/opt/understand-tech"
 SCAN_INTERVAL=10
 
 if [ -r /etc/default/ut-mdns-alias ]; then
     . /etc/default/ut-mdns-alias
-    ALIASES="${UT_MDNS_ALIASES:-$ALIASES}"
-    APPS_SUFFIX="${UT_MDNS_APPS_SUFFIX:-$APPS_SUFFIX}"
     SCAN_INTERVAL="${UT_MDNS_SCAN_INTERVAL:-$SCAN_INTERVAL}"
 fi
+
+# The appliance's name comes from UT_DOMAIN in the install directory's .env,
+# read rather than sourced: compose keeps quoting that a shell would strip,
+# and that file holds JSON a shell would try to glob or execute.
+env_value() {
+    [ -r "$UT_INSTALL_DIR/.env" ] || return 0
+    _raw="$(sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$UT_INSTALL_DIR/.env" | tail -n1)"
+    case "$_raw" in
+        '"'*) _raw="${_raw#\"}"; _raw="${_raw%%\"*}" ;;
+        "'"*) _raw="${_raw#\'}"; _raw="${_raw%%\'*}" ;;
+        *)    _raw="${_raw%%[[:space:]#]*}" ;;
+    esac
+    printf '%s' "$_raw"
+}
+
+DOMAIN="$(env_value UT_DOMAIN)"
+[ -n "$DOMAIN" ] || DOMAIN="understand.local"
+
+# mDNS answers for .local and nothing else (RFC 6762). On any other domain the
+# names come from the operator's own DNS and there is nothing to publish here.
+# Exit 10, which the unit treats as a definitive stop rather than a failure to
+# retry every five seconds forever.
+case "$DOMAIN" in
+    *.local) ;;
+    *)
+        echo "UT_DOMAIN=$DOMAIN is outside .local — mDNS does not apply, nothing to publish"
+        exit 10
+        ;;
+esac
+
+# A literal list in /etc/default/ut-mdns-alias wins, so a box that had one
+# before the domain became configurable keeps publishing exactly what it did.
+if [ -n "${UT_MDNS_ALIASES:-}" ]; then
+    ALIASES="$UT_MDNS_ALIASES"
+else
+    ALIASES="llms.$DOMAIN assistants.$DOMAIN admin.$DOMAIN builder.$DOMAIN"
+    # The apex used to resolve only because the box's host name happened to be
+    # the domain's first label: avahi publishes <hostname>.local by itself.
+    # Publishing it here is what makes UT_DOMAIN sufficient on its own — except
+    # when avahi already answers for that name, since two records for one name
+    # collide.
+    _host="$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo '')"
+    [ "$_host.local" = "$DOMAIN" ] || ALIASES="$DOMAIN $ALIASES"
+fi
+APPS_SUFFIX="${UT_MDNS_APPS_SUFFIX:-apps.$DOMAIN}"
 
 # Generated apps (App Builder add-on). A missing directory just means the
 # add-on is not installed, and the scan is a no-op.
@@ -343,6 +601,13 @@ Type=simple
 ExecStart=/usr/local/bin/ut-mdns-alias
 Restart=always
 RestartSec=5
+# The publisher exits 0 on purpose when an address change means it must
+# republish, so Restart=always is what re-registers the names. Exit 10 is the
+# other deliberate exit: UT_DOMAIN is outside .local, mDNS does not apply, and
+# restarting would just loop on the same verdict every five seconds. Pairing
+# it with SuccessExitStatus keeps that case reported as inactive, not failed.
+RestartPreventExitStatus=10
+SuccessExitStatus=10
 
 [Install]
 WantedBy=multi-user.target
@@ -384,13 +649,35 @@ SYSTEMD_EOF
         return 0
     fi
 
+    local domain scheme
+    domain="$(env_value UT_DOMAIN)"; domain="${domain:-understand.local}"
+    scheme="$(env_value UT_PUBLIC_SCHEME)"; scheme="${scheme:-https}"
+
     echo ""
+    if [[ "$domain" != *.local ]]; then
+        # The publisher stops itself with exit 10 in this case; say so here
+        # rather than leaving the operator to read journalctl to find out why
+        # nothing was published.
+        log_info "UT_DOMAIN=\"$domain\" is outside .local — mDNS does not apply and nothing was published."
+        echo ""
+        echo -e "${GREEN}Create these records in your own DNS, pointing at this box (or at the"
+        echo -e "load balancer in front of it):${NC}"
+        echo "  $domain"
+        echo "  llms.$domain"
+        echo "  assistants.$domain"
+        echo "  admin.$domain"
+        echo "  builder.$domain          (App Builder, if installed)"
+        echo "  *.apps.$domain           (one per generated app)"
+        return 0
+    fi
+
     echo -e "${GREEN}Published names:${NC}"
-    echo "  https://llms.understand.local"
-    echo "  https://assistants.understand.local"
-    echo "  https://admin.understand.local"
-    echo "  https://builder.understand.local        (App Builder, if installed)"
-    echo "  https://<app>.apps.understand.local     (one per generated app, rescanned every 10s)"
+    echo "  $scheme://$domain"
+    echo "  $scheme://llms.$domain"
+    echo "  $scheme://assistants.$domain"
+    echo "  $scheme://admin.$domain"
+    echo "  $scheme://builder.$domain          (App Builder, if installed)"
+    echo "  $scheme://<app>.apps.$domain       (one per generated app, rescanned every 10s)"
 }
 
 install_service() {
@@ -573,6 +860,7 @@ show_help() {
     echo "Options:"
     echo "  --install     Install and enable both units (default)"
     echo "  --mdns        Install only the mDNS aliases (satellite apps + generated apps)"
+    echo "  --check       Check the domain / TLS / proxy settings without changing anything"
     echo "  --uninstall   Remove both units"
     echo "  --status      Show unit and container status"
     echo "  --dir PATH    Install directory (default: the directory holding this script)"
@@ -586,6 +874,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --install|-i)            ACTION="install" ;;
         --mdns|-m)               ACTION="mdns" ;;
+        --check|-c)              ACTION="check" ;;
         --uninstall|-u|--remove) ACTION="uninstall" ;;
         --status|-s)             ACTION="status" ;;
         --dir)
@@ -612,6 +901,7 @@ INSTALL_DIR="$( cd -P "$INSTALL_DIR" 2>/dev/null && pwd || echo "$INSTALL_DIR" )
 case "${ACTION:-install}" in
     install)   do_install ;;
     mdns)      check_root; install_mdns_alias ;;
+    check)     do_check ;;
     uninstall) do_uninstall ;;
     status)    do_status ;;
 esac
