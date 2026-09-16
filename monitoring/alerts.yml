@@ -1,0 +1,96 @@
+groups:
+  - name: llm-saturation
+    rules:
+      # THE "hang" detector: any sustained queue means every new request is
+      # waiting behind long-context work. This fires well before users notice.
+      - alert: LLMRequestsQueueing
+        expr: vllm:num_requests_waiting > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }}: requests queueing for 2m+"
+          description: >
+            {{ $value }} request(s) waiting on {{ $labels.service }} —
+            capacity saturated (long contexts or too many concurrent
+            sessions). New requests will look 'hung' to clients.
+
+      - alert: LLMKVCachePressure
+        expr: vllm:kv_cache_usage_perc > 0.90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }}: KV cache > 90% for 5m"
+          description: "Preemption/recompute thrash imminent; check context sizes."
+
+      - alert: LLMTargetDown
+        expr: up{job="vllm"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.service }} metrics endpoint down"
+          description: "Engine unreachable — actual outage, not saturation."
+
+  - name: llm-gateway
+    rules:
+      # Sustained cap rejections = many users at the context wall. Occasional
+      # rejections are the design working; a spike means the cap is too tight
+      # for real workloads or one client is stuck in a retry loop.
+      - alert: GatewayCapRejectionsSpike
+        expr: sum(rate(ut_gateway_cap_rejections_total[5m])) * 60 > 10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Gateway rejecting {{ $value | printf \"%.0f\" }} oversized prompts/min for 10m+"
+          description: "Check the top-keys panel; either raise GATEWAY_MAX_PROMPT_TOKENS or the client is not compacting."
+
+      - alert: GatewayRateLimitSpike
+        expr: sum(rate(ut_gateway_rate_limit_hits_total[5m])) * 60 > 20
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Gateway returning {{ $value | printf \"%.0f\" }} 429s/min for 10m+"
+          description: "One key hammering the box, or GATEWAY_RPM_PER_KEY too strict for legitimate use."
+
+  - name: hardware-host
+    rules:
+      - alert: GPUHot
+        expr: max(DCGM_FI_DEV_GPU_TEMP) > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GPU at {{ $value }}°C for 5m+"
+          description: "Thermal throttling imminent — check airflow/ambient (workstation boxes especially)."
+
+      - alert: HostDiskLow
+        expr: (node_filesystem_avail_bytes{fstype=~"ext4|xfs|btrfs"} / node_filesystem_size_bytes{fstype=~"ext4|xfs|btrfs"}) < 0.10
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.mountpoint }} under 10% free"
+          description: "Model weight caches fill disks fast — prune old NIM caches/images."
+
+      - alert: ContainerRestarted
+        expr: changes(container_start_time_seconds{name=~"nim-llm|nim-vlm|ut-api|ut-api-customer|ut-llm|ut-caddy"}[15m]) > 0
+        labels:
+          severity: info
+        annotations:
+          summary: "{{ $labels.name }} restarted in the last 15m"
+          description: "Expected during deploys; a crash loop shows here as repeated firings."
+
+      # Generic target-down for the new exporters (vllm has its own critical
+      # rule above). Caddy stays down until its Caddyfile enables metrics.
+      - alert: MonitoringTargetDown
+        expr: up{job!~"vllm|caddy"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "scrape target {{ $labels.job }}/{{ $labels.instance }} down 5m+"
+          description: "Exporter or service unreachable on the docker network."
