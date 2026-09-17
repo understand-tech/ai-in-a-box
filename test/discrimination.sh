@@ -284,6 +284,20 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
     install_walk_discriminates "an empty settings file kept as if configured" \
         "and the result still renders" \
         "sed -i.bak 's|^render_settings() {$|render_settings() { return 0;|' ut-install"
+fi
+
+if grep -q 'checkouts_holding_settings' "$REPO_ROOT/ut-install"; then
+    install_walk_discriminates "an install blind to the checkout it replaces" \
+        "its settings are carried over, not regenerated" \
+        "sed -i.bak 's|^checkouts_holding_settings() {\$|checkouts_holding_settings() { return 0;|' ut-install"
+
+    install_walk_discriminates "the address decided again instead of read" \
+        "the address it already answers on is kept" \
+        "sed -i.bak 's|^configured_domain() {\$|configured_domain() { return 0;|' ut-install"
+
+    install_walk_discriminates "a migration that takes the checkout with it" \
+        "the checkout itself is left untouched" \
+        "sed -i.bak 's|migrate_existing_settings_into_local \"\$source_settings\" \"\$local_file\"|& \&\& rm -f \"\$source_settings\"|' ut-install"
 
     install_walk_discriminates "a required variable nobody generates" \
         "every variable the stack requires has a value" \

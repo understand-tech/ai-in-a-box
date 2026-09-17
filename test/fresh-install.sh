@@ -86,9 +86,14 @@ STUBS
 # private and weigh tens of gigabytes. Everything that has ever broken here
 # broke before that line.
 run_install_from_state() {
-    local state=$1 domain=${2:-box.example.test}
+    local state=$1 domain=${2:-box.example.test} domain_arg
     local probe="$WORK_DIR/$state"
     mkdir -p "$probe"
+
+    # "-" leaves --domain off, which is the only way to see what the installer
+    # decides on its own rather than what the caller told it.
+    domain_arg="--domain $domain"
+    [[ "$domain" == "-" ]] && domain_arg=""
 
     cat > "$WORK_DIR/walk-$state.sh" <<PROBE
 set -u
@@ -98,10 +103,11 @@ dpkg -i --force-depends /out/understandtech_${VERSION}_all.deb >/dev/null 2>&1
 $(state_setup "$state")
 
 UT_REGISTRY_TOKEN=test-token PULL_EXIT=9 \\
-    ut-install --domain $domain > /w/$state/output.txt 2>&1
+    ut-install $domain_arg > /w/$state/output.txt 2>&1
 printf 'EXIT=%s\n' "\$?" >> /w/$state/output.txt
 
 cp /etc/understandtech/.env /w/$state/env 2>/dev/null || : > /w/$state/env
+cp /opt/understandtech/.env /w/$state/checkout-env 2>/dev/null || : > /w/$state/checkout-env
 chmod -R a+rw /w/$state
 PROBE
 
@@ -120,6 +126,8 @@ state_setup() {
         no_settings_dir) echo 'rm -rf /etc/understandtech' ;;
         pools_full)    echo ': # the daemon refuses through the stub' ;;
         orphan_volume) echo ': # the volume is asserted through the stub' ;;
+        previous_checkout)
+            echo 'install -d /opt/understandtech && printf '"'"'UT_DOMAIN="carried.example"\nJWT_SECRET="keptfromthecheckout0123456789abcdef0123456789ab"\nLOG_LEVEL="WARNING"\n'"'"' > /opt/understandtech/.env' ;;
         *)             echo ': ' ;;
     esac
 }
@@ -163,6 +171,32 @@ the_settings_render_a_stack() {
     settings_of "$state" > "$render/.env"
     ( cd "$render" && docker compose config >/dev/null 2>"$WORK_DIR/render-err.txt" ) && return 0
     head -3 "$WORK_DIR/render-err.txt"
+    return 1
+}
+
+checkout_of() { cat "$WORK_DIR/$1/checkout-env" 2>/dev/null; }
+
+the_checkout_settings_are_carried_over() {
+    local settings
+    settings=$(settings_of previous_checkout)
+    grep -q 'keptfromthecheckout' <<< "$settings" \
+        || { echo "the secret was regenerated instead of carried over"; return 1; }
+    grep -q '^LOG_LEVEL="WARNING"' <<< "$settings" \
+        || { echo "a setting the customer had changed was lost"; return 1; }
+    return 0
+}
+
+the_address_comes_from_the_checkout() {
+    local settings
+    settings=$(settings_of previous_checkout)
+    grep -q '^UT_DOMAIN="carried.example"' <<< "$settings" && return 0
+    echo "the address became $(grep -m1 '^UT_DOMAIN=' <<< "$settings")"
+    return 1
+}
+
+the_checkout_is_left_alone() {
+    grep -q 'keptfromthecheckout' <<< "$(checkout_of previous_checkout)" && return 0
+    echo "the checkout's own .env was changed or removed"
     return 1
 }
 
@@ -228,6 +262,7 @@ run_install_from_state already_set
 run_install_from_state no_settings_dir
 MONGO_VOLUME_EXISTS=yes run_install_from_state orphan_volume
 NETWORK_CREATE_EXIT=1 run_install_from_state pools_full
+run_install_from_state previous_checkout -
 
 printf '%sA machine with nothing on it%s\n' "$BOLD" "$NC"
 property "the install reaches the point where it pulls images" \
@@ -260,6 +295,14 @@ property "running the installer again changes nothing" \
 printf '\n%sA machine whose Docker address pools are full%s\n' "$BOLD" "$NC"
 property "the preflight stops before anything is written" \
     the_preflight_stops_on_full_pools
+
+printf '\n%sAn install that still lives in a git checkout%s\n' "$BOLD" "$NC"
+property "its settings are carried over, not regenerated" \
+    the_checkout_settings_are_carried_over
+property "the address it already answers on is kept" \
+    the_address_comes_from_the_checkout
+property "the checkout itself is left untouched" \
+    the_checkout_is_left_alone
 
 printf '\n%sA database nobody has the password for%s\n' "$BOLD" "$NC"
 property "the install stops, and says which volume and what to do" \

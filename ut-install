@@ -10,6 +10,7 @@ REGISTRY_USER="${UT_REGISTRY_USER:-dgx-access}"
 PACKAGE_SHARE_DIR="/usr/share/understandtech"
 CHECKOUT_INSTALL_DIR="/opt/understandtech"
 INSTALL_DIR="${UT_INSTALL_DIR:-}"
+FROM_CHECKOUT="${UT_FROM_CHECKOUT:-}"
 DATA_DIR="/var/lib/understandtech"
 LOG_FILE="/var/log/ut-install.log"
 TARGET_USER="${SUDO_USER:-root}"
@@ -80,6 +81,10 @@ Options
                        is not silently discarded.
   --token-file PATH    Read the registry token from a file instead of a prompt.
   --dir PATH           Install directory. Defaults to /usr/share/understandtech
+  --from-checkout PATH Take the settings from an install that lives in a git
+                       checkout. Found on its own when there is exactly one;
+                       needed when there are several. The checkout is read,
+                       never moved, changed or removed.
                        when installed from the package, /opt/understandtech
                        otherwise.
   --domain NAME        Address the platform is served at. Asked for when it is
@@ -320,7 +325,16 @@ token_required() {
     return 0
 }
 
-configured_domain() { env_get "$INSTALL_DIR/.env" UT_DOMAIN 2>/dev/null || true; }
+# The address is read before the settings are written, so a machine moving off a
+# checkout has nothing in /etc yet and would be offered understand.local instead
+# of the name it already answers on.
+configured_domain() {
+    local current previous
+    current=$(env_get "$INSTALL_DIR/.env" UT_DOMAIN 2>/dev/null || true)
+    if [[ -n "$current" ]]; then printf '%s' "$current"; return 0; fi
+    previous=$(settings_of_a_previous_install 2>/dev/null) || return 0
+    env_get "$previous" UT_DOMAIN 2>/dev/null || true
+}
 
 domain_to_check() {
     local candidate="$DOMAIN"
@@ -569,6 +583,35 @@ key_is_overridden_locally() {
     printf '%s\n' "$overridden" | grep -qx "$key"
 }
 
+# An install that predates the package keeps its settings inside its checkout,
+# where /etc/understandtech never looks.
+checkouts_holding_settings() {
+    local candidate home
+    home=$(eval echo "~${TARGET_USER}" 2>/dev/null || echo /root)
+    for candidate in "$CHECKOUT_INSTALL_DIR" "$home/understand-tech" "$home/ai-in-a-box"; do
+        [[ -f "$candidate/.env" && ! -L "$candidate/.env" && -s "$candidate/.env" ]] || continue
+        printf '%s\n' "$candidate/.env"
+    done
+}
+
+settings_of_a_previous_install() {
+    local found count
+    if [[ -n "$FROM_CHECKOUT" ]]; then
+        [[ -s "$FROM_CHECKOUT/.env" ]] || die "No .env in ${FROM_CHECKOUT}."
+        printf '%s' "$FROM_CHECKOUT/.env"
+        return 0
+    fi
+    found=$(checkouts_holding_settings)
+    count=$(printf '%s' "$found" | grep -c . || true)
+    (( count == 0 )) && return 1
+    if (( count > 1 )); then
+        log_error "More than one previous install holds settings:"
+        printf '%s\n' "$found" | while IFS= read -r candidate; do log_error "  ${candidate}"; done
+        die "Say which one with --from-checkout PATH, or move the ones you do not want."
+    fi
+    printf '%s' "$found"
+}
+
 # A settings file written before this version is the only place the customer's
 # choices exist. Lines are carried over verbatim rather than re-quoted:
 # GATEWAY_MODELS holds JSON inside single quotes, which rewriting as KEY="value"
@@ -638,7 +681,12 @@ step_configure() {
     local_file="$(settings_directory "$env_file")/local.env"
     install -d -m 750 "$(dirname "$local_file")"
     [[ -f "$local_file" ]] || install -m 600 /dev/null "$local_file"
-    migrate_existing_settings_into_local "$env_file" "$local_file"
+    local source_settings="$env_file" previous
+    if [[ ! -s "$env_file" ]] && previous=$(settings_of_a_previous_install); then
+        source_settings="$previous"
+        log_info "Settings taken from ${previous} — that checkout is left as it is"
+    fi
+    migrate_existing_settings_into_local "$source_settings" "$local_file"
 
     if [[ "$(env_get "$local_file" UT_DOMAIN || true)" != "$DOMAIN" ]]; then
         env_set "$local_file" UT_DOMAIN "$DOMAIN"
@@ -915,6 +963,7 @@ parse_arguments() {
             --skip-pull)      DO_PULL=false ;;
             --token-file)     TOKEN_FILE="${2:?--token-file needs a path}"; shift ;;
             --dir)            INSTALL_DIR="${2:?--dir needs a path}"; shift ;;
+            --from-checkout)  FROM_CHECKOUT="${2:?--from-checkout needs a path}"; shift ;;
             --domain)         DOMAIN="${2:?--domain needs a name}"; shift ;;
             --health-timeout) HEALTH_TIMEOUT="${2:?--health-timeout needs seconds}"; shift ;;
             -h|--help)        usage; exit 0 ;;
