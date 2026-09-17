@@ -27,7 +27,7 @@ COPY="$WORK_DIR/repo"
 fresh_copy() {
     rm -rf "$COPY"
     mkdir -p "$COPY"
-    ( cd "$REPO_ROOT" && tar -cf - .env.example compose.yaml compose.appbuilder.yaml \
+    ( cd "$REPO_ROOT" && tar -cf - .env.example release.env compose.yaml compose.appbuilder.yaml \
         compose.compute.yaml compose.no-gpu.yaml Caddyfile caddy backup-files.sh \
         setup-autostart.sh ut-logs-archive ut-install ut-certificate ut-verify appbuilder docs \
         packaging README.md test .github 2>/dev/null ) | tar -xf - -C "$COPY" 2>/dev/null
@@ -84,6 +84,16 @@ printf '%sEvery invariant, seen failing%s %s(each on a copy, nothing here is tou
 discriminates "a secret shipped in the template" \
     "plaintext-secret:JWT_SECRET" \
     "sed -i.bak 's|^JWT_SECRET=.*|JWT_SECRET=\"a3f9c1d2e4b8\"|' .env.example"
+
+if grep -q 'check_release_env_ships_no_secret' "$REPO_ROOT/test/invariants.sh"; then
+    discriminates "a secret declared in what the release decides" \
+        "secret-in-release-env:JWT_SECRET" \
+        "printf 'JWT_SECRET=\"a3f9c1d2e4b8\"\n' >> release.env"
+
+    discriminates "a secret the nominative list never named" \
+        "secret-in-release-env:HF_API_TOKEN" \
+        "printf 'HF_API_TOKEN=\"\"\n' >> release.env"
+fi
 
 discriminates "a secret defaulted in a compose file" \
     "compose-secret-default:JWT_SECRET" \

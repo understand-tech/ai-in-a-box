@@ -47,6 +47,13 @@ stage_release_files() {
     find "$root/$SHARE_DIR/caddy" "$root/$SHARE_DIR/appbuilder" -type f -exec chmod 644 {} +
 }
 
+stamp_the_release_version() {
+    local root=$1 version=$2
+    sed "s|^UT_RELEASE_VERSION=.*|UT_RELEASE_VERSION=\"${version}\"|" \
+        "$REPO_ROOT/release.env" > "$root/$SHARE_DIR/release.env"
+    chmod 644 "$root/$SHARE_DIR/release.env"
+}
+
 stage_commands() {
     local root=$1
     install -d "$root/usr/bin"
@@ -155,6 +162,7 @@ main() {
     chmod 755 "$root"
 
     stage_release_files "$root"
+    stamp_the_release_version "$root" "$VERSION"
     stage_commands "$root"
     stage_documentation "$root"
     link_configuration_into_project_directory "$root"
