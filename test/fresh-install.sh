@@ -128,6 +128,8 @@ state_setup() {
         orphan_volume) echo ': # the volume is asserted through the stub' ;;
         previous_checkout)
             echo 'install -d /opt/understandtech && printf '"'"'UT_DOMAIN="carried.example"\nJWT_SECRET="keptfromthecheckout0123456789abcdef0123456789ab"\nLOG_LEVEL="WARNING"\n'"'"' > /opt/understandtech/.env' ;;
+        checkout_without_domain)
+            echo 'install -d /opt/understandtech && printf '"'"'PUBLIC_BASE_URL="https://named.by.the.urls"\nBACKEND_URL="https://named.by.the.urls/api"\nJWT_SECRET="keptfromthecheckout0123456789abcdef0123456789ab"\n'"'"' > /opt/understandtech/.env' ;;
         *)             echo ': ' ;;
     esac
 }
@@ -190,6 +192,14 @@ the_address_comes_from_the_checkout() {
     local settings
     settings=$(settings_of previous_checkout)
     grep -q '^UT_DOMAIN="carried.example"' <<< "$settings" && return 0
+    echo "the address became $(grep -m1 '^UT_DOMAIN=' <<< "$settings")"
+    return 1
+}
+
+the_address_is_read_from_the_urls() {
+    local settings
+    settings=$(settings_of checkout_without_domain)
+    grep -q '^UT_DOMAIN="named.by.the.urls"' <<< "$settings" && return 0
     echo "the address became $(grep -m1 '^UT_DOMAIN=' <<< "$settings")"
     return 1
 }
@@ -263,6 +273,7 @@ run_install_from_state no_settings_dir
 MONGO_VOLUME_EXISTS=yes run_install_from_state orphan_volume
 NETWORK_CREATE_EXIT=1 run_install_from_state pools_full
 run_install_from_state previous_checkout -
+run_install_from_state checkout_without_domain -
 
 printf '%sA machine with nothing on it%s\n' "$BOLD" "$NC"
 property "the install reaches the point where it pulls images" \
@@ -303,6 +314,8 @@ property "the address it already answers on is kept" \
     the_address_comes_from_the_checkout
 property "the checkout itself is left untouched" \
     the_checkout_is_left_alone
+property "an install too old to name its address has it read from its URLs" \
+    the_address_is_read_from_the_urls
 
 printf '\n%sA database nobody has the password for%s\n' "$BOLD" "$NC"
 property "the install stops, and says which volume and what to do" \

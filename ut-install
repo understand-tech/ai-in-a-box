@@ -325,15 +325,37 @@ token_required() {
     return 0
 }
 
+# Measured on a real machine: an install from before UT_DOMAIN existed has no
+# such line, and names its address in every URL instead.
+domain_named_by_the_urls() {
+    local file=$1 key url
+    for key in PUBLIC_BASE_URL DOMAIN_URL BACKEND_URL FRONTEND_URL_AUTH; do
+        url=$(env_get "$file" "$key" 2>/dev/null || true)
+        [[ -n "$url" ]] || continue
+        url=${url#*://}; url=${url%%/*}; url=${url%%:*}
+        [[ -n "$url" ]] || continue
+        printf '%s' "$url"
+        return 0
+    done
+    return 1
+}
+
+domain_written_in() {
+    local file=$1 named
+    named=$(env_get "$file" UT_DOMAIN 2>/dev/null || true)
+    if [[ -n "$named" ]]; then printf '%s' "$named"; return 0; fi
+    domain_named_by_the_urls "$file"
+}
+
 # The address is read before the settings are written, so a machine moving off a
 # checkout has nothing in /etc yet and would be offered understand.local instead
 # of the name it already answers on.
 configured_domain() {
-    local current previous
-    current=$(env_get "$INSTALL_DIR/.env" UT_DOMAIN 2>/dev/null || true)
-    if [[ -n "$current" ]]; then printf '%s' "$current"; return 0; fi
+    local found previous
+    found=$(domain_written_in "$INSTALL_DIR/.env" 2>/dev/null || true)
+    if [[ -n "$found" ]]; then printf '%s' "$found"; return 0; fi
     previous=$(settings_of_a_previous_install 2>/dev/null) || return 0
-    env_get "$previous" UT_DOMAIN 2>/dev/null || true
+    domain_written_in "$previous" 2>/dev/null || true
 }
 
 domain_to_check() {

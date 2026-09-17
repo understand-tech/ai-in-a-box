@@ -295,6 +295,10 @@ if grep -q 'checkouts_holding_settings' "$REPO_ROOT/ut-install"; then
         "the address it already answers on is kept" \
         "sed -i.bak 's|^configured_domain() {\$|configured_domain() { return 0;|' ut-install"
 
+    install_walk_discriminates "an address no URL is allowed to name" \
+        "an install too old to name its address has it read from its URLs" \
+        "sed -i.bak 's|^domain_named_by_the_urls() {\$|domain_named_by_the_urls() { return 1;|' ut-install"
+
     install_walk_discriminates "a migration that takes the checkout with it" \
         "the checkout itself is left untouched" \
         "sed -i.bak 's|migrate_existing_settings_into_local \"\$source_settings\" \"\$local_file\"|& \&\& rm -f \"\$source_settings\"|' ut-install"
