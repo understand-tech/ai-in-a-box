@@ -27,7 +27,7 @@ COPY="$WORK_DIR/repo"
 fresh_copy() {
     rm -rf "$COPY"
     mkdir -p "$COPY"
-    ( cd "$REPO_ROOT" && tar -cf - .env.example release.env compose.yaml compose.appbuilder.yaml \
+    ( cd "$REPO_ROOT" && tar -cf - release.env compose.yaml compose.appbuilder.yaml \
         compose.compute.yaml compose.no-gpu.yaml Caddyfile caddy backup-files.sh \
         setup-autostart.sh ut-logs-archive ut-install ut-certificate ut-verify appbuilder docs \
         packaging README.md test .github 2>/dev/null ) | tar -xf - -C "$COPY" 2>/dev/null
@@ -81,9 +81,9 @@ capability_discriminates() {
 printf '%sEvery invariant, seen failing%s %s(each on a copy, nothing here is touched)%s\n\n' \
     "$BOLD" "$NC" "$DIM" "$NC"
 
-discriminates "a secret shipped in the template" \
-    "plaintext-secret:JWT_SECRET" \
-    "sed -i.bak 's|^JWT_SECRET=.*|JWT_SECRET=\"a3f9c1d2e4b8\"|' .env.example"
+discriminates "a secret given a value by the release" \
+    "plaintext-secret:OA_KEY" \
+    "printf 'OA_KEY=\"a3f9c1d2e4b8\"\n' >> release.env"
 
 if grep -q 'check_release_env_ships_no_secret' "$REPO_ROOT/test/invariants.sh"; then
     discriminates "a secret declared in what the release decides" \
@@ -106,9 +106,9 @@ discriminates "one variable with two different defaults" \
 # Guarded like the capability blocks: the list grows with the branch rather
 # than failing on one that predates a check.
 if grep -q 'check_required_variables_appear_in_the_template' "$REPO_ROOT/test/invariants.sh"; then
-    discriminates "a required variable absent from the template" \
-        "required-variable-missing:CA_PASSWORD" \
-        "sed -i.bak '/^CA_PASSWORD=/d' .env.example"
+    discriminates "a required variable that nothing declares and nothing generates" \
+        "required-variable-missing:SOMETHING_REQUIRED" \
+        "sed -i.bak 's|^  redis:|  redis:\n    hostname: \${SOMETHING_REQUIRED:?nobody sets this}|' compose.yaml"
 fi
 
 discriminates "a variable with no default and no value" \
@@ -121,7 +121,7 @@ discriminates "a port published on every interface" \
 
 discriminates "verbose logs in the template" \
     "verbose-log-level:LOG_LEVEL" \
-    "sed -i.bak 's|^LOG_LEVEL=.*|LOG_LEVEL=\"DEBUG\"|' .env.example"
+    "sed -i.bak 's|^LOG_LEVEL=.*|LOG_LEVEL=\"DEBUG\"|' release.env"
 
 discriminates "a documented path that does not exist" \
     "missing-documented-path:nowhere.yaml" \
@@ -279,11 +279,11 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
 
     install_walk_discriminates "writing through a link whose directory is gone" \
         "it is recreated rather than reported as a broken link" \
-        "sed -i.bak 's|^    create_settings_file_behind \"\$env_file\"$|    :|' ut-install"
+        "sed -i.bak 's|^    install -d -m 750 |    : |' ut-install"
 
     install_walk_discriminates "an empty settings file kept as if configured" \
         "and the result still renders" \
-        "sed -i.bak 's|^    if \[\[ -s \"\$env_file\" \]\]; then$|    if [[ -f \"\$env_file\" ]]; then|' ut-install"
+        "sed -i.bak 's|^render_settings() {$|render_settings() { return 0;|' ut-install"
 
     install_walk_discriminates "a required variable nobody generates" \
         "every variable the stack requires has a value" \

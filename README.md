@@ -24,11 +24,11 @@ off the box.
 | File | Purpose |
 |---|---|
 | `compose.yaml` | Docker Compose stack — all services, networks, volumes |
-| `compose.appbuilder.yaml` | App Builder add-on — enabled by `COMPOSE_FILE` in `.env`, which `.env.example` ships switched on |
+| `compose.appbuilder.yaml` | App Builder add-on — enabled by `COMPOSE_FILE` in `.env`, which `release.env` ships switched on |
 | `Caddyfile` | Reverse proxy config — one site block per surface, hostnames from `UT_DOMAIN` |
 | `caddy/ingress-*.caddy` | One per ingress mode — global options and the `(tls)` snippets |
 | `caddy/certs/` | Where a `custom`-mode certificate goes (gitignored) |
-| `.env.example` | Template for `.env` — domain and TLS, image tags, credentials, model config |
+| `release.env` | What the release decides — image tags, model config, defaults. Replaced on every upgrade, and carries no secret |
 | `setup-autostart.sh` | Installs the systemd boot service, and the mDNS alias publisher on a `.local` domain only; `--check` validates domain/TLS settings |
 | `ut-logs-archive` | Automated daily log archival with compression and retention |
 | `ut-certificate` | Obtains and renews a publicly trusted certificate by DNS-01, so nothing has to be installed on user machines |
@@ -58,14 +58,15 @@ what it printed.
 # 1. Clone and configure
 git clone https://dgx-access:<TOKEN>@github.com/understand-tech/ai-in-a-box.git ~/understand-tech
 cd ~/understand-tech
-cp .env.example .env
-chmod 600 .env
-# Edit .env — set MONGODB_USERNAME, MONGODB_PASSWORD, JWT_SECRET at minimum.
-# Set UT_DOMAIN to the address the box answers on. understand.local works on
-# one flat network and cannot be certified; see "Domain, TLS and proxy".
+sudo ./ut-install
+# .env is not edited by hand any more: ut-install builds it from release.env —
+# what this version decides — and local.env — what you chose, which no upgrade
+# replaces. It asks for the address and generates every secret itself.
+# understand.local works on one flat network and cannot be certified; see
+# "Domain, TLS and proxy".
 
 # 2. Create the network the App Builder's generated apps attach to (once per
-#    box). .env.example ships with the add-on enabled, so this is required
+#    box). release.env ships with the add-on enabled, so this is required
 #    unless you comment COMPOSE_FILE out — the network is external, and
 #    `docker compose up` fails outright when it is missing.
 docker network create proxy
@@ -151,7 +152,7 @@ to renew immediately.
 
 `nim-llm` and `nim-vlm` sit behind compose profiles, so they only start when
 `COMPOSE_PROFILES` includes `nim` (or `nim-llm` / `nim-vlm` individually).
-`.env.example` sets `COMPOSE_PROFILES="nim"`.
+`release.env` sets `COMPOSE_PROFILES="nim"`.
 
 The worker services scale with `WORKER_REPLICAS` and `WORKER_CUSTOMER_REPLICAS`,
 so they get compose-generated names rather than fixed `container_name` values.
@@ -554,7 +555,7 @@ box. It runs in the same compose project as everything else and talks to
 `api-customer` for models and UT API v3 — nothing leaves the network.
 
 ```bash
-# 1. The overlay is already enabled in .env.example:
+# 1. The overlay is already enabled in release.env:
 #    COMPOSE_FILE="compose.yaml:compose.appbuilder.yaml"
 #    Comment that line out to run without the App Builder. Then set the key:
 #    APP_BUILDER_GATEWAY_API_KEY="..."   # platform UI: DEVELOPER -> API keys

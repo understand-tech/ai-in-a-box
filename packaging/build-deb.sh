@@ -38,7 +38,6 @@ stage_release_files() {
     install -d "$root/$SHARE_DIR"
     install -m 644 "$REPO_ROOT"/compose*.yaml "$root/$SHARE_DIR/"
     install -m 644 "$REPO_ROOT/Caddyfile" "$root/$SHARE_DIR/"
-    install -m 644 "$REPO_ROOT/.env.example" "$root/$SHARE_DIR/"
     install -m 644 "$REPO_ROOT/packaging/release.pub" "$root/$SHARE_DIR/"
     cp -r "$REPO_ROOT/caddy" "$root/$SHARE_DIR/"
     cp -r "$REPO_ROOT/appbuilder" "$root/$SHARE_DIR/"

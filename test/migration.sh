@@ -50,6 +50,7 @@ lay_out_both_versions() {
         git -C "$REPO_ROOT" show "$FROM_REF:$file" > "$BEFORE/$file" 2>/dev/null
     done
     cp "$REPO_ROOT"/compose*.yaml "$AFTER/"
+    cp "$REPO_ROOT/release.env" "$AFTER/"
 
     cp "$BEFORE/.env.example" "$BEFORE/.env"
     cp "$BEFORE/.env.example" "$AFTER/.env"
@@ -131,14 +132,24 @@ the_new_stack_refuses_an_untouched_env() {
 
 the_installer_supplies_what_is_missing() {
     local key
+    # The old world first: one flat .env, secrets and all. That is the machine
+    # the upgrade actually finds.
+    INSTALL_DIR="$BEFORE"
     generate_application_secrets "$BEFORE/.env" >/dev/null 2>&1
-    generate_database_credentials "$BEFORE/.env" >/dev/null 2>&1
+    generate_database_credentials "$BEFORE/.env" "$BEFORE/.env" >/dev/null 2>&1
+    cp "$BEFORE/.env" "$AFTER/.env"
+
+    INSTALL_DIR="$AFTER"
+    migrate_existing_settings_into_local "$AFTER/.env" "$AFTER/local.env" >/dev/null 2>&1
+    render_settings "$AFTER/.env" "$AFTER/local.env" >/dev/null 2>&1
+    generate_database_credentials "$AFTER/.env" "$AFTER/local.env" >/dev/null 2>&1
+    generate_application_secrets "$AFTER/local.env" >/dev/null 2>&1
+    render_settings "$AFTER/.env" "$AFTER/local.env" >/dev/null 2>&1
 
     while read -r key; do
         [[ -n "$key" ]] || continue
-        grep -qE "^${key}=\"?.+\"?$" "$BEFORE/.env" || { echo "$key is still unset"; return 1; }
+        grep -qE "^${key}=\"?.+\"?$" "$AFTER/.env" || { echo "$key is still unset"; return 1; }
     done <<< "$(required_variables_in "$AFTER")"
-    cp "$BEFORE/.env" "$AFTER/.env"
 }
 
 the_new_stack_then_renders() {

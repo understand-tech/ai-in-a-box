@@ -496,38 +496,38 @@ die_on_a_database_nobody_has_the_password_for() {
 }
 
 generate_database_credentials() {
-    local env_file=$1 user
+    local env_file=$1 local_file=$2 user
 
     # The mongo image only reads MONGO_INITDB_ROOT_PASSWORD when it creates the
     # data directory. Rotating it later changes nothing in the database and just
     # stops every service from connecting.
     if database_already_initialised "$env_file"; then
-        settings_carry_database_credentials "$env_file" \
-            || die_on_a_database_nobody_has_the_password_for "$env_file"
+        settings_carry_database_credentials "$local_file" \
+            || die_on_a_database_nobody_has_the_password_for "$local_file"
         log_info "Database already initialised — leaving its credentials alone"
         return 0
     fi
 
-    if ! is_shipped_placeholder "$(env_get "$env_file" MONGODB_PASSWORD || true)"; then
+    if ! is_shipped_placeholder "$(env_get "$local_file" MONGODB_PASSWORD || true)"; then
         log_info "Database credentials already set"
         return 0
     fi
 
-    user=$(env_get "$env_file" MONGODB_USERNAME || true)
+    user=$(env_get "$local_file" MONGODB_USERNAME || true)
     [[ -z "$user" || "$user" == "mongoadmin" ]] && user="ut$(random_alphanumeric 8)"
-    env_set "$env_file" MONGODB_USERNAME "$user"
-    env_set "$env_file" MONGODB_PASSWORD "$(random_alphanumeric 32)"
+    env_set "$local_file" MONGODB_USERNAME "$user"
+    env_set "$local_file" MONGODB_PASSWORD "$(random_alphanumeric 32)"
     log_info "Generated database credentials"
 }
 
 generate_application_secrets() {
-    local env_file=$1 key rotated=()
+    local local_file=$1 key rotated=()
 
     for key in "${GENERATED_SECRET_KEYS[@]}"; do
-        if is_shipped_placeholder "$(env_get "$env_file" "$key" || true)"; then
+        if is_shipped_placeholder "$(env_get "$local_file" "$key" || true)"; then
             case "$key" in
-                JWT_SECRET|BACKUP_FILES_PASSWORD|CA_PASSWORD) env_set "$env_file" "$key" "$(random_alphanumeric 64)" ;;
-                *)                                env_set "$env_file" "$key" "$(random_alphanumeric 32)" ;;
+                JWT_SECRET|BACKUP_FILES_PASSWORD|CA_PASSWORD) env_set "$local_file" "$key" "$(random_alphanumeric 64)" ;;
+                *)                                env_set "$local_file" "$key" "$(random_alphanumeric 32)" ;;
             esac
             rotated+=("$key")
         fi
@@ -555,29 +555,103 @@ create_settings_file_behind() {
     install -m 600 /dev/null "$target"
 }
 
+settings_directory() {
+    local link=$1
+    if [[ -L "$link" ]]; then
+        dirname "$(readlink "$link")"
+    else
+        dirname "$link"
+    fi
+}
+
+key_is_overridden_locally() {
+    local key=$1 overridden=$2
+    printf '%s\n' "$overridden" | grep -qx "$key"
+}
+
+# A settings file written before this version is the only place the customer's
+# choices exist. Lines are carried over verbatim rather than re-quoted:
+# GATEWAY_MODELS holds JSON inside single quotes, which rewriting as KEY="value"
+# would corrupt. A line identical to the release's is dropped, because dropping
+# it changes nothing; anything else is kept, and the divergence is reported
+# rather than resolved — an upgrade is the wrong moment to change an address.
+migrate_existing_settings_into_local() {
+    local env_file=$1 local_file=$2 release line key kept=0 diverged=0
+    release="$INSTALL_DIR/release.env"
+
+    [[ -s "$env_file" ]] || return 0
+    [[ -s "$local_file" ]] && return 0
+
+    install -m 600 "$env_file" "${local_file%/*}/env.before-split"
+    install -m 600 /dev/null "$local_file"
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        case "$line" in
+            [A-Za-z_]*=*) key=${line%%=*} ;;
+            *) continue ;;
+        esac
+        if grep -qxF "$line" "$release" 2>/dev/null; then continue; fi
+        if grep -qE "^${key}=" "$release" 2>/dev/null; then diverged=$((diverged + 1)); fi
+        printf '%s\n' "$line" >> "$local_file"
+        kept=$((kept + 1))
+    done < "$env_file"
+
+    log_info "Split the settings: ${kept} kept as yours, ${diverged} of them differing from this release"
+    log_info "The file as it was: ${local_file%/*}/env.before-split"
+}
+
+# Compose reads .env from the project directory and interpolates ${} from it, so
+# it has to stay one flat file — a list of sources would not be read at all.
+render_settings() {
+    local target=$1 local_file=$2 release key line overridden tmp
+    release="$INSTALL_DIR/release.env"
+    [[ -f "$release" ]] || die "No release.env in ${INSTALL_DIR}."
+
+    overridden=$(grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' "$local_file" 2>/dev/null | tr -d '=' || true)
+    tmp=$(mktemp)
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        case "$line" in
+            [A-Za-z_]*=*)
+                key=${line%%=*}
+                if key_is_overridden_locally "$key" "$overridden"; then continue; fi
+                ;;
+        esac
+        printf '%s\n' "$line" >> "$tmp"
+    done < "$release"
+
+    if [[ -s "$local_file" ]]; then
+        printf '\n# ---------------------------------------------- yours, never replaced ----\n' >> "$tmp"
+        printf '# Edit %s, not this file: this one is rebuilt on every install.\n\n' "$local_file" >> "$tmp"
+        cat "$local_file" >> "$tmp"
+    fi
+
+    cat "$tmp" > "$target"
+    rm -f "$tmp"
+}
+
 step_configure() {
     log_step "Writing the configuration"
 
-    local env_file="$INSTALL_DIR/.env"
+    local env_file="$INSTALL_DIR/.env" local_file
     create_settings_file_behind "$env_file"
 
-    if [[ -s "$env_file" ]]; then
-        log_info "Keeping the existing .env"
-    else
-        [[ -f "$INSTALL_DIR/.env.example" ]] || die "No .env.example in ${INSTALL_DIR}."
-        cp "$INSTALL_DIR/.env.example" "$env_file"
-        log_info "Created .env from .env.example"
-    fi
-    chmod 600 "$env_file"
-    chown "$TARGET_USER" "$env_file" 2>/dev/null || true
+    local_file="$(settings_directory "$env_file")/local.env"
+    install -d -m 750 "$(dirname "$local_file")"
+    [[ -f "$local_file" ]] || install -m 600 /dev/null "$local_file"
+    migrate_existing_settings_into_local "$env_file" "$local_file"
 
-    if [[ "$(env_get "$env_file" UT_DOMAIN || true)" != "$DOMAIN" ]]; then
-        env_set "$env_file" UT_DOMAIN "$DOMAIN"
-        log_info "Address set to ${DOMAIN} — every other URL in .env derives from it"
+    if [[ "$(env_get "$local_file" UT_DOMAIN || true)" != "$DOMAIN" ]]; then
+        env_set "$local_file" UT_DOMAIN "$DOMAIN"
+        log_info "Address set to ${DOMAIN} — every other URL derives from it"
     fi
 
-    generate_database_credentials "$env_file"
-    generate_application_secrets "$env_file"
+    render_settings "$env_file" "$local_file"
+    generate_database_credentials "$env_file" "$local_file"
+    generate_application_secrets "$local_file"
+    render_settings "$env_file" "$local_file"
+
+    chmod 600 "$env_file" "$local_file"
+    chown "$TARGET_USER" "$env_file" "$local_file" 2>/dev/null || true
 
     mkdir -p "$DATA_DIR/app-data" "$DATA_DIR/appbuilder"/{workspaces,prod-workspaces,traefik-dynamic}
     log_info "Data directories ready under ${DATA_DIR}"

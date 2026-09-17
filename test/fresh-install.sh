@@ -116,7 +116,7 @@ state_setup() {
     case "$1" in
         bare)          echo ': # nothing beyond the package' ;;
         empty_settings) echo 'install -m 600 /dev/null /etc/understandtech/.env' ;;
-        already_set)   echo 'install -m 600 /usr/share/understandtech/.env.example /etc/understandtech/.env' ;;
+        already_set)   echo 'install -m 600 /usr/share/understandtech/release.env /etc/understandtech/.env' ;;
         no_settings_dir) echo 'rm -rf /etc/understandtech' ;;
         pools_full)    echo ': # the daemon refuses through the stub' ;;
         orphan_volume) echo ': # the volume is asserted through the stub' ;;
@@ -167,12 +167,14 @@ the_settings_render_a_stack() {
 }
 
 secrets_are_not_the_shipped_ones() {
-    local state=$1 shipped
-    shipped=$(grep -m1 '^JWT_SECRET=' "$REPO_ROOT/.env.example" | cut -d= -f2- | tr -d '"')
-    local mine
+    local state=$1 mine
+    if grep -q '^JWT_SECRET=' "$REPO_ROOT/release.env"; then
+        echo "JWT_SECRET ships in release.env — it is meant to be generated, never shipped"
+        return 1
+    fi
     mine=$(grep -m1 '^JWT_SECRET=' <<< "$(settings_of "$state")" | cut -d= -f2- | tr -d '"')
-    [[ -n "$mine" && "$mine" != "$shipped" ]] && return 0
-    echo "JWT_SECRET is '${mine}', the template ships '${shipped}'"
+    [[ ${#mine} -ge 32 ]] && return 0
+    echo "JWT_SECRET is '${mine}' — too short to be a generated secret"
     return 1
 }
 

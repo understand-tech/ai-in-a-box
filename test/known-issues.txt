@@ -6,13 +6,20 @@
 #
 # One identifier per line. Keep the reason next to it.
 
-# --- Secrets shipped in .env.example ---------------------------------------
+# --- Secrets shipped in release.env -----------------------------------------
 # VLLM_API_KEY="EMPTY" is vLLM's convention for "no authentication", not a
 # placeholder: it is why inference answers without credentials. Turning
 # authentication on needs a real key here and --api-key through
 # NIM_LLM_PASSTHROUGH_ARGS, so it is a behaviour change rather than a secret to
 # fill in. The ports stay bound to loopback until then.
+#
+# It is listed twice because two checks see it: one reads the value, the other
+# reads the name. Dropping it from release.env would not have been an
+# improvement — the variable would fall back to "" instead of "EMPTY", which is
+# a different vLLM configuration, so the appliance would have changed behaviour
+# during an upgrade that promised not to.
 plaintext-secret:VLLM_API_KEY
+secret-in-release-env:VLLM_API_KEY
 
 # --- Mutable image references ----------------------------------------------
 # Tags like 2.0-arm64 move, so two boxes on "the same version" can differ and a
