@@ -187,6 +187,33 @@ database_credentials_in() {
     rendered "$1" -f compose.yaml | grep -E 'MONGO_INITDB_ROOT_(USERNAME|PASSWORD):' | sort | cksum
 }
 
+# Going back is meant to work because .env stayed one flat, self-contained file
+# at the same path: the older installer reads it knowing nothing of local.env.
+# Asking what the older version requires proves nothing: it required nothing at
+# all, so the list was empty and the check always passed. What matters is that
+# the file left behind holds every value on its own, local.env or not.
+the_settings_left_behind_stand_on_their_own() {
+    local key missing=()
+    while read -r key; do
+        [[ -n "$key" ]] || continue
+        grep -qE "^${key}=.+" "$AFTER/.env" || missing+=("$key")
+    done <<< "$(required_variables_in "$AFTER")"
+    (( ${#missing[@]} == 0 )) && return 0
+    echo "the settings file does not stand on its own: ${missing[*]}"
+    return 1
+}
+
+the_previous_version_renders_what_this_one_wrote() {
+    local dir="$WORK_DIR/rollback"
+    rm -rf "$dir"; mkdir -p "$dir"
+    cp "$BEFORE"/compose*.yaml "$dir/" 2>/dev/null
+    cp "$AFTER/.env" "$dir/.env"
+    rendered "$dir" -f compose.yaml >/dev/null 2>&1 && return 0
+    echo "the previous version refuses the settings this one produced"
+    rendered "$dir" -f compose.yaml 2>&1 | head -3
+    return 1
+}
+
 the_database_keeps_its_credentials() {
     local before
     before=$(database_credentials_in "$BEFORE")
@@ -290,6 +317,12 @@ property "the containers that lose a fixed name are named nowhere else" \
     renamed_containers_are_not_named_elsewhere
 property "a renamed container keeps its volumes" \
     a_renamed_container_keeps_its_volumes
+
+printf '\n%sGoing back%s\n' "$BOLD" "$NC"
+property "the settings it leaves behind stand on their own" \
+    the_settings_left_behind_stand_on_their_own
+property "and it renders the stack from those settings" \
+    the_previous_version_renders_what_this_one_wrote
 
 echo
 printf '%s%d verified%s' "$GREEN" "$PASSED" "$NC"
