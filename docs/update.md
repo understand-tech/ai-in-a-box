@@ -20,10 +20,29 @@ An archive you have not verified is not a backup. See
 
 ### Installed from the package
 
+There is no package repository to upgrade from: a release is downloaded and
+verified the same way it was installed, and `apt-get install ./file.deb`
+upgrades an installed package as readily as it installs a new one.
+
 ```bash
-sudo apt-get install --only-upgrade understandtech
+VERSION=2026.09.2
+BASE=https://github.com/understand-tech/ai-in-a-box/releases/download/v$VERSION
+
+mkdir ut-update && cd ut-update
+for f in understandtech_${VERSION}_all.deb understandtech_${VERSION}_all.deb.sig \
+         ut-verify release.pub SHA256SUMS; do
+    curl -fsSLO "$BASE/$f"
+done
+chmod +x ut-verify
+./ut-verify understandtech_${VERSION}_all.deb
+
+sudo apt-get install ./understandtech_${VERSION}_all.deb
 sudo ut-install
 ```
+
+**The verification is not a formality here either.** `dpkg` ships with
+`no-debsig`, so it installs whatever it is given — see
+[installing](install.md#2--check-it-before-you-install-it).
 
 The upgrade replaces `/usr/share/understandtech` and **never touches
 `/etc/understandtech`**, so your settings and generated secrets survive it —
@@ -54,25 +73,44 @@ keeps it without asking. Passing `--domain` is what changes it, and changing it
 is a move, not an update: see
 [changing the address later](certificates-and-dns.md#changing-the-address-later).
 
-## What an update adds to an existing `.env`
+## What an update does to your settings
 
-New versions make variables mandatory. An `.env` written before them does not
-have them, and the stack refuses to start rather than running misconfigured.
-The installer generates each one:
+`.env` is not a file you keep any more — it is built, every time the installer
+runs, from two others:
 
-| Variable | Introduced with |
-|---|---|
-| `BACKUP_FILES_PASSWORD` | the file backup |
-| `CA_PASSWORD` | the certificate authority |
+| File | Whose it is | On an update |
+|---|---|---|
+| `/usr/share/understandtech/release.env` | ours | **replaced.** What this version decides: image tags, defaults, model settings. No secret is ever in it |
+| `/etc/understandtech/local.env` | yours | **never touched.** Your address, your overrides, and every secret the installer generated |
+| `/etc/understandtech/.env` | built from the two | rebuilt. Yours wins over ours, every time |
 
-Both are printed once at the end. **Write down the backup password** — without
-it no snapshot can be read, including the certificate authority's root.
+That is what lets a new version change a default and have it reach your machine,
+which an `.env` written once never allowed.
 
-If you update by hand instead — `git pull && docker compose up -d` — the stack
-stops with `required variable BACKUP_FILES_PASSWORD is missing`. That is the
-designed behaviour, not a bug: a backup that is silently unencrypted is worse
-than a stack that will not start. Run the installer, or set the variables
-yourself.
+**Your first update splits the file you already have.** Anything in it that
+matches what this version decides is dropped, because dropping it changes
+nothing. Everything else is kept as yours, and the installer says how many
+values differ from what it would have chosen:
+
+```
+[ ok ] Split the settings: 34 kept as yours, 4 of them differing from this release
+[ ok ] The file as it was: /etc/understandtech/env.before-split
+```
+
+**Those four are not changed.** An update is the wrong moment to move a service,
+so a setting that differs is reported, never resolved. Aligning one is a
+separate, deliberate edit to `local.env`.
+
+New versions also make variables mandatory, and the stack refuses to start
+rather than run misconfigured. The installer generates each one and prints it
+once. **Write down the backup password** — without it no snapshot can be read,
+including the certificate authority's root.
+
+If you update by hand instead — `docker compose up -d` without running the
+installer — the stack stops with `required variable BACKUP_FILES_PASSWORD is
+missing`. That is the designed behaviour, not a bug: a backup that is silently
+unencrypted is worse than a stack that will not start.
+
 
 ## 3 · Verify
 
@@ -111,16 +149,23 @@ warns again. That switch is a deliberate act, never part of an update.
 
 Nothing is rolled back and nothing is lost: re-running the same command resumes.
 
-To go back to the previous version:
+To go back to the previous version, install the package you came from and run
+the installer again:
 
 ```bash
-cd /opt/understandtech
-git log --oneline -5
-git checkout <previous-commit>
-docker compose up -d
+sudo apt-get install ./understandtech_<previous>_all.deb
+sudo ut-install
 ```
 
-The data is untouched by this — volumes and `DATA_ROOT` are not versioned. If
+`.env` stays one flat, complete file at the same path, so a version that knows
+nothing of `local.env` reads it anyway. Two checks in `test/migration.sh` hold
+that: the settings left behind stand on their own, and the previous version's
+compose files render a stack from them.
+
+On an install that still lives in a git checkout, `git checkout <previous-commit>`
+followed by `docker compose up -d` does the same thing.
+
+The data is untouched either way — volumes and `DATA_ROOT` are not versioned. If
 the data itself is wrong, see [restoring](restore.md).
 
 ## Rehearsing an update
