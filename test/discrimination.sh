@@ -314,8 +314,12 @@ if grep -q 'checkouts_holding_settings' "$REPO_ROOT/ut-install"; then
         "sed -i.bak 's| CA_PASSWORD GPU_VM_API_TOKEN)| CA_PASSWORD)|' ut-install"
 
     install_walk_discriminates "a database nobody has the password for, accepted" \
-        "the install stops, and says which volume" \
-        "sed -i.bak 's|^    ! is_shipped_placeholder .*MONGODB_PASSWORD.*$|    true|' ut-install"
+        "the install stops, and says which volume and what to do" \
+        "sed -i.bak 's|^    \[\[ -n \"\$(env_get \"\$env_file\" MONGODB_PASSWORD .*$|    true|' ut-install"
+
+    install_walk_discriminates "a password refused for the way it looks" \
+        "the install carries on, because that password is the right one" \
+        "sed -i.bak 's|^    \[\[ -n \"\$(env_get \"\$env_file\" MONGODB_PASSWORD .*$|    ! is_shipped_placeholder \"\$(env_get \"\$env_file\" MONGODB_PASSWORD || true)\"|' ut-install"
 
     install_walk_discriminates "full address pools noticed only when it is too late" \
         "the preflight stops before anything is written" \

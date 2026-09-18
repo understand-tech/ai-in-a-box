@@ -506,9 +506,11 @@ step_fetch_repo() {
     log_info "Cloned ${REPO_REF} into ${INSTALL_DIR}"
 }
 
+# Whatever it looks like, the password a machine was installed with is the
+# password of its database: mongo only reads it when it creates the volume.
 settings_carry_database_credentials() {
     local env_file=$1
-    ! is_shipped_placeholder "$(env_get "$env_file" MONGODB_PASSWORD || true)"
+    [[ -n "$(env_get "$env_file" MONGODB_PASSWORD || true)" ]]
 }
 
 # Generating a new password here would not reach the database — mongo reads it

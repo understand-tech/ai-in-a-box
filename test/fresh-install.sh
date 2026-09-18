@@ -126,6 +126,8 @@ state_setup() {
         no_settings_dir) echo 'rm -rf /etc/understandtech' ;;
         pools_full)    echo ': # the daemon refuses through the stub' ;;
         orphan_volume) echo ': # the volume is asserted through the stub' ;;
+        volume_with_shipped_password)
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'MONGODB_USERNAME="mongoadmin"\nMONGODB_PASSWORD="12345678"\n'"'"' > /etc/understandtech/local.env' ;;
         previous_checkout)
             echo 'install -d /opt/understandtech && printf '"'"'UT_DOMAIN="carried.example"\nJWT_SECRET="keptfromthecheckout0123456789abcdef0123456789ab"\nLOG_LEVEL="WARNING"\n'"'"' > /opt/understandtech/.env' ;;
         checkout_without_domain)
@@ -260,6 +262,32 @@ an_orphan_volume_stops_the_install() {
     return 1
 }
 
+# The password a machine was installed with is the password of its database,
+# whatever it looks like: mongo only ever reads it when it creates the volume.
+a_shipped_password_is_still_a_password() {
+    local output
+    output=$(output_of volume_with_shipped_password)
+    if grep -q 'holds no password for it' <<< "$output"; then
+        echo "the install refused a database whose password it holds"
+        echo "$output"
+        return 1
+    fi
+    grep -q 'Database already initialised' <<< "$output" && return 0
+    echo "$output"
+    return 1
+}
+
+the_way_back_comes_before_the_way_out() {
+    local output first_rm first_put
+    output=$(output_of orphan_volume)
+    first_put=$(grep -n 'MONGODB_USERNAME and MONGODB_PASSWORD' <<< "$output" | head -1 | cut -d: -f1)
+    first_rm=$(grep -n 'docker volume rm' <<< "$output" | head -1 | cut -d: -f1)
+    [[ -n "$first_put" && -n "$first_rm" ]] || { echo "$output"; return 1; }
+    (( first_put < first_rm )) && return 0
+    echo "destroying the volume is offered before putting the password back"
+    return 1
+}
+
 printf '%sWalking a fresh install%s %s(the installer, from a machine in a known state)%s\n\n' \
     "$BOLD" "$NC" "$DIM" "$NC"
 
@@ -271,6 +299,7 @@ run_install_from_state empty_settings
 run_install_from_state already_set
 run_install_from_state no_settings_dir
 MONGO_VOLUME_EXISTS=yes run_install_from_state orphan_volume
+MONGO_VOLUME_EXISTS=yes run_install_from_state volume_with_shipped_password -
 NETWORK_CREATE_EXIT=1 run_install_from_state pools_full
 run_install_from_state previous_checkout -
 run_install_from_state checkout_without_domain -
@@ -320,6 +349,12 @@ property "an install too old to name its address has it read from its URLs" \
 printf '\n%sA database nobody has the password for%s\n' "$BOLD" "$NC"
 property "the install stops, and says which volume and what to do" \
     an_orphan_volume_stops_the_install
+property "it offers the way back before the way out" \
+    the_way_back_comes_before_the_way_out
+
+printf '\n%sA database whose password happens to look shipped%s\n' "$BOLD" "$NC"
+property "the install carries on, because that password is the right one" \
+    a_shipped_password_is_still_a_password
 
 printf '\n%s%d verified%s' "$GREEN" "$PASSED" "$NC"
 if (( FAILED )); then
