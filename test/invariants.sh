@@ -135,21 +135,43 @@ seconds_in_duration() {
     esac
 }
 
+# Each start_period is reported against the service it belongs to, so two
+# services sharing one value are two findings, not one.
 check_no_service_starts_slower_than_the_installer_waits() {
-    local budget period seconds service
+    local budget line service period seconds
     budget=$(grep -m1 -oE 'HEALTH_TIMEOUT="\$\{UT_HEALTH_TIMEOUT:-[0-9]+' "$REPO_ROOT/ut-install" 2>/dev/null \
         | grep -oE '[0-9]+$') || return 0
     [[ -n "$budget" ]] || return 0
-    while read -r period; do
-        [[ -n "$period" ]] || continue
-        seconds=$(seconds_in_duration "$period")
-        (( seconds > budget )) || continue
-        service=$(grep -B 40 -m1 "start_period: ${period}" "$REPO_ROOT/compose.yaml" 2>/dev/null \
-            | grep -E '^  [a-z][a-z0-9-]*:' | tail -1 | tr -d ' :')
-        report "start-period-outlasts-the-install:${service:-unknown}" \
-            "${service:-a service} declares start_period ${period}, longer than the $(( budget / 60 )) minutes ut-install waits — the install gives up on a service that was never going to be ready in time"
-    done < <(grep -hoE '^\s*start_period: [0-9]+[hms]' "$REPO_ROOT/compose.yaml" 2>/dev/null \
-        | grep -oE '[0-9]+[hms]$' | sort -u)
+    service=""
+    while IFS= read -r line; do
+        case "$line" in
+            "  "[a-z]*":")
+                service=${line#  }; service=${service%:}
+                ;;
+            *start_period:*)
+                period=$(printf '%s' "$line" | grep -oE '[0-9]+[hms]') || continue
+                [[ -n "$period" ]] || continue
+                seconds=$(seconds_in_duration "$period")
+                (( seconds > budget )) || continue
+                report "start-period-outlasts-the-install:${service:-unknown}" \
+                    "${service:-a service} declares start_period ${period}, longer than the $(( budget / 60 )) minutes ut-install waits — the install gives up on a service that was never going to be ready in time"
+                ;;
+        esac
+    done < "$REPO_ROOT/compose.yaml"
+}
+
+# A backup deferred to a clock time cannot answer a health check that asks for a
+# recent archive: the service stays unhealthy until that hour comes round.
+check_the_first_backup_is_not_deferred_to_a_clock_time() {
+    local begin
+    begin=$(grep -m1 -oE 'DB01_BACKUP_BEGIN: "?\$\{BACKUP_BEGIN:-[^}]*\}"?' "$REPO_ROOT/compose.yaml" 2>/dev/null \
+        | sed 's/.*:-//; s/}"*$//') || return 0
+    [[ -n "$begin" ]] || return 0
+    case "$begin" in
+        +*) return 0 ;;
+    esac
+    report "first-backup-deferred:${begin}" \
+        "the database backup defaults to ${begin}, a time of day: nothing is backed up before it comes, and the health check that looks for an archive cannot pass until then"
 }
 
 check_defaults_do_not_diverge() {
@@ -344,6 +366,7 @@ main() {
     check_compose_declares_no_secret_default
     check_healthcheck_asks_for_a_certified_name
     check_no_service_starts_slower_than_the_installer_waits
+    check_the_first_backup_is_not_deferred_to_a_clock_time
     check_defaults_do_not_diverge
     check_required_variables_appear_in_the_template
     check_required_variables_have_a_value_or_are_generated
