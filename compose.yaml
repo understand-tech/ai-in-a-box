@@ -158,7 +158,7 @@ services:
           memory: 1G
 
   mongodb-backup:
-    image: tiredofit/db-backup:4.1.100
+    image: ${DB_BACKUP_IMAGE:-tiredofit/db-backup:latest}
     container_name: ut-mongodb-backup
     restart: unless-stopped
     environment:
