@@ -1,5 +1,9 @@
 # Certificates and DNS
 
+For the operator deciding how an appliance is reached and trusted. After
+reading you will know which names to publish, which of the three TLS modes
+fits, and what the local authority does whichever one you pick.
+
 Two questions that look like one and are not: **what a browser must trust**, and
 **what one machine proves to another**. The first depends on what you choose.
 The second never does.
@@ -124,6 +128,18 @@ authority. `ut-certificate` obtains and renews one.
 ./ut-certificate              # obtain, or renew within 30 days of expiry
 ./ut-certificate --install    # renew daily from cron
 ```
+
+> **Installed from the package, tell it where the settings are.**
+> `ut-certificate` looks for `.env` in `/opt/understandtech`, which is where a
+> git checkout puts it. The package puts the release in
+> `/usr/share/understandtech` and the settings in `/etc/understandtech`, so the
+> commands above find no `.env` unless you say:
+>
+> ```bash
+> sudo UT_INSTALL_DIR=/usr/share/understandtech ut-certificate --check
+> ```
+>
+> Export it for `--install` too, or the cron job it writes has the same problem.
 
 **Validation is DNS-01, so the appliance is never reached from the internet.**
 It proves the domain by writing a DNS record, not by answering a request.
@@ -307,3 +323,20 @@ docker compose up -d
 Publish the six DNS records first, and replace the certificate if you are in
 `custom` mode — the old one no longer matches. Users signed in through OIDC have
 to sign in again: the redirect URI changed.
+
+## What this document does not cover
+
+**Your DNS provider.** Which records to publish is here; how to publish them is
+your provider's business. `ut-certificate` needs provider credentials for
+DNS-01 — `lego dnshelp` lists what each one wants.
+
+**The identity provider's own certificate.** Sign-on is configured in the
+browser, not here; see
+[first-run configuration](first-run-configuration.md#2--configure-sign-on).
+
+**What a user sees when a certificate is not trusted**, and what to tell them.
+That is [using the platform](using-the-platform.md#the-first-time-a-certificate-warning).
+
+**Certificates inside generated applications.** The App Builder's apps are
+served by the same wildcard site, so they inherit whatever the apex uses; they
+have no certificate of their own.

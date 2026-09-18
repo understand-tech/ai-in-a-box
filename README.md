@@ -99,6 +99,8 @@ appliance. Change it and all six follow.
 | [Certificates and DNS](docs/certificates-and-dns.md) | Which names to publish, who terminates TLS, and what the local authority does. |
 | [Updating](docs/update.md) | A new version. What it adds to an existing `.env`, and what changes that you will notice. |
 | [Restoring](docs/restore.md) | The database, the customer's files, or the certificate authority — separately. |
+| [When it breaks](docs/when-it-breaks.md) | A symptom, and which layer it belongs to. Start here when something is wrong. |
+| [Decommissioning](docs/decommissioning.md) | Taking a machine out of service. What removing the package does **not** remove. |
 
 **For the people who use the platform**:
 [using the platform](docs/using-the-platform.md).

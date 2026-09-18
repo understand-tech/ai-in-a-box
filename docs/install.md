@@ -209,21 +209,10 @@ reinstallable in a minute.
 It says which step and which line. Nothing is rolled back, and the same command
 resumes from there. The full log is at `/var/log/ut-install.log`.
 
-The two failures worth knowing in advance:
-
-**The GPU is not reachable from containers.** The preflight says so. Install the
-NVIDIA container toolkit, then re-run.
-
-**Docker has no address space left.** `Error response from daemon: all
-predefined address pools have been fully subnetted`. The stack needs four
-networks, and a machine that has hosted generated applications keeps theirs long
-after they stop. `sudo ut-install --check` catches it before anything is
-written. See [starting states](starting-states.md#docker-address-pools-which-run-out-quietly).
-
-**The address does not resolve.** The appliance starts, but nothing reaches it
-by name. Either add the DNS records — six names, see
-[certificates and DNS](certificates-and-dns.md) — or re-run with a `--domain`
-that resolves.
+Three failures account for almost all of them — the GPU not reachable from
+containers, Docker out of address space, and an address that does not resolve.
+Each one, with what to do about it, is in
+[when it breaks](when-it-breaks.md#during-an-install).
 
 ## Installing beside something already running
 

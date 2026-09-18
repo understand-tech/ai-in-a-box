@@ -1,5 +1,9 @@
 # Updating
 
+For the operator moving an appliance that is in service to a new version. After
+reading you will know what to do before touching anything, what an update does
+to the settings you have, and how to get back if it goes wrong.
+
 An update is the operation that can cost a customer their data, so it is worth
 doing in the order below rather than the order that seems quicker.
 
@@ -186,3 +190,19 @@ MIGRATION_ARCHIVE=/path/to/mongo.archive.gz ./test/migration-on-data.sh
 
 It installs under its own project and prefixes, and refuses to start if any
 rendered name falls outside its own namespace.
+
+## What this document does not cover
+
+**What is new in a version.** This page is the procedure, not the release
+notes. What changed is on the release itself.
+
+**Changing a setting outside an update.** That is
+[configuration](configuration.md); this page only says what an update does to
+the settings already there.
+
+**Restoring after a failed update.** Going back to the previous version is
+covered above; putting data back is [restoring](restore.md).
+
+**Updating a second machine enrolled against this one.** Nothing here covers a
+fleet; see the machine-facing surface in
+[certificates and DNS](certificates-and-dns.md).
