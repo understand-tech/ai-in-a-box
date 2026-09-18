@@ -50,6 +50,7 @@ lay_out_both_versions() {
         git -C "$REPO_ROOT" show "$FROM_REF:$file" > "$BEFORE/$file" 2>/dev/null
     done
     cp "$REPO_ROOT"/compose*.yaml "$AFTER/"
+    cp "$REPO_ROOT/release.env" "$AFTER/"
 
     cp "$BEFORE/.env.example" "$BEFORE/.env"
     cp "$BEFORE/.env.example" "$AFTER/.env"
@@ -131,14 +132,24 @@ the_new_stack_refuses_an_untouched_env() {
 
 the_installer_supplies_what_is_missing() {
     local key
+    # The old world first: one flat .env, secrets and all. That is the machine
+    # the upgrade actually finds.
+    INSTALL_DIR="$BEFORE"
     generate_application_secrets "$BEFORE/.env" >/dev/null 2>&1
-    generate_database_credentials "$BEFORE/.env" >/dev/null 2>&1
+    generate_database_credentials "$BEFORE/.env" "$BEFORE/.env" >/dev/null 2>&1
+    cp "$BEFORE/.env" "$AFTER/.env"
+
+    INSTALL_DIR="$AFTER"
+    migrate_existing_settings_into_local "$AFTER/.env" "$AFTER/local.env" >/dev/null 2>&1
+    render_settings "$AFTER/.env" "$AFTER/local.env" >/dev/null 2>&1
+    generate_database_credentials "$AFTER/.env" "$AFTER/local.env" >/dev/null 2>&1
+    generate_application_secrets "$AFTER/local.env" >/dev/null 2>&1
+    render_settings "$AFTER/.env" "$AFTER/local.env" >/dev/null 2>&1
 
     while read -r key; do
         [[ -n "$key" ]] || continue
-        grep -qE "^${key}=\"?.+\"?$" "$BEFORE/.env" || { echo "$key is still unset"; return 1; }
+        grep -qE "^${key}=\"?.+\"?$" "$AFTER/.env" || { echo "$key is still unset"; return 1; }
     done <<< "$(required_variables_in "$AFTER")"
-    cp "$BEFORE/.env" "$AFTER/.env"
 }
 
 the_new_stack_then_renders() {
@@ -174,6 +185,55 @@ the_data_directory_is_unchanged() {
 
 database_credentials_in() {
     rendered "$1" -f compose.yaml | grep -E 'MONGO_INITDB_ROOT_(USERNAME|PASSWORD):' | sort | cksum
+}
+
+# The older version declares no ${VAR:?} at all, so asking what it requires
+# would loop over an empty list and pass whatever happened.
+the_settings_left_behind_stand_on_their_own() {
+    local key missing=()
+    while read -r key; do
+        [[ -n "$key" ]] || continue
+        grep -qE "^${key}=.+" "$AFTER/.env" || missing+=("$key")
+    done <<< "$(required_variables_in "$AFTER")"
+    (( ${#missing[@]} == 0 )) && return 0
+    echo "the settings file does not stand on its own: ${missing[*]}"
+    return 1
+}
+
+what_the_release_decides_reaches_the_machine() {
+    local probe=UT_RELEASE_PROBE_VALUE decided="decided-by-the-release"
+    INSTALL_DIR="$AFTER"
+    printf '%s="%s"\n' "$probe" "$decided" >> "$AFTER/release.env"
+    render_settings "$AFTER/.env" "$AFTER/local.env" >/dev/null 2>&1
+    grep -q "^${probe}=\"${decided}\"$" "$AFTER/.env" && return 0
+    echo "a value only the release decides did not reach the settings file"
+    return 1
+}
+
+a_local_override_still_wins() {
+    local probe=UT_RELEASE_PROBE_VALUE chosen="chosen-by-the-customer"
+    INSTALL_DIR="$AFTER"
+    printf '%s="%s"\n' "$probe" "$chosen" >> "$AFTER/local.env"
+    render_settings "$AFTER/.env" "$AFTER/local.env" >/dev/null 2>&1
+    if ! grep -q "^${probe}=\"${chosen}\"$" "$AFTER/.env"; then
+        echo "the customer's own value is not what the settings file ends up with"
+        return 1
+    fi
+    if grep -q "^${probe}=\"decided-by-the-release\"$" "$AFTER/.env"; then
+        echo "the release's value survived alongside the customer's"
+        return 1
+    fi
+}
+
+the_previous_version_renders_what_this_one_wrote() {
+    local dir="$WORK_DIR/rollback"
+    rm -rf "$dir"; mkdir -p "$dir"
+    cp "$BEFORE"/compose*.yaml "$dir/" 2>/dev/null
+    cp "$AFTER/.env" "$dir/.env"
+    rendered "$dir" -f compose.yaml >/dev/null 2>&1 && return 0
+    echo "the previous version refuses the settings this one produced"
+    rendered "$dir" -f compose.yaml 2>&1 | head -3
+    return 1
 }
 
 the_database_keeps_its_credentials() {
@@ -279,6 +339,18 @@ property "the containers that lose a fixed name are named nowhere else" \
     renamed_containers_are_not_named_elsewhere
 property "a renamed container keeps its volumes" \
     a_renamed_container_keeps_its_volumes
+
+printf '\n%sWhat the release decides%s\n' "$BOLD" "$NC"
+property "a value only the release sets reaches the machine" \
+    what_the_release_decides_reaches_the_machine
+property "and the customer's own value still wins over it" \
+    a_local_override_still_wins
+
+printf '\n%sGoing back%s\n' "$BOLD" "$NC"
+property "the settings it leaves behind stand on their own" \
+    the_settings_left_behind_stand_on_their_own
+property "and it renders the stack from those settings" \
+    the_previous_version_renders_what_this_one_wrote
 
 echo
 printf '%s%d verified%s' "$GREEN" "$PASSED" "$NC"

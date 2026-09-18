@@ -170,7 +170,7 @@ check_prerequisites() {
         fi
     else
         log_warn "No .env in $INSTALL_DIR yet — units installed anyway."
-        log_warn "The stack will boot once you create it: cp .env.example .env"
+        log_warn "The stack will boot once ut-install has written it"
     fi
 }
 
@@ -314,7 +314,7 @@ do_check() {
 
     if [[ ! -f "$INSTALL_DIR/.env" ]]; then
         log_error "No .env in $INSTALL_DIR — nothing to check yet."
-        echo "  cp .env.example .env"
+        echo "  sudo ./ut-install"
         exit 1
     fi
 

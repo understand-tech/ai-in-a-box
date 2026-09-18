@@ -1,13 +1,21 @@
 # Configuration
 
-Everything is in one file: `/opt/understandtech/.env`. `compose.yaml` reads it
-and nothing else.
+`compose.yaml` reads one file and nothing else: `.env`. But `.env` is **built**,
+not kept — the installer writes it from what the release decides and from what
+you chose, and rebuilds it every time it runs. Editing it directly means losing
+the edit at the next update.
+
+**What you edit is `/etc/understandtech/local.env`.** It is yours, no upgrade
+replaces it, and every value in it wins over the release's.
 
 ```bash
-cd /opt/understandtech
-sudo nano .env
+sudo nano /etc/understandtech/local.env
+sudo ut-install --skip-pull
 docker compose up -d
 ```
+
+`ut-install` is what turns your edit into `.env`. Running it with `--skip-pull`
+does that without downloading anything.
 
 `up -d` recreates only the containers whose configuration changed. It is not a
 restart of the appliance.
@@ -37,14 +45,14 @@ address.
 
 ## The secrets
 
-`ut-install` generates them. If you are filling `.env` by hand, all of them at
+`ut-install` generates them. If you are filling `local.env` by hand, all of them at
 once:
 
 ```bash
 for k in MONGODB_USERNAME MONGODB_PASSWORD JWT_SECRET \
          STATE_SECRET OPENID_SECRET_KEY ADMIN_SETUP_PASSWORD \
          GPU_VM_API_TOKEN BACKUP_FILES_PASSWORD CA_PASSWORD; do
-    sed -i "s|^${k}=.*|${k}=\"$(openssl rand -hex 24)\"|" .env
+    sed -i "s|^${k}=.*|${k}=\"$(openssl rand -hex 24)\"|" /etc/understandtech/local.env
 done
 ```
 
@@ -74,7 +82,7 @@ before that leaves the key empty.
 Once the platform is up:
 
 1. In the platform UI, **DEVELOPER → API keys**, create one.
-2. Set `APP_BUILDER_GATEWAY_API_KEY` in `.env`.
+2. Set `APP_BUILDER_GATEWAY_API_KEY` in `local.env`.
 3. `docker network create proxy`
 4. Uncomment `COMPOSE_FILE`.
 5. `docker compose up -d`

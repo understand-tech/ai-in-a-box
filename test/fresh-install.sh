@@ -86,9 +86,14 @@ STUBS
 # private and weigh tens of gigabytes. Everything that has ever broken here
 # broke before that line.
 run_install_from_state() {
-    local state=$1 domain=${2:-box.example.test}
+    local state=$1 domain=${2:-box.example.test} domain_arg
     local probe="$WORK_DIR/$state"
     mkdir -p "$probe"
+
+    # "-" leaves --domain off, which is the only way to see what the installer
+    # decides on its own rather than what the caller told it.
+    domain_arg="--domain $domain"
+    [[ "$domain" == "-" ]] && domain_arg=""
 
     cat > "$WORK_DIR/walk-$state.sh" <<PROBE
 set -u
@@ -98,10 +103,11 @@ dpkg -i --force-depends /out/understandtech_${VERSION}_all.deb >/dev/null 2>&1
 $(state_setup "$state")
 
 UT_REGISTRY_TOKEN=test-token PULL_EXIT=9 \\
-    ut-install --domain $domain > /w/$state/output.txt 2>&1
+    ut-install $domain_arg > /w/$state/output.txt 2>&1
 printf 'EXIT=%s\n' "\$?" >> /w/$state/output.txt
 
 cp /etc/understandtech/.env /w/$state/env 2>/dev/null || : > /w/$state/env
+cp /opt/understandtech/.env /w/$state/checkout-env 2>/dev/null || : > /w/$state/checkout-env
 chmod -R a+rw /w/$state
 PROBE
 
@@ -116,10 +122,14 @@ state_setup() {
     case "$1" in
         bare)          echo ': # nothing beyond the package' ;;
         empty_settings) echo 'install -m 600 /dev/null /etc/understandtech/.env' ;;
-        already_set)   echo 'install -m 600 /usr/share/understandtech/.env.example /etc/understandtech/.env' ;;
+        already_set)   echo 'install -m 600 /usr/share/understandtech/release.env /etc/understandtech/.env' ;;
         no_settings_dir) echo 'rm -rf /etc/understandtech' ;;
         pools_full)    echo ': # the daemon refuses through the stub' ;;
         orphan_volume) echo ': # the volume is asserted through the stub' ;;
+        previous_checkout)
+            echo 'install -d /opt/understandtech && printf '"'"'UT_DOMAIN="carried.example"\nJWT_SECRET="keptfromthecheckout0123456789abcdef0123456789ab"\nLOG_LEVEL="WARNING"\n'"'"' > /opt/understandtech/.env' ;;
+        checkout_without_domain)
+            echo 'install -d /opt/understandtech && printf '"'"'PUBLIC_BASE_URL="https://named.by.the.urls"\nBACKEND_URL="https://named.by.the.urls/api"\nJWT_SECRET="keptfromthecheckout0123456789abcdef0123456789ab"\n'"'"' > /opt/understandtech/.env' ;;
         *)             echo ': ' ;;
     esac
 }
@@ -166,13 +176,49 @@ the_settings_render_a_stack() {
     return 1
 }
 
+checkout_of() { cat "$WORK_DIR/$1/checkout-env" 2>/dev/null; }
+
+the_checkout_settings_are_carried_over() {
+    local settings
+    settings=$(settings_of previous_checkout)
+    grep -q 'keptfromthecheckout' <<< "$settings" \
+        || { echo "the secret was regenerated instead of carried over"; return 1; }
+    grep -q '^LOG_LEVEL="WARNING"' <<< "$settings" \
+        || { echo "a setting the customer had changed was lost"; return 1; }
+    return 0
+}
+
+the_address_comes_from_the_checkout() {
+    local settings
+    settings=$(settings_of previous_checkout)
+    grep -q '^UT_DOMAIN="carried.example"' <<< "$settings" && return 0
+    echo "the address became $(grep -m1 '^UT_DOMAIN=' <<< "$settings")"
+    return 1
+}
+
+the_address_is_read_from_the_urls() {
+    local settings
+    settings=$(settings_of checkout_without_domain)
+    grep -q '^UT_DOMAIN="named.by.the.urls"' <<< "$settings" && return 0
+    echo "the address became $(grep -m1 '^UT_DOMAIN=' <<< "$settings")"
+    return 1
+}
+
+the_checkout_is_left_alone() {
+    grep -q 'keptfromthecheckout' <<< "$(checkout_of previous_checkout)" && return 0
+    echo "the checkout's own .env was changed or removed"
+    return 1
+}
+
 secrets_are_not_the_shipped_ones() {
-    local state=$1 shipped
-    shipped=$(grep -m1 '^JWT_SECRET=' "$REPO_ROOT/.env.example" | cut -d= -f2- | tr -d '"')
-    local mine
+    local state=$1 mine
+    if grep -q '^JWT_SECRET=' "$REPO_ROOT/release.env"; then
+        echo "JWT_SECRET ships in release.env — it is meant to be generated, never shipped"
+        return 1
+    fi
     mine=$(grep -m1 '^JWT_SECRET=' <<< "$(settings_of "$state")" | cut -d= -f2- | tr -d '"')
-    [[ -n "$mine" && "$mine" != "$shipped" ]] && return 0
-    echo "JWT_SECRET is '${mine}', the template ships '${shipped}'"
+    [[ ${#mine} -ge 32 ]] && return 0
+    echo "JWT_SECRET is '${mine}' — too short to be a generated secret"
     return 1
 }
 
@@ -226,6 +272,8 @@ run_install_from_state already_set
 run_install_from_state no_settings_dir
 MONGO_VOLUME_EXISTS=yes run_install_from_state orphan_volume
 NETWORK_CREATE_EXIT=1 run_install_from_state pools_full
+run_install_from_state previous_checkout -
+run_install_from_state checkout_without_domain -
 
 printf '%sA machine with nothing on it%s\n' "$BOLD" "$NC"
 property "the install reaches the point where it pulls images" \
@@ -258,6 +306,16 @@ property "running the installer again changes nothing" \
 printf '\n%sA machine whose Docker address pools are full%s\n' "$BOLD" "$NC"
 property "the preflight stops before anything is written" \
     the_preflight_stops_on_full_pools
+
+printf '\n%sAn install that still lives in a git checkout%s\n' "$BOLD" "$NC"
+property "its settings are carried over, not regenerated" \
+    the_checkout_settings_are_carried_over
+property "the address it already answers on is kept" \
+    the_address_comes_from_the_checkout
+property "the checkout itself is left untouched" \
+    the_checkout_is_left_alone
+property "an install too old to name its address has it read from its URLs" \
+    the_address_is_read_from_the_urls
 
 printf '\n%sA database nobody has the password for%s\n' "$BOLD" "$NC"
 property "the install stops, and says which volume and what to do" \

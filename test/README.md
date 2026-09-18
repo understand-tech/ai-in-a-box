@@ -143,9 +143,9 @@ produce a false positive eventually, and the whole thing gets switched off.
 | Check | Idea | Defect it addresses |
 |---|---|---|
 | `plaintext-secret` | A shipped secret is a shared secret | `JWT_SECRET` identical at every customer: a token minted at one is accepted at another |
-| `compose-secret-default` | A secret ships from more than one file | `MONGODB_PASSWORD` fell back to `12345678` in `compose.yaml`, which emptying `.env.example` would not have touched |
+| `compose-secret-default` | A secret ships from more than one file | `MONGODB_PASSWORD` fell back to `12345678` in `compose.yaml`, which emptying the template of the day would not have touched |
 | `divergent-default` | One variable, one default | `MONGODB_HOST` read `mongodb` for the App Builder and the empty string for seven services, so an `.env` missing the line started them against a database host of `""` |
-| `required-variable-missing` | A variable that stops the stack must be visible | `CA_PASSWORD` was required by `compose.yaml` and in no template: a copy of `.env.example` refused to start, naming a variable the customer had never seen |
+| `required-variable-missing` | A variable that stops the stack must be visible | `CA_PASSWORD` was required by `compose.yaml` and in no template: a copy of the template refused to start, naming a variable the customer had never seen |
 | `undeclared-variable` | A variable with no default must be declared | Compose substitutes an empty string, so the stack starts misconfigured instead of refusing to start |
 | `unlisted-port` | Reaching the network must be deliberate | Database and inference engines reachable from the LAN, inference without authentication |
 | `unpinned-image` | A tag moves, a digest does not | Two boxes reporting the same version run different software, and a diagnosis on one no longer transfers |
@@ -316,7 +316,7 @@ Not implemented yet. Listed so the gap is visible rather than assumed covered.
 | `shellcheck` | Shell fails quietly | Unknown — it has never been run against these four scripts |
 | unit tests | Pure functions test without a machine | `env_set` does not recognise a commented-out variable and appends a duplicate |
 | stubbed installer | Idempotence is proven, not promised | A leaking token, a second run that is not a no-op. The missing terminal is now covered: `read_domain` falls back and says so |
-| undocumented variable | A default nobody can find is not a setting | Preventive: `NIM_LLM_BIND_ADDRESS` decided whether a compute node was reachable and appeared in no `.env.example`; having a default, `undeclared-variable` stayed silent |
+| undocumented variable | A default nobody can find is not a setting | Preventive: `NIM_LLM_BIND_ADDRESS` decided whether a compute node was reachable and appeared in no template; having a default, `undeclared-variable` stayed silent |
 | upgrade on real data | A rendered configuration is not a running one | Unknown — `migration.sh` proves what the configuration does, not what a database with 2.4 GB of documents does |
 
 `compose config` has since landed as the first three capabilities, which is
@@ -363,7 +363,7 @@ MIGRATION_API_IMAGE=ghcr.io/understand-tech/ut-api-customer:latest-arm64 \
   ./test/migration-on-data.sh
 ```
 
-`MIGRATION_API_IMAGE` is needed because `.env.example` names `2.0-arm64` while
+`MIGRATION_API_IMAGE` is needed because `release.env` names `2.0-arm64` while
 the appliance runs `latest-arm64` — one more reason the `unpinned-image` check
 exists. Without an application image on the machine, the run stops after the
 data comparison and says so.

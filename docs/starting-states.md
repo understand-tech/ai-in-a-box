@@ -35,7 +35,7 @@ builds it in a container, runs the installer, and checks the outcome.
 |---|---|
 | **Nothing but the package.** No `.env`, no volumes. | Installs. Every required variable gets a value, and the result renders a stack. |
 | **The settings directory is gone.** Someone removed `/etc/understandtech`. | It is recreated. The link from the release directory is no longer dangling. |
-| **The settings file exists and says nothing.** An empty `.env`. | Filled from the template, not kept. An empty file is not a configured machine. |
+| **The settings file exists and says nothing.** An empty `.env`. | Built from the release and your own settings, not kept. An empty file is not a configured machine. |
 | **Already configured.** A complete `.env`, a running install. | Running the installer again changes nothing. |
 | **A database nobody has the password for.** A mongo volume is there, `.env` holds no password. | **Stops**, names the volume, gives the two ways out. |
 | **Two separate machines.** | They do not share a secret. |

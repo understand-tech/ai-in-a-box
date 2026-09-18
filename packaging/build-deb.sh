@@ -38,13 +38,19 @@ stage_release_files() {
     install -d "$root/$SHARE_DIR"
     install -m 644 "$REPO_ROOT"/compose*.yaml "$root/$SHARE_DIR/"
     install -m 644 "$REPO_ROOT/Caddyfile" "$root/$SHARE_DIR/"
-    install -m 644 "$REPO_ROOT/.env.example" "$root/$SHARE_DIR/"
     install -m 644 "$REPO_ROOT/packaging/release.pub" "$root/$SHARE_DIR/"
     cp -r "$REPO_ROOT/caddy" "$root/$SHARE_DIR/"
     cp -r "$REPO_ROOT/appbuilder" "$root/$SHARE_DIR/"
     install -m 755 "$REPO_ROOT/setup-autostart.sh" "$root/$SHARE_DIR/"
     install -m 755 "$REPO_ROOT/backup-files.sh" "$root/$SHARE_DIR/"
     find "$root/$SHARE_DIR/caddy" "$root/$SHARE_DIR/appbuilder" -type f -exec chmod 644 {} +
+}
+
+stamp_the_release_version() {
+    local root=$1 version=$2
+    sed "s|^UT_RELEASE_VERSION=.*|UT_RELEASE_VERSION=\"${version}\"|" \
+        "$REPO_ROOT/release.env" > "$root/$SHARE_DIR/release.env"
+    chmod 644 "$root/$SHARE_DIR/release.env"
 }
 
 stage_commands() {
@@ -155,6 +161,7 @@ main() {
     chmod 755 "$root"
 
     stage_release_files "$root"
+    stamp_the_release_version "$root" "$VERSION"
     stage_commands "$root"
     stage_documentation "$root"
     link_configuration_into_project_directory "$root"

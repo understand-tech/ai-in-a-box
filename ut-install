@@ -10,6 +10,7 @@ REGISTRY_USER="${UT_REGISTRY_USER:-dgx-access}"
 PACKAGE_SHARE_DIR="/usr/share/understandtech"
 CHECKOUT_INSTALL_DIR="/opt/understandtech"
 INSTALL_DIR="${UT_INSTALL_DIR:-}"
+FROM_CHECKOUT="${UT_FROM_CHECKOUT:-}"
 DATA_DIR="/var/lib/understandtech"
 LOG_FILE="/var/log/ut-install.log"
 TARGET_USER="${SUDO_USER:-root}"
@@ -80,6 +81,10 @@ Options
                        is not silently discarded.
   --token-file PATH    Read the registry token from a file instead of a prompt.
   --dir PATH           Install directory. Defaults to /usr/share/understandtech
+  --from-checkout PATH Take the settings from an install that lives in a git
+                       checkout. Found on its own when there is exactly one;
+                       needed when there are several. The checkout is read,
+                       never moved, changed or removed.
                        when installed from the package, /opt/understandtech
                        otherwise.
   --domain NAME        Address the platform is served at. Asked for when it is
@@ -320,7 +325,37 @@ token_required() {
     return 0
 }
 
-configured_domain() { env_get "$INSTALL_DIR/.env" UT_DOMAIN 2>/dev/null || true; }
+# Measured on a real machine: an install from before UT_DOMAIN existed has no
+# such line, and names its address in every URL instead.
+domain_named_by_the_urls() {
+    local file=$1 key url
+    for key in PUBLIC_BASE_URL DOMAIN_URL BACKEND_URL FRONTEND_URL_AUTH; do
+        url=$(env_get "$file" "$key" 2>/dev/null || true)
+        [[ -n "$url" ]] || continue
+        url=${url#*://}; url=${url%%/*}; url=${url%%:*}
+        [[ -n "$url" ]] || continue
+        printf '%s' "$url"
+        return 0
+    done
+    return 1
+}
+
+domain_written_in() {
+    local file=$1 named
+    named=$(env_get "$file" UT_DOMAIN 2>/dev/null || true)
+    if [[ -n "$named" ]]; then printf '%s' "$named"; return 0; fi
+    domain_named_by_the_urls "$file"
+}
+
+# The address is read before the settings are written, so /etc is still empty
+# here on a machine moving off a checkout.
+configured_domain() {
+    local found previous
+    found=$(domain_written_in "$INSTALL_DIR/.env" 2>/dev/null || true)
+    if [[ -n "$found" ]]; then printf '%s' "$found"; return 0; fi
+    previous=$(settings_of_a_previous_install 2>/dev/null) || return 0
+    domain_written_in "$previous" 2>/dev/null || true
+}
 
 domain_to_check() {
     local candidate="$DOMAIN"
@@ -496,38 +531,38 @@ die_on_a_database_nobody_has_the_password_for() {
 }
 
 generate_database_credentials() {
-    local env_file=$1 user
+    local env_file=$1 local_file=$2 user
 
     # The mongo image only reads MONGO_INITDB_ROOT_PASSWORD when it creates the
     # data directory. Rotating it later changes nothing in the database and just
     # stops every service from connecting.
     if database_already_initialised "$env_file"; then
-        settings_carry_database_credentials "$env_file" \
-            || die_on_a_database_nobody_has_the_password_for "$env_file"
+        settings_carry_database_credentials "$local_file" \
+            || die_on_a_database_nobody_has_the_password_for "$local_file"
         log_info "Database already initialised — leaving its credentials alone"
         return 0
     fi
 
-    if ! is_shipped_placeholder "$(env_get "$env_file" MONGODB_PASSWORD || true)"; then
+    if ! is_shipped_placeholder "$(env_get "$local_file" MONGODB_PASSWORD || true)"; then
         log_info "Database credentials already set"
         return 0
     fi
 
-    user=$(env_get "$env_file" MONGODB_USERNAME || true)
+    user=$(env_get "$local_file" MONGODB_USERNAME || true)
     [[ -z "$user" || "$user" == "mongoadmin" ]] && user="ut$(random_alphanumeric 8)"
-    env_set "$env_file" MONGODB_USERNAME "$user"
-    env_set "$env_file" MONGODB_PASSWORD "$(random_alphanumeric 32)"
+    env_set "$local_file" MONGODB_USERNAME "$user"
+    env_set "$local_file" MONGODB_PASSWORD "$(random_alphanumeric 32)"
     log_info "Generated database credentials"
 }
 
 generate_application_secrets() {
-    local env_file=$1 key rotated=()
+    local local_file=$1 key rotated=()
 
     for key in "${GENERATED_SECRET_KEYS[@]}"; do
-        if is_shipped_placeholder "$(env_get "$env_file" "$key" || true)"; then
+        if is_shipped_placeholder "$(env_get "$local_file" "$key" || true)"; then
             case "$key" in
-                JWT_SECRET|BACKUP_FILES_PASSWORD|CA_PASSWORD) env_set "$env_file" "$key" "$(random_alphanumeric 64)" ;;
-                *)                                env_set "$env_file" "$key" "$(random_alphanumeric 32)" ;;
+                JWT_SECRET|BACKUP_FILES_PASSWORD|CA_PASSWORD) env_set "$local_file" "$key" "$(random_alphanumeric 64)" ;;
+                *)                                env_set "$local_file" "$key" "$(random_alphanumeric 32)" ;;
             esac
             rotated+=("$key")
         fi
@@ -555,29 +590,133 @@ create_settings_file_behind() {
     install -m 600 /dev/null "$target"
 }
 
+settings_directory() {
+    local link=$1
+    if [[ -L "$link" ]]; then
+        dirname "$(readlink "$link")"
+    else
+        dirname "$link"
+    fi
+}
+
+key_is_overridden_locally() {
+    local key=$1 overridden=$2
+    printf '%s\n' "$overridden" | grep -qx "$key"
+}
+
+# An install that predates the package keeps its settings inside its checkout,
+# where /etc/understandtech never looks.
+checkouts_holding_settings() {
+    local candidate home
+    home=$(eval echo "~${TARGET_USER}" 2>/dev/null || echo /root)
+    for candidate in "$CHECKOUT_INSTALL_DIR" "$home/understand-tech" "$home/ai-in-a-box"; do
+        [[ -f "$candidate/.env" && ! -L "$candidate/.env" && -s "$candidate/.env" ]] || continue
+        printf '%s\n' "$candidate/.env"
+    done
+}
+
+settings_of_a_previous_install() {
+    local found count
+    if [[ -n "$FROM_CHECKOUT" ]]; then
+        [[ -s "$FROM_CHECKOUT/.env" ]] || die "No .env in ${FROM_CHECKOUT}."
+        printf '%s' "$FROM_CHECKOUT/.env"
+        return 0
+    fi
+    found=$(checkouts_holding_settings)
+    count=$(printf '%s' "$found" | grep -c . || true)
+    (( count == 0 )) && return 1
+    if (( count > 1 )); then
+        log_error "More than one previous install holds settings:"
+        printf '%s\n' "$found" | while IFS= read -r candidate; do log_error "  ${candidate}"; done
+        die "Say which one with --from-checkout PATH, or move the ones you do not want."
+    fi
+    printf '%s' "$found"
+}
+
+# Lines are carried over verbatim, never re-quoted: GATEWAY_MODELS holds JSON
+# inside single quotes, which env_set would rewrite as KEY="value" and corrupt.
+migrate_existing_settings_into_local() {
+    local env_file=$1 local_file=$2 release line key kept=0 diverged=0
+    release="$INSTALL_DIR/release.env"
+
+    [[ -s "$env_file" ]] || return 0
+    [[ -s "$local_file" ]] && return 0
+
+    install -m 600 "$env_file" "${local_file%/*}/env.before-split"
+    install -m 600 /dev/null "$local_file"
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        case "$line" in
+            [A-Za-z_]*=*) key=${line%%=*} ;;
+            *) continue ;;
+        esac
+        if grep -qxF "$line" "$release" 2>/dev/null; then continue; fi
+        if grep -qE "^${key}=" "$release" 2>/dev/null; then diverged=$((diverged + 1)); fi
+        printf '%s\n' "$line" >> "$local_file"
+        kept=$((kept + 1))
+    done < "$env_file"
+
+    log_info "Split the settings: ${kept} kept as yours, ${diverged} of them differing from this release"
+    log_info "The file as it was: ${local_file%/*}/env.before-split"
+}
+
+# Compose reads .env from the project directory and interpolates ${} from it, so
+# it has to stay one flat file — a list of sources would not be read at all.
+render_settings() {
+    local target=$1 local_file=$2 release key line overridden tmp
+    release="$INSTALL_DIR/release.env"
+    [[ -f "$release" ]] || die "No release.env in ${INSTALL_DIR}."
+
+    overridden=$(grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' "$local_file" 2>/dev/null | tr -d '=' || true)
+    tmp=$(mktemp)
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        case "$line" in
+            [A-Za-z_]*=*)
+                key=${line%%=*}
+                if key_is_overridden_locally "$key" "$overridden"; then continue; fi
+                ;;
+        esac
+        printf '%s\n' "$line" >> "$tmp"
+    done < "$release"
+
+    if [[ -s "$local_file" ]]; then
+        printf '\n# ---------------------------------------------- yours, never replaced ----\n' >> "$tmp"
+        printf '# Edit %s, not this file: this one is rebuilt on every install.\n\n' "$local_file" >> "$tmp"
+        cat "$local_file" >> "$tmp"
+    fi
+
+    cat "$tmp" > "$target"
+    rm -f "$tmp"
+}
+
 step_configure() {
     log_step "Writing the configuration"
 
-    local env_file="$INSTALL_DIR/.env"
+    local env_file="$INSTALL_DIR/.env" local_file
     create_settings_file_behind "$env_file"
 
-    if [[ -s "$env_file" ]]; then
-        log_info "Keeping the existing .env"
-    else
-        [[ -f "$INSTALL_DIR/.env.example" ]] || die "No .env.example in ${INSTALL_DIR}."
-        cp "$INSTALL_DIR/.env.example" "$env_file"
-        log_info "Created .env from .env.example"
+    local_file="$(settings_directory "$env_file")/local.env"
+    install -d -m 750 "$(dirname "$local_file")"
+    [[ -f "$local_file" ]] || install -m 600 /dev/null "$local_file"
+    local source_settings="$env_file" previous
+    if [[ ! -s "$env_file" ]] && previous=$(settings_of_a_previous_install); then
+        source_settings="$previous"
+        log_info "Settings taken from ${previous} — that checkout is left as it is"
     fi
-    chmod 600 "$env_file"
-    chown "$TARGET_USER" "$env_file" 2>/dev/null || true
+    migrate_existing_settings_into_local "$source_settings" "$local_file"
 
-    if [[ "$(env_get "$env_file" UT_DOMAIN || true)" != "$DOMAIN" ]]; then
-        env_set "$env_file" UT_DOMAIN "$DOMAIN"
-        log_info "Address set to ${DOMAIN} — every other URL in .env derives from it"
+    if [[ "$(env_get "$local_file" UT_DOMAIN || true)" != "$DOMAIN" ]]; then
+        env_set "$local_file" UT_DOMAIN "$DOMAIN"
+        log_info "Address set to ${DOMAIN} — every other URL derives from it"
     fi
 
-    generate_database_credentials "$env_file"
-    generate_application_secrets "$env_file"
+    render_settings "$env_file" "$local_file"
+    generate_database_credentials "$env_file" "$local_file"
+    generate_application_secrets "$local_file"
+    render_settings "$env_file" "$local_file"
+
+    chmod 600 "$env_file" "$local_file"
+    chown "$TARGET_USER" "$env_file" "$local_file" 2>/dev/null || true
 
     mkdir -p "$DATA_DIR/app-data" "$DATA_DIR/appbuilder"/{workspaces,prod-workspaces,traefik-dynamic}
     log_info "Data directories ready under ${DATA_DIR}"
@@ -841,6 +980,7 @@ parse_arguments() {
             --skip-pull)      DO_PULL=false ;;
             --token-file)     TOKEN_FILE="${2:?--token-file needs a path}"; shift ;;
             --dir)            INSTALL_DIR="${2:?--dir needs a path}"; shift ;;
+            --from-checkout)  FROM_CHECKOUT="${2:?--from-checkout needs a path}"; shift ;;
             --domain)         DOMAIN="${2:?--domain needs a name}"; shift ;;
             --health-timeout) HEALTH_TIMEOUT="${2:?--health-timeout needs seconds}"; shift ;;
             -h|--help)        usage; exit 0 ;;
