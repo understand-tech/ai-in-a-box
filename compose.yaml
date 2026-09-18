@@ -201,7 +201,7 @@ services:
           memory: 1G
 
   mongodb-backup:
-    image: ${DB_BACKUP_IMAGE:-tiredofit/db-backup:4.1.100}
+    image: ${DB_BACKUP_IMAGE:-ghcr.io/understand-tech/db-backup:4.1.100@sha256:28c0451ac69f832beb1abc41be4a2143b2b03430e42c54602433876f090227fa}
     container_name: ${CONTAINER_PREFIX:-ut}-mongodb-backup
     restart: unless-stopped
     environment:
