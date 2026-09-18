@@ -4,6 +4,44 @@ From a machine with nothing on it to a running appliance. Safe to interrupt and
 safe to re-run: every step checks its own state before acting, so an install
 that stopped halfway is resumed by running the same command again.
 
+## What `ut-install` does, in order
+
+<!-- Scope: the order of the installer's steps. Not what each one checks. -->
+<!-- Source of truth: ut-install:1006-1020 -->
+<!-- Date: 2026-09-18 -->
+<!-- Target: github — status of "flowchart": rendered -->
+
+```mermaid
+flowchart LR
+    PREFLIGHT["preflight - refuses a machine that cannot run it"]
+    LOGIN["sign in to the registry"]
+    FETCH["fetch the release"]
+    CONFIGURE["write .env and generate every secret"]
+    RESOLVE["check the address resolves, and the docker group"]
+    CA["prepare the authority, create the networks"]
+    PULL["pull the images"]
+    START["start, then wait for every service to be healthy"]
+    PERSIST["apply the certificate policy, install the boot service"]
+    PREFLIGHT --> LOGIN --> FETCH --> CONFIGURE --> RESOLVE
+    RESOLVE --> CA --> PULL --> START --> PERSIST
+```
+
+**Description** — The installer runs nine stages in a fixed order, and stops at
+the first one that fails. It begins with a preflight that refuses a machine
+that cannot run the stack, **before writing anything**. It then signs in to the
+registry, fetches the release, writes `/etc/understandtech/.env` and generates
+every secret, checks that the address resolves and that Docker is usable,
+prepares the certificate authority's directory and the App Builder network,
+pulls the images, starts the stack and waits for every service to report
+healthy, and finally applies the certificate policy and installs the boot
+service. Nothing is left running if an earlier stage failed.
+
+**Gaps** — Nine boxes for thirteen internal steps: checking the address and the
+Docker group are one box, as are the authority and the networks, and as are the
+certificate policy and the boot service. The diagram does not show what each
+stage checks or what it does when it finds the work already done. Not verified:
+the diagram has not been seen rendered — no rendering engine is installed here.
+
 ## What you need first
 
 - A machine with Docker 24 or newer and Compose v2, 250 GB free, 24 GB of RAM.

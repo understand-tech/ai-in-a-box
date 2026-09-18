@@ -1,23 +1,71 @@
 # UnderstandTech — AI in a Box
 
-Deploy the UnderstandTech platform on NVIDIA DGX Spark systems using Docker Compose.
+Deploy the UnderstandTech platform on NVIDIA DGX Spark systems using Docker
+Compose.
 
 Everything runs on the box: the web platform, the satellite apps, the model
 gateway, and GPU inference. Nothing leaves the network.
 
 ## Architecture
 
-<img alt="UnderstandTech AI in a Box — container architecture on a DGX Spark" src="docs/architecture.svg" width="1440">
+`caddy` is the only container publishing ports 80 and 443, so it is the single
+front door. Every hostname derives from one setting, `UT_DOMAIN`. Of the four
+Docker networks, **three are declared `internal: true`** — the containers that
+hold documents, embeddings and model weights have no route off the box, so a
+mistake in application code cannot turn into an exfiltration.
 
-Caddy terminates TLS for every hostname and is the only container publishing
-80/443. Every hostname derives from one setting, `UT_DOMAIN` — see
-[Domain, TLS and proxy](#domain-tls-and-proxy). On a `.local` address each name is announced
-separately over mDNS by the `ut-mdns-alias` systemd unit, because mDNS has no
-wildcards; that includes the apex, so the box's own host name does not have to
-match the domain. On any other domain the names come from your own DNS and that
-unit is not installed. Everything the platform stores or infers on sits on
-`ut-backend-network`, which is `internal: true` — those containers have no route
-off the box.
+Two diagrams and the network membership table: [architecture](docs/architecture.md).
+Per-container detail — ports, volumes, how to act on a service:
+[the stack](docs/the-stack.md).
+
+## Requirements
+
+- NVIDIA DGX Spark (ARM64) with DGX OS.
+- Docker Engine 24.0+ with Compose V2, 250 GB free, 24 GB of RAM.
+- NVIDIA Container Toolkit (pre-installed on DGX).
+- `avahi-daemon` and `avahi-utils`, for a `.local` address only.
+- A registry token for `ghcr.io`, provided by UnderstandTech. It covers the
+  NVIDIA NIM inference containers too — they are re-hosted on the
+  UnderstandTech registry, so **no NVIDIA NGC account or API key is required on
+  the box**.
+
+## Installing
+
+The release is a signed Debian package. Download it, check the signature,
+install it, then run the installer:
+
+```bash
+sudo apt-get install ./understandtech_<version>_all.deb
+sudo ut-install --domain box.example.com
+```
+
+`ut-install` writes `/etc/understandtech/.env`, generates every secret, pulls
+the images, starts the stack, waits for every service to be healthy and
+installs the boot service. It is safe to interrupt and safe to re-run.
+
+It prints two secrets **once** at the end — the initial admin password and the
+backup password. Losing the backup password makes every snapshot unreadable,
+with no recovery path.
+
+Full procedure, including how to verify the signature offline:
+[installing](docs/install.md).
+
+## Using it
+
+Every hostname derives from `UT_DOMAIN`, the single setting that names the
+appliance. Change it and all six follow.
+
+| Hostname | What it serves |
+|---|---|
+| `understand.local` | The platform — documents, conversations, the API |
+| `llms.understand.local` | Model catalogue and playground |
+| `assistants.understand.local` | Assistant builder |
+| `admin.understand.local` | Tenant and user administration |
+| `builder.understand.local` | App Builder (add-on) |
+| `<app>.apps.understand.local` | One per generated app |
+
+- First time on a new box: [first-run configuration](docs/first-run-configuration.md).
+- For the people who will use the platform: [using the platform](docs/using-the-platform.md).
 
 ## What's in This Repo
 
@@ -35,563 +83,24 @@ off the box.
 | `ut-verify` | Checks a package's signature offline, for a machine with no network — `dpkg` verifies nothing on its own |
 | `packaging/build-deb.sh` | Builds the Debian package: release in `/usr/share`, settings in `/etc`, data in `/var/lib` |
 | `appbuilder/traefik/` | Static routing config for the App Builder's per-app router |
-| `docs/architecture.svg` | Source of the architecture diagram above |
 | `test/` | The checks, and what each one exists to catch — see `test/README.md` |
 
-## Operating procedures
+## Documentation
 
-What to do, in order, for the five things an operator actually does. Each one
-has been run against a real appliance; where a step says what to expect, that is
-what it printed.
+**For the operator**, in the order you will need them:
 
 | | When |
 |---|---|
+| [Architecture](docs/architecture.md) | Where a request goes, and what each network can reach. |
 | [Installing](docs/install.md) | A new machine. One command, safe to re-run. |
+| [First-run configuration](docs/first-run-configuration.md) | The first visit to a freshly installed box: models, sign-on, data sources. |
+| [The stack](docs/the-stack.md) | What runs, on which network, in which volume, and how to act on it. |
 | [Configuring](docs/configuration.md) | Changing the address, the ports, the backup schedule, the load. |
 | [Certificates and DNS](docs/certificates-and-dns.md) | Which names to publish, who terminates TLS, and what the local authority does. |
 | [Updating](docs/update.md) | A new version. What it adds to an existing `.env`, and what changes that you will notice. |
 | [Restoring](docs/restore.md) | The database, the customer's files, or the certificate authority — separately. |
 
-## Quick Start
+**For the people who use the platform**:
+[using the platform](docs/using-the-platform.md).
 
-```bash
-# 1. Clone and configure
-git clone https://dgx-access:<TOKEN>@github.com/understand-tech/ai-in-a-box.git ~/understand-tech
-cd ~/understand-tech
-sudo ./ut-install
-# .env is not edited by hand any more: ut-install builds it from release.env —
-# what this version decides — and local.env — what you chose, which no upgrade
-# replaces. It asks for the address and generates every secret itself.
-# understand.local works on one flat network and cannot be certified; see
-# "Domain, TLS and proxy".
-
-# 2. Create the network the App Builder's generated apps attach to (once per
-#    box). release.env ships with the add-on enabled, so this is required
-#    unless you comment COMPOSE_FILE out — the network is external, and
-#    `docker compose up` fails outright when it is missing.
-docker network create proxy
-
-# 3. Check the domain / TLS settings before deploying (changes nothing)
-sudo ./setup-autostart.sh --check
-
-# 4. Pull images and start
-docker compose pull
-docker compose up -d
-
-# 5. Verify
-docker compose ps
-
-# 6. Make it survive a reboot (installs the boot service, and the mDNS names
-#    when UT_DOMAIN ends in .local)
-sudo ./setup-autostart.sh
-```
-
-Access the platform at `https://understand.local` — or at whatever `UT_DOMAIN`
-you set — once all services are healthy.
-The first pull takes 10–20 minutes; the first NIM start takes longer still while
-the model cache fills.
-
-`docker compose` reads `.env` from this directory for both interpolation and its
-own settings — `COMPOSE_FILE` (which overlays the App Builder) and
-`COMPOSE_PROFILES` (which enables the NIM containers) are set there, so always
-run compose from the repository root.
-
-## Services
-
-Only Caddy and the App Builder publish host ports on every interface. MongoDB
-and the NIM containers are bound to loopback, so they are reachable from the
-machine itself and from nowhere else; a compute node that has to serve another
-machine overrides `NIM_LLM_BIND_ADDRESS`. Everything else is reachable only
-from inside the Docker networks.
-
-Three services carry no fixed container name, because a fixed name and
-`--scale` are mutually exclusive. Compose names them after the project, so the
-prefix follows `COMPOSE_PROJECT_NAME`.
-
-### Two TLS surfaces, on purpose
-
-What a **browser** must trust follows `UT_INGRESS_MODE`: a self-signed
-certificate from Caddy's own authority (`internal`), a certificate you supply
-(`custom`), or none at all because your load balancer terminates TLS (`edge`).
-
-What one **machine** must prove to another never follows it. The site at
-`node.<UT_DOMAIN>:8443` always takes its certificate from the local authority,
-so bringing your own certificate or putting the appliance behind your proxy
-does not leave that authority idle — an authority that issues nothing rots
-until the day a second machine needs enrolling.
-
-It is bound to `127.0.0.1` by default. If your load balancer would rather
-verify the appliance than trust it blindly, set `UT_INTERNAL_BIND_ADDRESS` to
-the interface it reaches and add `${DATA_ROOT}/ca/certs/root_ca.crt` to its
-trust store. Optional: `edge` works without it.
-
-Certificates last seven days and renew on their own. A machine switched off
-longer than that recovers by itself at power-on; one you revoke loses the right
-to renew immediately.
-
-| Service | Container | Host port | Description |
-|---|---|---|---|
-| Caddy | `ut-caddy` | 80, 443, 127.0.0.1:8443 | Reverse proxy; public TLS per `UT_INGRESS_MODE`, machine-facing TLS always from the local authority |
-| step-ca | `ut-step-ca` | — | Local certificate authority. Root under `${DATA_ROOT}/ca`, so the file backup carries it |
-| Frontend | `ut-frontend` | — | React web application |
-| API | `ut-api` | — | Main backend API (FastAPI), `:8501` internal |
-| API-Customer | `ut-api-customer` | — | Partner (REST v3) API and model gateway, `:8501` internal |
-| Workers | `understandtech-workers-*` | — | RQ background jobs on the `ut-api` queue |
-| Workers-Customer | `understandtech-workers-customer-*` | — | RQ background jobs on the `ut-api-partners` queue |
-| LLMs App | `ut-app-llms` | — | Model catalogue and playground, at `llms.understand.local` |
-| Assistants App | `ut-app-assistants` | — | Assistant builder, at `assistants.understand.local` |
-| Admin Portal | `ut-admin-portal` | — | Tenant and user administration, at `admin.understand.local` |
-| LLM | `understandtech-llm-*` | — | RAG, embeddings and reranking on GPU, `:8000` internal |
-| NIM LLM | `understandtech-nim-llm-*` | 127.0.0.1:8001 | NVIDIA NIM serving the chat model (profile `nim`) |
-| NIM VLM | `understandtech-nim-vlm-*` | 127.0.0.1:8002 | NVIDIA NIM serving the vision model (profile `nim`) |
-| MongoDB | `ut-mongodb` | 127.0.0.1:27018 | Document database (container port 27017) |
-| Redis | `ut-redis` | — | Task queue and cache |
-| MongoDB Backup | `ut-mongodb-backup` | — | Daily full-server dump of every database |
-| App Builder | `ut-app-builder` | 8011 (`APP_BUILDER_HOST_PORT`) | Builds and hosts generated apps (add-on) |
-| App Builder Router | `ut-app-builder-traefik` | — | Per-app routing for generated apps (add-on) |
-
-`nim-llm` and `nim-vlm` sit behind compose profiles, so they only start when
-`COMPOSE_PROFILES` includes `nim` (or `nim-llm` / `nim-vlm` individually).
-`release.env` sets `COMPOSE_PROFILES="nim"`.
-
-The worker services scale with `WORKER_REPLICAS` and `WORKER_CUSTOMER_REPLICAS`,
-so they get compose-generated names rather than fixed `container_name` values.
-
-## Hostnames
-
-Every name is derived from `UT_DOMAIN`. The installer asks for it and falls
-back to `understand.local`, which is what the table shows; change the one
-setting and all six follow.
-
-| Hostname | Served by | Notes |
-|---|---|---|
-| `understand.local` | `frontend`, `api`, `api-customer` | `/api/*` → API, `/api/v3/*` and `/api/llm/*` → partner API |
-| `llms.understand.local` | `app-llms` | |
-| `assistants.understand.local` | `app-assistants` | |
-| `admin.understand.local` | `admin-portal` | `/api/*` → main API |
-| `builder.understand.local` | `app-builder` | App Builder add-on |
-| `<app>.apps.understand.local` | `app-builder-traefik` | One per generated app, plus `--staging` and `--prod` |
-
-Caddy serves the generated apps from a single wildcard site, so no config change
-is needed per app. On a `.local` address each hostname is announced over mDNS
-individually because mDNS has no wildcards, and the alias service rescans the
-App Builder's traefik directory every 10 seconds, so a new app resolves within
-about that long. On your own domain a single `*.apps.<UT_DOMAIN>` record covers
-them all.
-
-## Domain, TLS and proxy
-
-`UT_DOMAIN` in `.env` is the only place the appliance's public name is written.
-Every URL the services need — `PUBLIC_BASE_URL`, `REDIRECT_URI`, `BACKEND_URL`,
-`DOMAIN_URL`, the `VITE_*` pair, `EXTRA_ALLOWED_ORIGINS`, the `APP_LLMS_*`,
-`APP_ASSISTANTS_*` and `APP_BUILDER_*` families, `GATEWAY_PUBLIC_URL` — is
-derived from it in the `x-public-urls` block of `compose.yaml`, and so are the
-Caddy site addresses and the published mDNS names. Moving the box to another
-domain is a one-line change.
-
-Each derived URL stays individually overridable: a value written explicitly in
-`.env` wins over the derived default. That is also what makes this change
-backwards compatible — a `.env` from an earlier release still carries all
-nineteen URL lines, so it keeps producing exactly the values it did before.
-
-```bash
-UT_DOMAIN="understand.local"   # the public name
-UT_INGRESS_MODE="internal"     # internal | custom | edge
-```
-
-### The three ingress modes
-
-| Mode | Who holds the certificate | What you supply | Caddy listens on |
-|---|---|---|---|
-| `internal` | Caddy's own internal CA, self-signed | nothing | `:443` |
-| `custom` | you | `fullchain.pem` + `privkey.pem` in `UT_CERT_DIR` | `:443` |
-| `edge` | your reverse proxy or load balancer | nothing on the box | `:80`, plain HTTP |
-
-`internal` is the default and the only mode that works on a `.local` domain: no
-public authority issues for `.local`. Each mode is a small file under `caddy/`
-holding that mode's global options and its `(tls)` snippets; compose bind-mounts
-the one `UT_INGRESS_MODE` names.
-
-### Two schemes, not one
-
-This is the part that catches people. Behind a load balancer there are two
-different answers to "http or https":
-
-| Setting | Meaning | Value behind a TLS-terminating proxy |
-|---|---|---|
-| `UT_CADDY_SCHEME` | the scheme **Caddy listens on** | `http` |
-| `UT_PUBLIC_SCHEME` | the scheme **the apps advertise** to the browser | `https` |
-
-The load balancer speaks plain HTTP to Caddy, so Caddy must not expect to hold a
-certificate — but the browser is on HTTPS, so every absolute URL and OIDC
-redirect the apps generate has to say `https`. One variable for both would
-necessarily be wrong at one end.
-
-`UT_TRUSTED_PROXIES` completes the picture: it tells Caddy which sources may set
-`X-Forwarded-*`, so the proxy's `X-Forwarded-Proto: https` is honoured and client
-IPs are real in the logs. Narrow it to your proxy's network — the default,
-`private_ranges`, lets any machine on the LAN spoof its source address.
-
-```bash
-# Example: test.toto, TLS terminated on a load balancer at 10.42.0.0/16
-UT_DOMAIN="test.toto"
-UT_INGRESS_MODE="edge"
-UT_CADDY_SCHEME="http"
-UT_PUBLIC_SCHEME="https"
-UT_TRUSTED_PROXIES="10.42.0.0/16"
-```
-
-### Certificate coverage in `custom` mode
-
-The certificate must cover the apex and the four satellite names. The generated
-apps sit two levels down, at `*.apps.<domain>`, which a single-level wildcard
-does **not** match — supply a second wildcard through `UT_APPS_CERT_FILE` and
-`UT_APPS_KEY_FILE` if you run the App Builder.
-
-Note that `caddy validate` provisions certificates for real, so a missing file
-stops Caddy from starting rather than degrading quietly. Check before deploying:
-
-```bash
-sudo ./setup-autostart.sh --check
-```
-
-That reports the effective settings, catches the combinations neither
-`docker compose config` nor Caddy rejects on their own — a typo in
-`UT_INGRESS_MODE`, `edge` left on `UT_CADDY_SCHEME="https"`, a certificate whose
-SANs miss a hostname — and finally adapts the whole config with the same Caddy
-image the stack runs. It changes nothing.
-
-### Names outside `.local`
-
-mDNS answers for `.local` and nothing else, so on any other domain
-`setup-autostart.sh` installs no publisher at all and asks for no Avahi. A box
-that had one before moving off `.local` has it disabled on the next run. Create
-the records in your own DNS, pointing at the box or at the proxy in front of it:
-
-```
-<domain>  llms.<domain>  assistants.<domain>  admin.<domain>  builder.<domain>  *.apps.<domain>
-```
-
-Two things live outside this repo and have to follow by hand: the **redirect URI
-allowed by your OIDC provider** must match the new `REDIRECT_URI`, and **App
-Builder apps generated before the change** keep the old hostname in their traefik
-files until they are redeployed.
-
-## Running two appliances
-
-Two boxes on the same network need two distinct `UT_DOMAIN` values — otherwise
-both publish the same mDNS name and clients reach whichever answers first. That
-is the whole change:
-
-```bash
-# box 1
-UT_DOMAIN="understand.local"
-
-# box 2
-UT_DOMAIN="lab.local"
-```
-
-Each then serves its own `https://lab.local`, `https://llms.lab.local`, and so
-on. The box's own host name no longer has to match: the alias service publishes
-the apex itself, skipping it only when avahi already answers for that name
-because the host name happens to equal the domain.
-
-They are independent instances with no shared state, so give each its own
-`JWT_SECRET`, `STATE_SECRET` and MongoDB credentials.
-
-> **One host, two stacks is not supported.** Running two copies of the stack on
-> the same machine needs more than a second domain: the fixed `container_name`
-> values, the fixed volume `name:` entries, the published host ports (80, 443,
-> 27018, 8001, 8002, 8011), the single external `proxy` network, the
-> `/var/lib/understandtech` host paths, `ut-logs-archive`'s `COMPOSE_PROJECT`
-> and the systemd unit names would all collide. Use two boxes.
-
-## Networks
-
-The stack uses two isolated Docker bridge networks, plus one external network
-for the App Builder:
-
-- **`ut-frontend-network`** — everything Caddy has to reach: `caddy`, `frontend`,
-  `api`, `api-customer`, `app-llms`, `app-assistants`, `admin-portal`,
-  `app-builder`, `app-builder-traefik`, the workers, `llm`, `mongodb` and the
-  NIM containers.
-- **`ut-backend-network`** (internal, no external access) — `api`,
-  `api-customer`, the workers, `app-assistants`, `admin-portal`, `llm`,
-  the NIM containers, `redis`, `mongodb` and `mongodb-backup`.
-- **`proxy`** (external, App Builder only) — shared with the generated apps'
-  own compose projects, so no single project owns it. Create it once with
-  `docker network create proxy`; `setup-autostart.sh` also creates it if the
-  overlay is enabled.
-
-## Volumes
-
-| Volume | Purpose |
-|---|---|
-| `ut-caddy-data` | Caddy TLS certificates and state |
-| `ut-caddy-config` | Caddy configuration |
-| `ut-redis-data` | Redis AOF persistence |
-| `ut-mongodb-data` | MongoDB database files |
-| `ut-mongodb-backup` | Compressed backup archives |
-| `ut-uploads-data` | Shared upload scratch space (API + workers) |
-| `ut-llm-ollama` | Ollama configuration |
-| `ut-llm-models` | LLM model files |
-| `ut-vllm-models` | Hugging Face cache for the LLM service |
-| `ut-nim-llm-cache` | NIM chat-model weights (survives updates — do not prune casually) |
-| `ut-nim-vlm-cache` | NIM vision-model weights (idem) |
-
-Every volume carries an explicit `name:`, so the names are fixed rather than
-prefixed with the compose project. Data therefore survives a project rename or
-a move to a different directory.
-
-The trade-off is that compose warns if a volume was originally created under a
-different project name:
-
-```
-WARN volume "ut-mongodb-data" already exists but was created for project "ut"
-     (expected "understandtech")
-```
-
-That is a label mismatch, not a data problem — compose still mounts the right
-volume, and the stack runs normally. It means the volume was created by a
-compose run whose project name was not `understandtech` (this repo has pinned
-`name: understandtech` since its first commit, so the usual cause is a run from
-a directory of another name, an explicit `-p`, or volumes copied in from
-another machine). Check with:
-
-```bash
-docker volume ls -q | while read -r v; do
-  printf '%-28s %-18s %s\n' "$v" \
-    "$(docker volume inspect -f '{{index .Labels "com.docker.compose.project"}}' "$v")" \
-    "$(docker volume inspect -f '{{.CreatedAt}}' "$v")"
-done
-```
-
-Do not "fix" it by marking the volumes `external: true` — compose would then
-refuse to create them, breaking every fresh install. Either leave the warning
-alone, or, on a box with no data worth keeping, stop the stack and delete the
-mislabelled volumes so compose recreates them cleanly. Deleting
-`ut-mongodb-data` destroys the database and deleting `ut-nim-*-cache` forces a
-full model re-download, so check what is in them first.
-
-Two host paths are bind-mounted rather than kept in volumes:
-
-| Host path | Mounted by | Purpose |
-|---|---|---|
-| `/var/lib/understandtech/app-data` | `api`, `api-customer`, both worker sets, `app-assistants`, `llm` | Uploaded documents and generated artefacts (`/app/storage`) |
-| `/var/lib/understandtech/appbuilder` | `app-builder`, `app-builder-traefik` | `workspaces/`, `prod-workspaces/`, `traefik-dynamic/` |
-
-The App Builder's projects live on the host because it starts each generated app
-as its own compose project, and the docker daemon has to be able to resolve
-those paths. `setup-autostart.sh` creates both trees.
-
-## Backups
-
-`ut-mongodb-backup` takes one **full-server dump** every 24 hours — a single
-gzipped `mongodump --archive` covering every database on the instance: `ut-db`,
-`ut-app-llms`, `ut-app-assistants`, `app-builder`, and anything a future app
-adds. Archives land in the `ut-mongodb-backup` volume and are pruned after 30
-days (`BACKUP_CLEANUP_TIME`, in minutes).
-
-Tunable from `.env`: `BACKUP_BEGIN` (HHMM, default `1520`), `BACKUP_INTERVAL`
-(minutes, default `1440`), `BACKUP_CLEANUP_TIME`, `BACKUP_COMPRESSION`,
-`BACKUP_COMPRESSION_LEVEL`.
-
-Restores run from the `mongodb-backup` container: it is the one that holds the
-archives and it already has the credentials in its environment, so nothing
-sensitive lands in your shell history.
-
-```bash
-# List archives
-docker compose exec mongodb-backup ls -lh /backup
-
-# Take one right now instead of waiting for the window
-docker compose exec mongodb-backup backup-now
-
-# Restore everything
-docker compose exec mongodb-backup sh -c '
-  mongorestore --host mongodb --port 27017 \
-    -u "$DB01_USER" -p "$DB01_PASS" --authenticationDatabase admin \
-    --gzip --archive=/backup/<file>.archive.gz'
-
-# Restore a single application database out of the same archive
-docker compose exec mongodb-backup sh -c '
-  mongorestore --host mongodb --port 27017 \
-    -u "$DB01_USER" -p "$DB01_PASS" --authenticationDatabase admin \
-    --gzip --archive=/backup/<file>.archive.gz --nsInclude="ut-app-llms.*"'
-```
-
-`mongorestore` merges into existing collections by default; add `--drop` to
-replace them instead. The image also ships an interactive `restore` helper, but
-it targets a single named database and does not fit these whole-server
-archives — use the commands above.
-
-Not covered by this container: `/var/lib/understandtech/app-data` (uploaded
-documents) and `/var/lib/understandtech/appbuilder` (generated app source).
-Back those up with the host's own snapshot or file-level backup.
-
-> **Upgrading from an earlier release:** backups used to be scoped to `ut-db`
-> alone and were named `mongo_ut-db_mongodb_*.archive.gz`. Full-server dumps are
-> named `mongo__mongodb_*.archive.gz`, so the retention sweep no longer matches
-> the old files. Delete them by hand once you are satisfied with the new
-> archives, or they will sit in the volume indefinitely.
-
-## Common Operations
-
-```bash
-# View logs
-docker compose logs -f api
-docker compose logs -f llm
-
-# Restart a service
-docker compose restart api
-
-# Scale workers
-docker compose up -d --scale workers=4
-
-# Update to latest (pull first — the boot service never pulls)
-git pull
-docker compose pull
-docker compose up -d
-
-# Install log archival cron job
-chmod +x ut-logs-archive
-./ut-logs-archive --install
-```
-
-## Auto-Start on Boot
-
-`setup-autostart.sh` installs two systemd units and nothing else:
-
-- **`understandtech.service`** — runs `docker compose up -d` in this directory at boot
-- **`ut-mdns-alias.service`** — publishes the apex, satellite and generated-app hostnames over mDNS, all derived from `UT_DOMAIN`
-
-It does not pull images, create stack resources, or start anything. Deploying
-the stack stays a separate, manual step; this script only makes it survive a
-reboot, and is safe to run at any point.
-
-Re-running it is a no-op. `--install` includes the mDNS step, so running
-`--mdns` first and `--install` after is fine: files are compared before being
-replaced, and the publisher is only bounced when its config actually changed or
-it is not running. Nothing is disturbed that was already correct.
-
-```bash
-# Install both, using this checkout as the install directory
-sudo ./setup-autostart.sh
-
-# Publish only the mDNS names
-sudo ./setup-autostart.sh --mdns
-
-# Status of both units plus every compose service
-sudo ./setup-autostart.sh --status
-
-# Remove
-sudo ./setup-autostart.sh --uninstall
-```
-
-`--dir PATH` overrides the install directory. It defaults to the directory
-holding the script, so a plain `sudo ./setup-autostart.sh` from the checkout is
-already correct.
-
-The preflight is read-only: Docker and Compose V2 present, `compose.yaml` in
-place, and — if `.env` already exists — `docker compose config` parsing
-cleanly, so a broken `.env` surfaces here rather than at the next reboot. It
-then runs the same ingress checks as `--check`, reporting rather than blocking:
-a box whose domain or certificate settings are not finished yet should still get
-its boot units. A missing `.env` is only a warning, so auto-start can be
-installed before the environment is configured.
-
-`--check` runs those ingress checks on their own and installs nothing:
-
-```bash
-sudo ./setup-autostart.sh --check
-```
-
-The boot service starts from local images only (`up -d --pull never`). An
-offline or air-gapped box therefore still comes up, and boot never stalls on a
-registry timeout. It also keeps the boot path away from a credential trap: the
-unit runs as root, but the install guide's `docker login ghcr.io` runs without
-sudo, so root's credential store has no ghcr.io entry and any pull it attempted
-would 401 on the private images. Pull as your normal user before the first
-`docker compose up -d`, and after every image-tag change.
-
-The service unit sets `WorkingDirectory` and lets `docker compose` read `.env`
-itself. It deliberately does not use `EnvironmentFile`: systemd's parser strips
-quotes that compose keeps, and anything systemd exported would take precedence
-over `.env`, so the stack would boot with different values than a manual
-`docker compose up -d` produces.
-
-Published mDNS names are derived from `UT_DOMAIN`: the apex plus `llms.`,
-`assistants.`, `admin.`, `builder.`, and one name per generated app. The apex is
-skipped only when avahi already answers for it, which happens when the box's own
-host name equals the domain — the historical arrangement, and why an existing
-install sees no change here.
-
-`/etc/default/ut-mdns-alias` holds the knobs. It is created once and never
-overwritten, so edits there survive re-running the installer:
-
-```bash
-sudo nano /etc/default/ut-mdns-alias
-sudo systemctl restart ut-mdns-alias
-```
-
-It points at the install directory, which is where `UT_DOMAIN` is read from.
-Setting `UT_MDNS_ALIASES` there pins a literal list instead, which then stops
-following `UT_DOMAIN` — installs predating this release have exactly that, so
-the installer warns when a pinned list no longer mentions the configured domain.
-Comment the line out to go back to derivation.
-
-mDNS publishing needs avahi. If it is missing the installer says so and leaves
-the unit enabled but stopped:
-
-```bash
-sudo apt-get install -y avahi-daemon avahi-utils
-sudo systemctl start ut-mdns-alias
-```
-
-## App Builder Add-On
-
-Lets users describe an app and have it built, then serves the result on the same
-box. It runs in the same compose project as everything else and talks to
-`api-customer` for models and UT API v3 — nothing leaves the network.
-
-```bash
-# 1. The overlay is already enabled in release.env:
-#    COMPOSE_FILE="compose.yaml:compose.appbuilder.yaml"
-#    Comment that line out to run without the App Builder. Then set the key:
-#    APP_BUILDER_GATEWAY_API_KEY="..."   # platform UI: DEVELOPER -> API keys
-
-# 2. Create the network generated apps attach to (once per box; it is
-#    shared with their compose projects, so no single project owns it)
-docker network create proxy
-
-# 3. Start it, and publish the mDNS names
-docker compose up -d
-sudo ./setup-autostart.sh --mdns
-```
-
-The builder is at `https://builder.understand.local`; each generated app gets
-`https://<project>.apps.understand.local` plus `--staging` and `--prod` surfaces.
-
-`APP_BUILDER_HOST_PORT` is published on the host because generated apps run in
-their own compose projects and reach the builder's model proxy at
-`host.docker.internal:<port>` — docker DNS cannot get them there.
-
-## Documentation
-
-Full setup and administration guides can be found at https://docs.understand.tech
-
-- **Installation & Setup** — DGX first-boot, platform deployment, SSL certificates, first-time app config
-- **Portainer Guide** — Web-based container management
-- **Logging Guide** — Real-time logs, automated archival, log analysis
-- **MongoDB & Backups** — Database operations, backup/restore procedures
-
-## Requirements
-
-- NVIDIA DGX Spark (ARM64) with DGX OS
-- Docker Engine 24.0+ with Compose V2
-- NVIDIA Container Toolkit (pre-installed on DGX)
-- `avahi-daemon` and `avahi-utils` for the `.local` hostnames
-- GitHub Container Registry access (provided by UnderstandTech) — this covers
-  the NVIDIA NIM inference containers too. They are re-hosted on the
-  UnderstandTech GHCR, so `docker compose pull` fetches them like any other
-  image and **no NVIDIA NGC account or API key is required on the box**.
+**For anyone changing this repository**: [the checks](test/README.md).
