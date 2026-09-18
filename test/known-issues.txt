@@ -14,14 +14,13 @@
 # fill in. The ports stay bound to loopback until then.
 plaintext-secret:VLLM_API_KEY
 
-# --- The backup image has no version left to pin to -------------------------
-# Its registry withdrew every versioned tag. 4.1.100, which this appliance ran
-# for months, answers "manifest unknown", and Docker Hub reports one tag left —
-# latest, published 2026-09-09. The manifest being gone, there is no digest to
-# pin to either. Until the image is republished under our own registry, or
-# replaced, latest is the only reference that can be pulled at all. Measured on
-# 2026-09-18, when a fresh pull failed on it and interrupted the seventeen
-# others.
+# --- The backup image cannot be pinned, and cannot be replaced either --------
+# Docker Hub withdrew every versioned tag on 2026-09-18: 4.1.100 answers 404,
+# leaving latest alone — so there is no digest to pin to. latest is not a way
+# out: it is 1.44 MB against 1.93 GB, a static binary with no shell, so the
+# CMD-SHELL health check cannot run at all and the service never turns healthy.
+# 4.1.100 therefore stays, because it works wherever it is already present.
+# Republishing it under our own registry is what removes this line.
 unpinned-image:DB_BACKUP_IMAGE
 
 # --- Mutable image references ----------------------------------------------
