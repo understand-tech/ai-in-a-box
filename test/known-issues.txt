@@ -21,15 +21,6 @@
 plaintext-secret:VLLM_API_KEY
 secret-in-release-env:VLLM_API_KEY
 
-# --- The backup image cannot be pinned, and cannot be replaced either --------
-# Docker Hub withdrew every versioned tag on 2026-09-18: 4.1.100 answers 404,
-# leaving latest alone — so there is no digest to pin to. latest is not a way
-# out: it is 1.44 MB against 1.93 GB, a static binary with no shell, so the
-# CMD-SHELL health check cannot run at all and the service never turns healthy.
-# 4.1.100 therefore stays, because it works wherever it is already present.
-# Republishing it under our own registry is what removes this line.
-unpinned-image:DB_BACKUP_IMAGE
-
 # --- Mutable image references ----------------------------------------------
 # Tags like 2.0-arm64 move, so two boxes on "the same version" can differ and a
 # diagnosis on one does not transfer to another. Pinning by digest is a build
