@@ -220,7 +220,9 @@ services:
       DB01_PASS: ${MONGODB_PASSWORD:?ut-install generates it}
       DB01_AUTH: admin
 
-      DB01_BACKUP_BEGIN: ${BACKUP_BEGIN:-1520}
+      # "+0" is the image's own default: back up as soon as the service starts,
+      # then every interval. An HHMM value instead waits for that time of day.
+      DB01_BACKUP_BEGIN: "${BACKUP_BEGIN:-+0}"
       DB01_BACKUP_INTERVAL: ${BACKUP_INTERVAL:-1440}
 
       # Retention: delete backups older than 30 days
@@ -239,7 +241,7 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "find /backup -name 'mongo_*.archive.gz' -mtime -2 | grep -q ."]
       <<: *healthcheck-defaults
-      start_period: 25h
+      start_period: 10m
     logging: *default-logging
     deploy:
       resources:
