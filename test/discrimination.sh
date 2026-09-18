@@ -105,6 +105,12 @@ if grep -q 'check_healthcheck_asks_for_a_certified_name' "$REPO_ROOT/test/invari
         "sed -i.bak 's|https://step-ca:9000|https://localhost:9000|' compose.yaml"
 fi
 
+if grep -q 'check_no_service_starts_slower_than_the_installer_waits' "$REPO_ROOT/test/invariants.sh"; then
+    discriminates "a service given longer to start than the install waits" \
+        "start-period-outlasts-the-install:mongodb-backup" \
+        "sed -i.bak 's|^      start_period: 10m$|      start_period: 25h|' compose.yaml"
+fi
+
 discriminates "one variable with two different defaults" \
     "divergent-default:MONGODB_HOST" \
     "sed -i.bak 's|\${MONGODB_HOST:-mongodb}|\${MONGODB_HOST:-}|' compose.appbuilder.yaml"
@@ -319,7 +325,7 @@ if grep -q 'checkouts_holding_settings' "$REPO_ROOT/ut-install"; then
 
     install_walk_discriminates "a password refused for the way it looks" \
         "the install carries on, because that password is the right one" \
-        "sed -i.bak 's|^    \[\[ -n \"\$(env_get \"\$env_file\" MONGODB_PASSWORD .*$|    ! is_shipped_placeholder \"\$(env_get \"\$env_file\" MONGODB_PASSWORD || true)\"|' ut-install"
+        "sed -i.bak 's#^    \[\[ -n .*MONGODB_PASSWORD.*\$#    ! is_shipped_placeholder \"\$(env_get \"\$env_file\" MONGODB_PASSWORD || true)\"#' ut-install"
 
     install_walk_discriminates "full address pools noticed only when it is too late" \
         "the preflight stops before anything is written" \

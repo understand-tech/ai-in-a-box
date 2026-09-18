@@ -125,6 +125,33 @@ check_healthcheck_asks_for_a_certified_name() {
         "the authority's healthcheck asks for ${host}, which DOCKER_STEPCA_INIT_DNS_NAMES does not list — it can never pass, and everything waiting on it stops"
 }
 
+seconds_in_duration() {
+    local duration=$1 number=${1%[a-z]}
+    case "$duration" in
+        *h) printf '%s' $(( number * 3600 )) ;;
+        *m) printf '%s' $(( number * 60 )) ;;
+        *s) printf '%s' "$number" ;;
+        *)  printf '%s' "$duration" ;;
+    esac
+}
+
+check_no_service_starts_slower_than_the_installer_waits() {
+    local budget period seconds service
+    budget=$(grep -m1 -oE 'HEALTH_TIMEOUT="\$\{UT_HEALTH_TIMEOUT:-[0-9]+' "$REPO_ROOT/ut-install" 2>/dev/null \
+        | grep -oE '[0-9]+$') || return 0
+    [[ -n "$budget" ]] || return 0
+    while read -r period; do
+        [[ -n "$period" ]] || continue
+        seconds=$(seconds_in_duration "$period")
+        (( seconds > budget )) || continue
+        service=$(grep -B 40 -m1 "start_period: ${period}" "$REPO_ROOT/compose.yaml" 2>/dev/null \
+            | grep -E '^  [a-z][a-z0-9-]*:' | tail -1 | tr -d ' :')
+        report "start-period-outlasts-the-install:${service:-unknown}" \
+            "${service:-a service} declares start_period ${period}, longer than the $(( budget / 60 )) minutes ut-install waits — the install gives up on a service that was never going to be ready in time"
+    done < <(grep -hoE '^\s*start_period: [0-9]+[hms]' "$REPO_ROOT/compose.yaml" 2>/dev/null \
+        | grep -oE '[0-9]+[hms]$' | sort -u)
+}
+
 check_defaults_do_not_diverge() {
     local key defaults count
     while read -r key; do
@@ -316,6 +343,7 @@ main() {
     check_release_env_ships_no_secret
     check_compose_declares_no_secret_default
     check_healthcheck_asks_for_a_certified_name
+    check_no_service_starts_slower_than_the_installer_waits
     check_defaults_do_not_diverge
     check_required_variables_appear_in_the_template
     check_required_variables_have_a_value_or_are_generated

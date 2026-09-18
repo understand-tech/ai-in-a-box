@@ -392,7 +392,8 @@ gzipped `mongodump --archive` covering every database on the instance: `ut-db`,
 adds. Archives land in the `ut-mongodb-backup` volume and are pruned after 30
 days (`BACKUP_CLEANUP_TIME`, in minutes).
 
-Tunable from `.env`: `BACKUP_BEGIN` (HHMM, default `1520`), `BACKUP_INTERVAL`
+Tunable from `.env`: `BACKUP_BEGIN` (`+0` by default, meaning as soon as the
+service starts; an HHMM value waits for that time of day instead), `BACKUP_INTERVAL`
 (minutes, default `1440`), `BACKUP_CLEANUP_TIME`, `BACKUP_COMPRESSION`,
 `BACKUP_COMPRESSION_LEVEL`.
 

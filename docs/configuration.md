@@ -146,7 +146,7 @@ covers. Moving it means moving the contents too — nothing does it for you.
 ### Backups
 
 ```bash
-BACKUP_BEGIN="1520"            # HHMM, local time
+BACKUP_BEGIN="+0"              # at startup; an HHMM value waits for that hour
 BACKUP_INTERVAL="1440"         # minutes
 BACKUP_FILES_KEEP_DAILY="7"
 BACKUP_FILES_KEEP_WEEKLY="4"
