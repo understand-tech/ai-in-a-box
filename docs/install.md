@@ -4,6 +4,44 @@ From a machine with nothing on it to a running appliance. Safe to interrupt and
 safe to re-run: every step checks its own state before acting, so an install
 that stopped halfway is resumed by running the same command again.
 
+## What `ut-install` does, in order
+
+<!-- Scope: the order of the installer's steps. Not what each one checks. -->
+<!-- Source of truth: ut-install:1006-1020 -->
+<!-- Date: 2026-09-18 -->
+<!-- Target: github — status of "flowchart": rendered -->
+
+```mermaid
+flowchart LR
+    PREFLIGHT["preflight - refuses a machine that cannot run it"]
+    LOGIN["sign in to the registry"]
+    FETCH["fetch the release"]
+    CONFIGURE["write .env and generate every secret"]
+    RESOLVE["check the address resolves, and the docker group"]
+    CA["prepare the authority, create the networks"]
+    PULL["pull the images"]
+    START["start, then wait for every service to be healthy"]
+    PERSIST["apply the certificate policy, install the boot service"]
+    PREFLIGHT --> LOGIN --> FETCH --> CONFIGURE --> RESOLVE
+    RESOLVE --> CA --> PULL --> START --> PERSIST
+```
+
+**Description** — The installer runs nine stages in a fixed order, and stops at
+the first one that fails. It begins with a preflight that refuses a machine
+that cannot run the stack, **before writing anything**. It then signs in to the
+registry, fetches the release, writes `/etc/understandtech/.env` and generates
+every secret, checks that the address resolves and that Docker is usable,
+prepares the certificate authority's directory and the App Builder network,
+pulls the images, starts the stack and waits for every service to report
+healthy, and finally applies the certificate policy and installs the boot
+service. Nothing is left running if an earlier stage failed.
+
+**Gaps** — Nine boxes for thirteen internal steps: checking the address and the
+Docker group are one box, as are the authority and the networks, and as are the
+certificate policy and the boot service. The diagram does not show what each
+stage checks or what it does when it finds the work already done. Not verified:
+the diagram has not been seen rendered — no rendering engine is installed here.
+
 ## What you need first
 
 - A machine with Docker 24 or newer and Compose v2, 250 GB free, 24 GB of RAM.
@@ -171,21 +209,10 @@ reinstallable in a minute.
 It says which step and which line. Nothing is rolled back, and the same command
 resumes from there. The full log is at `/var/log/ut-install.log`.
 
-The two failures worth knowing in advance:
-
-**The GPU is not reachable from containers.** The preflight says so. Install the
-NVIDIA container toolkit, then re-run.
-
-**Docker has no address space left.** `Error response from daemon: all
-predefined address pools have been fully subnetted`. The stack needs four
-networks, and a machine that has hosted generated applications keeps theirs long
-after they stop. `sudo ut-install --check` catches it before anything is
-written. See [starting states](starting-states.md#docker-address-pools-which-run-out-quietly).
-
-**The address does not resolve.** The appliance starts, but nothing reaches it
-by name. Either add the DNS records — six names, see
-[certificates and DNS](certificates-and-dns.md) — or re-run with a `--domain`
-that resolves.
+Three failures account for almost all of them — the GPU not reachable from
+containers, Docker out of address space, and an address that does not resolve.
+Each one, with what to do about it, is in
+[when it breaks](when-it-breaks.md#during-an-install).
 
 ## Installing beside something already running
 

@@ -6,6 +6,50 @@ and the certificate authority. Each has its own archive and its own command.
 Every procedure below has been run end to end. Where a step says what to expect,
 that is what it actually printed.
 
+## What is backed up, and where it goes
+
+<!-- Scope: what the two backup services produce, and what a restore reads.
+     Not the retention rules. -->
+<!-- Source of truth: compose.yaml:205-288 -->
+<!-- Date: 2026-09-18 -->
+<!-- Target: github — status of "flowchart": rendered -->
+
+```mermaid
+flowchart LR
+    MONGO["mongodb"]
+    DBBACKUP["mongodb-backup - full-server dump, gzip"]
+    DUMPS["ut-mongodb-backup volume"]
+    DATAROOT["DATA_ROOT - documents, App Builder projects, the authority root"]
+    FILESBACKUP["files-backup - restic, encrypted"]
+    REPO["restic repository"]
+    OFFSITE["S3 bucket - only when credentials are set"]
+    MONGO --> DBBACKUP --> DUMPS
+    DATAROOT --> FILESBACKUP
+    DUMPS --> FILESBACKUP
+    FILESBACKUP --> REPO --> OFFSITE
+```
+
+**Description** — Two services, in a chain. `mongodb-backup` takes a full-server
+dump of every database, compressed with gzip, and writes it into the
+`ut-mongodb-backup` volume. `files-backup` then reads two things — that volume,
+and `DATA_ROOT` on the host, which holds uploaded documents, the App Builder's
+projects and the certificate authority's root — and writes them into a `restic`
+repository, encrypted with `BACKUP_FILES_PASSWORD`. When S3 credentials are
+set, that repository is also pushed off the machine. So the database leaves the
+site inside the file backup, not on its own.
+
+**Gaps** — The diagram does not show schedules or retention: the dump runs on
+`BACKUP_BEGIN` / `BACKUP_INTERVAL`, the file snapshot on `BACKUP_FILES_AT`, and
+retention is set by the three `BACKUP_FILES_KEEP_*` values — all in
+[configuration](configuration.md). It also does not show the restore path,
+which is the rest of this document and is not symmetric with the backup path.
+Not verified: the diagram has not been seen rendered — no rendering engine is
+installed here.
+
+> **Losing `BACKUP_FILES_PASSWORD` makes every snapshot unreadable**, including
+> the offsite ones and including the authority's root. There is no recovery
+> path. It is one of the two secrets `ut-install` prints once at the end.
+
 ## Before anything else
 
 **Do not restore over a running stack.** A restore into a database being written

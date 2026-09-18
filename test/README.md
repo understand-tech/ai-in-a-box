@@ -22,8 +22,49 @@
 
 | Workflow | Trigger | Runs | Takes |
 |---|---|---|---|
-| `checks.yml` | every push and pull request | `invariants.sh`, `capabilities.sh`, `migration.sh` | under a minute |
+| `checks.yml` | every pull request, and a push to `main`, `hotfix/**` or `2026-**` | `invariants.sh`, `capabilities.sh`, `migration.sh` | under a minute |
 | `nightly.yml` | 3 a.m. and manual — **neither works yet**, see below | `machine-identity.sh`, `database-restore.sh` | about six minutes |
+| `release.yml` | a tag matching `v*` | the checks, then a fresh install walked end to end | longer |
+
+<!-- Scope: which event starts which workflow. Not what the checks assert, and
+     not a branching policy. -->
+<!-- Source of truth: .github/workflows/checks.yml:3-6,
+     .github/workflows/release.yml:4-7 -->
+<!-- Date: 2026-09-18 -->
+<!-- Target: github — status of "flowchart": rendered -->
+
+```mermaid
+flowchart LR
+    WORK["a work branch - feat, fix, chore, ci, docs"]
+    PR["a pull request"]
+    QUARTER["2026-Q4 - the quarter being built"]
+    HOTFIX["hotfix branches - the quarter in service"]
+    MAIN["main"]
+    TAG["a tag v*"]
+    CHECKS["checks.yml"]
+    RELEASE["release.yml"]
+    WORK -->|opened as| PR
+    PR --> CHECKS
+    QUARTER --> CHECKS
+    HOTFIX --> CHECKS
+    MAIN --> CHECKS
+    TAG --> RELEASE
+```
+
+**Description** — Pushing to a work branch on its own runs nothing: the trigger
+list names `main`, `hotfix/**` and `2026-**`, and no other branch. What gets a
+work branch checked is **opening a pull request**, which runs `checks.yml`
+whatever the branch is called. Pushes to the three named branches run the same
+workflow, so a merge is checked again on arrival. A tag matching `v*` is the
+only thing that starts `release.yml`, which re-runs the checks and then walks a
+fresh install before publishing — a release that fails its own checks is worse
+than no release, because it is installed before anyone notices.
+
+**Gaps** — The diagram shows what starts a workflow, not how branches merge
+into one another: that is a convention, not something this repository declares.
+`nightly.yml` is absent because neither of its triggers works yet. Not
+verified: the diagram has not been seen rendered — no rendering engine is
+installed here.
 
 Run the first two from anywhere:
 

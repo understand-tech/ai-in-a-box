@@ -1,5 +1,12 @@
 # Configuration
 
+For the operator changing a setting on an appliance that is already installed.
+After reading you will know which file to edit, which of the four kinds of
+variable you are touching, and what to run to make the change take effect.
+
+Installing a new machine is [installing](install.md). Moving to a new version
+is [updating](update.md).
+
 `compose.yaml` reads one file and nothing else: `.env`. But `.env` is **built**,
 not kept — the installer writes it from what the release decides and from what
 you chose, and rebuilds it every time it runs. Editing it directly means losing
@@ -26,14 +33,20 @@ Knowing which kind you are editing matters more than knowing the variable.
 
 **Generated at install, never edited.** `JWT_SECRET`, `STATE_SECRET`,
 `OPENID_SECRET_KEY`, `ADMIN_SETUP_PASSWORD`, `BACKUP_FILES_PASSWORD`,
-`CA_PASSWORD`, and the MongoDB credentials. Changing one after the fact breaks
-something: rotating `MONGODB_PASSWORD` on a database that already exists locks
-every service out, because the image only reads it when it creates the data
-directory.
+`CA_PASSWORD`, `GPU_VM_API_TOKEN`, and the MongoDB credentials. Changing one
+after the fact breaks something: rotating `MONGODB_PASSWORD` on a database that
+already exists locks every service out, because the image only reads it when it
+creates the data directory.
 
-**Required.** Five of them make the stack refuse to start if absent — rather
-than start misconfigured. An empty `MONGODB_PASSWORD` does not mean "no
-password", it means **MongoDB with no authentication at all**.
+**Required.** Seven of them make the stack refuse to start when absent **or
+empty** — rather than start misconfigured: `MONGODB_USERNAME`,
+`MONGODB_PASSWORD`, `JWT_SECRET`, `STATE_SECRET`, `CA_PASSWORD`,
+`GPU_VM_API_TOKEN` and `BACKUP_FILES_PASSWORD`.
+
+That refusal is the point for `MONGODB_PASSWORD` above all. An empty value
+would not mean "no password", it would mean **MongoDB with no authentication at
+all** — so compose stops before the container is created rather than let that
+happen.
 
 **Yours to set.** The address, the TLS mode, the ports, the backup schedule and
 destination, the number of workers.
@@ -225,9 +238,11 @@ DATA_ROOT="/var/lib/understandtech-staging"
 MONGODB_HOST_PORT="27118"
 ```
 
-`COMPOSE_PROJECT_NAME` is not redundant. Three services carry no fixed container
-name, and Compose names those after the project: setting only the prefixes
-leaves them colliding with the other stack.
+`COMPOSE_PROJECT_NAME` is not redundant. Five services carry no fixed container
+name — `workers`, `workers-customer`, `llm`, `nim-llm` and `nim-vlm`, because a
+fixed name and `--scale` are mutually exclusive. Compose names those after the
+project, so setting only the prefixes leaves them colliding with the other
+stack.
 
 Add `UT_HTTP_PORT` and `UT_HTTPS_PORT` if the first stack already holds 80 and
 443.
@@ -258,19 +273,29 @@ docker compose ps
 
 `docker compose config` catches a missing required variable before anything
 restarts. It does not catch a typo in `UT_INGRESS_MODE`: docker would create a
-directory where the missing fragment should be. `sudo ./ut-install --check`
-catches that one.
+directory where the missing fragment should be. **`sudo ./setup-autostart.sh --check`
+is what catches that one** — `ut-install --check` does not look at the ingress
+settings at all.
 
 ## Where it can go wrong
 
-**The stack will not start after an edit.** Almost always a required variable
-emptied. The error names it.
+The four failures that follow an edit, with what they mean, are in
+[when it breaks](when-it-breaks.md#after-changing-a-setting): a stack that will
+not start, a service restarting in a loop, users signed out, and the browser
+warning again.
 
-**A service restarts in a loop.** `docker compose logs <service>` — usually a
-URL pointing at an address that no longer resolves.
+## What this document does not cover
 
-**Users are signed out after changing the address.** Expected: the OIDC redirect
-URI derives from `UT_DOMAIN`.
+**The first configuration of a new box** — the models, sign-on and data sources
+you set from the browser rather than from `local.env`. That is
+[first-run configuration](first-run-configuration.md), and none of it lives in
+`.env`.
 
-**The browser warns again.** The certificate no longer matches the name, or the
-authority changed. See [certificates and DNS](certificates-and-dns.md).
+**What an upgrade does to the settings you have.** `ut-install` re-builds `.env`
+on every run, and [updating](update.md) is where that mechanism is explained in
+full — this page assumes it and does not repeat it.
+
+**Which TLS mode to choose.** The variable is listed here; the decision, and
+what each mode costs you, is [certificates and DNS](certificates-and-dns.md).
+
+**What each service does with a setting.** See [the stack](the-stack.md).
