@@ -187,11 +187,8 @@ database_credentials_in() {
     rendered "$1" -f compose.yaml | grep -E 'MONGO_INITDB_ROOT_(USERNAME|PASSWORD):' | sort | cksum
 }
 
-# Going back is meant to work because .env stayed one flat, self-contained file
-# at the same path: the older installer reads it knowing nothing of local.env.
-# Asking what the older version requires proves nothing: it required nothing at
-# all, so the list was empty and the check always passed. What matters is that
-# the file left behind holds every value on its own, local.env or not.
+# The older version declares no ${VAR:?} at all, so asking what it requires
+# would loop over an empty list and pass whatever happened.
 the_settings_left_behind_stand_on_their_own() {
     local key missing=()
     while read -r key; do
@@ -201,6 +198,31 @@ the_settings_left_behind_stand_on_their_own() {
     (( ${#missing[@]} == 0 )) && return 0
     echo "the settings file does not stand on its own: ${missing[*]}"
     return 1
+}
+
+what_the_release_decides_reaches_the_machine() {
+    local probe=UT_RELEASE_PROBE_VALUE decided="decided-by-the-release"
+    INSTALL_DIR="$AFTER"
+    printf '%s="%s"\n' "$probe" "$decided" >> "$AFTER/release.env"
+    render_settings "$AFTER/.env" "$AFTER/local.env" >/dev/null 2>&1
+    grep -q "^${probe}=\"${decided}\"$" "$AFTER/.env" && return 0
+    echo "a value only the release decides did not reach the settings file"
+    return 1
+}
+
+a_local_override_still_wins() {
+    local probe=UT_RELEASE_PROBE_VALUE chosen="chosen-by-the-customer"
+    INSTALL_DIR="$AFTER"
+    printf '%s="%s"\n' "$probe" "$chosen" >> "$AFTER/local.env"
+    render_settings "$AFTER/.env" "$AFTER/local.env" >/dev/null 2>&1
+    if ! grep -q "^${probe}=\"${chosen}\"$" "$AFTER/.env"; then
+        echo "the customer's own value is not what the settings file ends up with"
+        return 1
+    fi
+    if grep -q "^${probe}=\"decided-by-the-release\"$" "$AFTER/.env"; then
+        echo "the release's value survived alongside the customer's"
+        return 1
+    fi
 }
 
 the_previous_version_renders_what_this_one_wrote() {
@@ -317,6 +339,12 @@ property "the containers that lose a fixed name are named nowhere else" \
     renamed_containers_are_not_named_elsewhere
 property "a renamed container keeps its volumes" \
     a_renamed_container_keeps_its_volumes
+
+printf '\n%sWhat the release decides%s\n' "$BOLD" "$NC"
+property "a value only the release sets reaches the machine" \
+    what_the_release_decides_reaches_the_machine
+property "and the customer's own value still wins over it" \
+    a_local_override_still_wins
 
 printf '\n%sGoing back%s\n' "$BOLD" "$NC"
 property "the settings it leaves behind stand on their own" \
