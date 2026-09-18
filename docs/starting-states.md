@@ -1,5 +1,11 @@
 # What a machine looks like before an install
 
+**Two readers, and the document says which part is whose.** If you are about to
+install on a machine you did not prepare, read down to *How far the walk goes* —
+it tells you what the machine must have and how to clear the states that block
+an install. If you maintain the checks, the rest is the coverage of
+`test/fresh-install.sh` and what it deliberately leaves out.
+
 An installer is never run on the machine it was written on. This is the list of
 states a machine is really found in, what has to happen in each, and which check
 holds it.

@@ -1,0 +1,169 @@
+# First-run configuration
+
+The first time you open a freshly installed box you land on the admin
+configuration wizard. It asks three things — which models to offer, how people
+will sign in, and which data sources to connect — and then asks you to set a
+password that protects the page from then on.
+
+Do this once, on the machine you have just installed. Everything here can be
+changed later from the same page.
+
+> **What must be true before you start:** the install finished, every service
+> reads `healthy`, and you can open `https://<your-domain>` in a browser. If
+> not, go back to [installing](install.md).
+>
+> **Sign-on is not optional.** People sign in through your organisation's
+> identity provider. There is no built-in username and password for ordinary
+> users, so until section 2 is filled in, nobody but you can get in.
+
+## Before you start, collect these
+
+| For | What you need | Who has it |
+|---|---|---|
+| Sign-on | An OIDC application registered for this appliance, with its client ID and secret | Your identity or security team |
+| Models, if you want more than the local one | An API key per external provider you enable | Whoever holds the provider account |
+| Data sources, if you want them | OAuth credentials per provider | The administrator of that tool |
+
+The admin password the installer printed at the end of `ut-install` is what
+gets you into the wizard. It was shown once and is not in the log.
+
+## 1 · Choose the models
+
+This section controls which models your users can pick inside the Assistants
+apps.
+
+### Understand AI, the local model
+
+At the top is **Understand AI** — UnderstandTech's own assistant, running on
+the box's GPU. It is enabled by default, and it is the reason for having a DGX
+at all: inference happens on your hardware, so the content of a conversation
+never leaves your premises.
+
+Two optional fields let you change which models power it:
+
+| Field | What it takes | Default |
+|---|---|---|
+| LLM identifier | The Ollama model name used for text | `gpt-oss:20b` |
+| Vision Language identifier | An Ollama model that reads images alongside text | `qwen3-vl:4b` |
+
+**Leave both blank unless you were told otherwise.** They exist for a
+deployment that UnderstandTech has given specific model identifiers for. A name
+the box has not downloaded will not load.
+
+### External providers
+
+Below Understand AI is a list of external providers — the current set includes
+GPT-4.1, GPT-5, Mistral Medium, Claude Sonnet 4.5, Gemini 3 Flash, DeepSeek V3,
+xAI Grok 4.1 Fast and Perplexity. Tick one, and a field appears for that
+provider's API key. Leave a provider unticked and no key is needed.
+
+> **Enabling a provider sends queries off the box.** Whatever a user asks that
+> model, and whatever context the platform attaches to the question, travels to
+> that provider over the internet. If the reason you bought an appliance is that
+> data stays on your premises, leave them all off and rely on Understand AI.
+
+## 2 · Configure sign-on
+
+The platform uses OpenID Connect for all user authentication. You will need
+these values from your identity provider — Microsoft Entra ID, Okta, Google
+Workspace, Auth0, Keycloak, or any OIDC-compliant one.
+
+| Field | What it is | Where to find it |
+|---|---|---|
+| Client ID | The application ID assigned to this appliance in your IdP | Your IdP's app registration page |
+| Client secret | The secret that authenticates the application | Generated during app registration |
+| Secret key | A key used to sign and verify session tokens | Choose a long random string, 32 characters or more |
+| Redirect URI | Where the IdP sends people after they sign in | `https://<your-domain>/en/login/openid-auth` |
+| Server metadata URL | The IdP's `.well-known/openid-configuration` endpoint | See the table below |
+| Token endpoint URL | Exchanges authorization codes for tokens | In the metadata response |
+| JWKS endpoint URL | Serves the public keys that verify tokens | In the metadata response |
+| Issuer | The issuer identifier for your IdP | In the metadata response |
+
+**Start from the metadata URL.** Open it in a browser and it returns a JSON
+document containing the token endpoint, the JWKS endpoint and the issuer — copy
+them straight across rather than looking for them one at a time.
+
+| Provider | Metadata URL |
+|---|---|
+| Microsoft Entra ID | `https://login.microsoftonline.com/{tenant-id}/v2.0/.well-known/openid-configuration` |
+| Okta | `https://{your-domain}.okta.com/.well-known/openid-configuration` |
+| Google Workspace | `https://accounts.google.com/.well-known/openid-configuration` |
+| Keycloak | `https://{your-host}/realms/{realm}/.well-known/openid-configuration` |
+| Auth0 | `https://{your-domain}.auth0.com/.well-known/openid-configuration` |
+
+Registering the appliance as an application in your IdP is usually not
+something you can do alone. Involve whoever administers sign-on before you get
+to this page.
+
+`OPENID_SECRET_KEY` is generated by `ut-install` and lives in
+`/etc/understandtech/.env`. Everything else in this section is stored by the
+platform, not in `.env`.
+
+## 3 · Connect data sources, if you want to
+
+Optional, and revisitable. These let people query documents and records from
+tools they already use. Expand a provider with the arrow next to its name.
+
+**Microsoft (OneDrive and SharePoint)** — register the appliance as an
+application in Entra ID, then fill in:
+
+| Field | Value |
+|---|---|
+| Client ID | The application ID from your Entra ID app registration |
+| Client secret | The secret generated for that registration |
+| Redirect URI | `https://<your-domain>/api/microsoft/callback` |
+| Authority | `https://login.microsoftonline.com/{tenant-id}` |
+
+**HubSpot** — create a private app under Settings → Integrations → Private
+Apps, then fill in its client ID, client secret and app ID, with redirect URI
+`https://<your-domain>/api/hubspot/callback`.
+
+**Zoho** — register a client in the Zoho API Console, then fill in its client
+ID and secret, with redirect URI `https://<your-domain>/api/zoho/callback`.
+Zoho's authorization and token endpoints are `https://accounts.zoho.com/oauth/v2/auth`
+and `https://accounts.zoho.com/oauth/v2/token`; use `zoho.eu` for a European
+data centre.
+
+> Each integration reaches out to that provider's servers. The documents
+> themselves come onto the box to be indexed, but the connection is an outbound
+> one — an air-gapped appliance cannot use these.
+
+## 4 · Set the admin password
+
+The last step asks for a password that protects the configuration page itself.
+Anyone who later wants to change models, sign-on or data sources needs it.
+
+Use at least 12 characters, and store it where your organisation keeps such
+things. **It is separate** from the machine's system password and from anyone's
+sign-on credentials.
+
+When you save, the settings are applied and the platform restarts with them.
+You are sent to the sign-in page, where you and your users authenticate through
+your identity provider.
+
+## Afterwards
+
+The configuration page stays reachable at
+`https://<your-domain>/en/workspace/admin` with the password you just set.
+
+Day-to-day administration of tenants and users is a different surface:
+`https://admin.<your-domain>`. See
+[using the platform](using-the-platform.md) for what each address is for.
+
+## What this page does not cover
+
+- **Which users exist.** That follows from your identity provider. The platform
+  does not maintain its own user list.
+- **Who may do what inside the platform.** Handled in the admin portal, not
+  here.
+- **Changing the address later.** That is a `.env` change and a DNS change; see
+  [certificates and DNS](certificates-and-dns.md).
+
+## Not verified against this repository
+
+The field names, the section order and the two paths `/en/login/openid-auth`
+and `/en/workspace/admin` come from the platform's own published guide, not
+from this repository — the wizard is served by the application images, whose
+source is not here. The defaults `gpt-oss:20b` and `qwen3-vl:4b` come from the
+same guide. Check them against the page in front of you; if they differ, the
+page is right and this document is stale.
