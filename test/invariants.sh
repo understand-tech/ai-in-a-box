@@ -113,6 +113,18 @@ check_compose_declares_no_secret_default() {
 # a difference nobody chose. MONGODB_HOST read `mongodb` for the App Builder and
 # the empty string for the seven services in compose.yaml, so an .env without
 # that line started them against a database host of "".
+check_healthcheck_asks_for_a_certified_name() {
+    local url host names
+    url=$(grep -h 'step", "ca", "health"' "${COMPOSE_FILES[@]}" 2>/dev/null \
+        | grep -oE 'https://[^"]+' | head -1) || return 0
+    [[ -n "$url" ]] || return 0
+    host=${url#https://}; host=${host%%:*}
+    names=$(grep -h 'DOCKER_STEPCA_INIT_DNS_NAMES' "${COMPOSE_FILES[@]}" 2>/dev/null) || return 0
+    grep -q "[ ,:]${host}\(,\|$\)" <<< "$names" && return 0
+    report "healthcheck-name-not-certified:${host}" \
+        "the authority's healthcheck asks for ${host}, which DOCKER_STEPCA_INIT_DNS_NAMES does not list — it can never pass, and everything waiting on it stops"
+}
+
 check_defaults_do_not_diverge() {
     local key defaults count
     while read -r key; do
@@ -303,6 +315,7 @@ main() {
     check_plaintext_secrets
     check_release_env_ships_no_secret
     check_compose_declares_no_secret_default
+    check_healthcheck_asks_for_a_certified_name
     check_defaults_do_not_diverge
     check_required_variables_appear_in_the_template
     check_required_variables_have_a_value_or_are_generated

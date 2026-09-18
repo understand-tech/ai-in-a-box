@@ -347,9 +347,8 @@ domain_written_in() {
     domain_named_by_the_urls "$file"
 }
 
-# The address is read before the settings are written, so a machine moving off a
-# checkout has nothing in /etc yet and would be offered understand.local instead
-# of the name it already answers on.
+# The address is read before the settings are written, so /etc is still empty
+# here on a machine moving off a checkout.
 configured_domain() {
     local found previous
     found=$(domain_written_in "$INSTALL_DIR/.env" 2>/dev/null || true)
@@ -634,12 +633,8 @@ settings_of_a_previous_install() {
     printf '%s' "$found"
 }
 
-# A settings file written before this version is the only place the customer's
-# choices exist. Lines are carried over verbatim rather than re-quoted:
-# GATEWAY_MODELS holds JSON inside single quotes, which rewriting as KEY="value"
-# would corrupt. A line identical to the release's is dropped, because dropping
-# it changes nothing; anything else is kept, and the divergence is reported
-# rather than resolved — an upgrade is the wrong moment to change an address.
+# Lines are carried over verbatim, never re-quoted: GATEWAY_MODELS holds JSON
+# inside single quotes, which env_set would rewrite as KEY="value" and corrupt.
 migrate_existing_settings_into_local() {
     local env_file=$1 local_file=$2 release line key kept=0 diverged=0
     release="$INSTALL_DIR/release.env"

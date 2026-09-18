@@ -99,6 +99,12 @@ discriminates "a secret defaulted in a compose file" \
     "compose-secret-default:JWT_SECRET" \
     "sed -i.bak 's|\${JWT_SECRET:?[^}]*}|\${JWT_SECRET:-shipped-value}|' compose.yaml"
 
+if grep -q 'check_healthcheck_asks_for_a_certified_name' "$REPO_ROOT/test/invariants.sh"; then
+    discriminates "a healthcheck asking for a name the certificate does not carry" \
+        "healthcheck-name-not-certified:localhost" \
+        "sed -i.bak 's|https://step-ca:9000|https://localhost:9000|' compose.yaml"
+fi
+
 discriminates "one variable with two different defaults" \
     "divergent-default:MONGODB_HOST" \
     "sed -i.bak 's|\${MONGODB_HOST:-mongodb}|\${MONGODB_HOST:-}|' compose.appbuilder.yaml"
