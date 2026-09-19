@@ -46,9 +46,35 @@ stage_release_files() {
     find "$root/$SHARE_DIR/caddy" "$root/$SHARE_DIR/appbuilder" -type f -exec chmod 644 {} +
 }
 
+# A number orders releases; it does not say what is inside one. dpkg installed
+# 2026.09.3 built from an older commit over 2026.09.2 and put a fixed defect
+# back, with nothing on the machine to explain it afterwards.
+release_commit() {
+    local commit
+    commit=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null) \
+        || { printf '%s' "${UT_RELEASE_COMMIT:-}"; return 0; }
+    git -C "$REPO_ROOT" diff --quiet HEAD 2>/dev/null || commit="${commit}-dirty"
+    printf '%s' "$commit"
+}
+
+warn_about_a_tree_nobody_can_match() {
+    local commit=$1
+    case "$commit" in
+        "")       echo "[warn] No commit could be read: this package says nothing about its source." >&2 ;;
+        *-dirty)  echo "[warn] The tree has uncommitted changes: '${commit}' matches no published commit." >&2 ;;
+    esac
+    git -C "$REPO_ROOT" rev-list --count '@{upstream}..HEAD' 2>/dev/null | grep -qvx 0 \
+        && echo "[warn] This branch is ahead of its upstream: the commit is not pushed anywhere." >&2
+    return 0
+}
+
 stamp_the_release_version() {
-    local root=$1 version=$2
-    sed "s|^UT_RELEASE_VERSION=.*|UT_RELEASE_VERSION=\"${version}\"|" \
+    local root=$1 version=$2 commit stamp
+    commit=$(release_commit)
+    warn_about_a_tree_nobody_can_match "$commit"
+    stamp="$version"
+    [[ -n "$commit" ]] && stamp="${version}+${commit}"
+    sed "s|^UT_RELEASE_VERSION=.*|UT_RELEASE_VERSION=\"${stamp}\"|" \
         "$REPO_ROOT/release.env" > "$root/$SHARE_DIR/release.env"
     chmod 644 "$root/$SHARE_DIR/release.env"
 }

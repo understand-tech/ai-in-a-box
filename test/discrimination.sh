@@ -331,6 +331,12 @@ if grep -q 'checkouts_holding_settings' "$REPO_ROOT/ut-install"; then
         "every variable the stack requires has a value" \
         "sed -i.bak 's| CA_PASSWORD GPU_VM_API_TOKEN)| CA_PASSWORD)|' ut-install"
 
+if grep -q 'check_the_package_stamps_the_commit_it_was_built_from' "$REPO_ROOT/test/invariants.sh"; then
+    discriminates "a package that says nothing about the code inside it" \
+        "package-version-without-commit" \
+        "sed -i.bak 's|UT_RELEASE_VERSION=\\\\\"\${stamp}|UT_RELEASE_VERSION=\\\\\"\${version}|' packaging/build-deb.sh"
+fi
+
 if grep -q 'a_terminal_is_watching' "$REPO_ROOT/ut-install"; then
     install_walk_discriminates "a terminal assumed rather than opened" \
         "it finishes, and says so" \

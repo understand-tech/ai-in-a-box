@@ -274,6 +274,16 @@ check_published_ports_are_allowed() {
     done <<< "$(published_port_entries "${COMPOSE_FILES[@]}")"
 }
 
+# The version only orders releases. Without the commit beside it, a package
+# installed on a box says nothing about the code it carries.
+check_the_package_stamps_the_commit_it_was_built_from() {
+    local builder="$REPO_ROOT/packaging/build-deb.sh"
+    [[ -f "$builder" ]] || return 0
+    grep -q 'rev-parse' "$builder" && grep -q 'UT_RELEASE_VERSION=\\"\${stamp}' "$builder" && return 0
+    report "package-version-without-commit" \
+        "build-deb.sh writes UT_RELEASE_VERSION without the commit it was built from — a package that regresses cannot be traced back to its source"
+}
+
 check_images_are_pinned() {
     local key value
     while read -r key; do
@@ -372,6 +382,7 @@ main() {
     check_required_variables_have_a_value_or_are_generated
     check_variables_without_default_are_declared
     check_published_ports_are_allowed
+    check_the_package_stamps_the_commit_it_was_built_from
     check_images_are_pinned
     check_production_defaults
     check_documented_paths_exist
