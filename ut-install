@@ -186,9 +186,23 @@ running_from_the_package() {
     [[ "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" == "/usr/bin" ]]
 }
 
+directory_the_script_sits_in() {
+    ( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )
+}
+
+# Both marks are required: a directory holding only one of them is something
+# else, and adopting it would install beside the release rather than onto it.
+looks_like_a_checkout() {
+    [[ -f "$1/compose.yaml" && -d "$1/.git" ]]
+}
+
 resolve_install_dir() {
     [[ -n "$INSTALL_DIR" ]] && return 0
-    if running_from_the_package && [[ -f "$PACKAGE_SHARE_DIR/compose.yaml" ]]; then
+    local here
+    here=$(directory_the_script_sits_in)
+    if looks_like_a_checkout "$here"; then
+        INSTALL_DIR="$here"
+    elif running_from_the_package && [[ -f "$PACKAGE_SHARE_DIR/compose.yaml" ]]; then
         INSTALL_DIR="$PACKAGE_SHARE_DIR"
     else
         INSTALL_DIR="$CHECKOUT_INSTALL_DIR"
@@ -300,12 +314,12 @@ preflight() {
         blocking=1
     fi
 
-    if release_comes_from_the_package_manager; then
-        log_info "Release managed by the package — git not needed"
+    if release_is_present && ! $DO_UPDATE; then
+        log_info "Release already at ${INSTALL_DIR} — nothing to clone, git not needed"
     elif command -v git >/dev/null 2>&1; then
         log_info "git present"
     else
-        log_error "git is not installed, and the release has to be cloned."
+        log_error "git is not installed, and the release has to be fetched."
         blocking=1
     fi
 
@@ -426,6 +440,8 @@ read_token() {
         [[ -r "$TOKEN_FILE" ]] || die "Token file not readable: ${TOKEN_FILE}"
         REGISTRY_TOKEN=$(tr -d '\r\n' < "$TOKEN_FILE")
     elif token_required; then
+        a_terminal_is_watching \
+            || die "A registry token is needed and there is no terminal to ask on. Pass --token-file, or set UT_REGISTRY_TOKEN."
         printf 'Registry token for %s (input hidden): ' "$REGISTRY_USER" > /dev/tty
         read -rs REGISTRY_TOKEN < /dev/tty
         printf '\n' > /dev/tty
@@ -914,9 +930,18 @@ step_autostart() {
     log_info "Boot service and mDNS publisher installed"
 }
 
+# /dev/tty is crw-rw-rw- whether or not a controlling terminal exists, so `test
+# -w` answers on its permissions and opening it is the only honest question.
+a_terminal_is_watching() {
+    { : > /dev/tty; } 2>/dev/null
+}
+
 print_secrets_out_of_band() {
     local env_file=$1 admin_password backup_password
-    [[ -w /dev/tty ]] || return 0
+    if ! a_terminal_is_watching; then
+        log_info "No terminal here, so nothing was printed. The secrets are in $(settings_directory "$env_file")/local.env"
+        return 0
+    fi
 
     admin_password=$(env_get "$env_file" ADMIN_SETUP_PASSWORD 2>/dev/null || true)
     backup_password=$(env_get "$env_file" BACKUP_FILES_PASSWORD 2>/dev/null || true)
