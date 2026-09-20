@@ -102,8 +102,8 @@ dpkg -i --force-depends /out/understandtech_${VERSION}_all.deb >/dev/null 2>&1
 
 $(state_setup "$state")
 
-UT_REGISTRY_TOKEN=test-token PULL_EXIT=9 \\
-    ut-install $domain_arg > /w/$state/output.txt 2>&1
+UT_REGISTRY_TOKEN=${INSTALL_TOKEN-test-token} \\
+    ${INSTALL_COMMAND:-ut-install} $domain_arg > /w/$state/output.txt 2>&1
 printf 'EXIT=%s\n' "\$?" >> /w/$state/output.txt
 
 cp /etc/understandtech/.env /w/$state/env 2>/dev/null || : > /w/$state/env
@@ -115,12 +115,18 @@ PROBE
         -v "$WORK_DIR":/w -v "$WORK_DIR":/out \
         -e MONGO_VOLUME_EXISTS="${MONGO_VOLUME_EXISTS:-no}" \
         -e NETWORK_CREATE_EXIT="${NETWORK_CREATE_EXIT:-0}" \
+        -e PULL_EXIT="${PULL_EXIT:-9}" \
         debian:12-slim bash /w/walk-$state.sh >/dev/null 2>&1
 }
 
 state_setup() {
     case "$1" in
         bare)          echo ': # nothing beyond the package' ;;
+        install_runs_through) echo ': # like bare, but the pull is allowed to succeed' ;;
+        # A checkout of the repository, the way an operator who cloned it has one.
+        # The package is installed too, which is what makes the choice interesting.
+        launched_from_a_checkout|checkout_but_no_key)
+            echo 'install -d /srv/clone && cp -a /usr/share/understandtech/. /srv/clone/ && install -d /srv/clone/.git && cp /usr/bin/ut-install /srv/clone/ut-install' ;;
         empty_settings) echo 'install -m 600 /dev/null /etc/understandtech/.env' ;;
         already_set)   echo 'install -m 600 /usr/share/understandtech/release.env /etc/understandtech/.env' ;;
         no_settings_dir) echo 'rm -rf /etc/understandtech' ;;
@@ -253,6 +259,63 @@ the_preflight_stops_on_full_pools() {
     return 1
 }
 
+# The harness has no controlling terminal, which is the state every scripted
+# install runs in — a CI job, an Ansible play, ssh without a tty.
+an_install_that_worked_says_so() {
+    local output
+    output=$(output_of install_runs_through)
+    grep -q 'Installation complete' <<< "$output" || { echo "the install did not finish"; return 1; }
+    grep -q '^EXIT=0$' <<< "$output" && return 0
+    echo "it finished and still reported failure:"
+    grep -E '^\[fail\]|^EXIT=|/dev/tty' <<< "$output" | tail -5
+    return 1
+}
+
+the_secrets_are_findable_without_a_terminal() {
+    local output
+    output=$(output_of install_runs_through)
+    grep -qi 'local.env' <<< "$output" && return 0
+    echo "nothing told the operator where the secrets are"
+    return 1
+}
+
+no_secret_reaches_the_log() {
+    local output secret
+    output=$(output_of install_runs_through)
+    for secret in ADMIN_SETUP_PASSWORD BACKUP_FILES_PASSWORD; do
+        secret=$(grep -m1 -E "^${secret}=" "$WORK_DIR/install_runs_through/env" 2>/dev/null) || continue
+        secret=${secret#*=}; secret=${secret%\"}; secret=${secret#\"}
+        [[ -n "$secret" ]] || continue
+        grep -qF "$secret" <<< "$output" && { echo "a generated secret appears in the install output"; return 1; }
+    done
+    return 0
+}
+
+a_checkout_under_foot_needs_no_token() {
+    local output
+    output=$(output_of launched_from_a_checkout)
+    if grep -qE 'Registry token for|has to be cloned' <<< "$output"; then
+        echo "it set out to clone the release it was already standing in"
+        grep -E 'Registry token|has to be cloned' <<< "$output" | head -2
+        return 1
+    fi
+    grep -q '/srv/clone' <<< "$output" && return 0
+    echo "it did not take the checkout it was launched from"
+    grep -E 'Directory|Release|Checkout' <<< "$output" | head -3
+    return 1
+}
+
+# The other half of the same change: recognising a checkout must not become a
+# way in without credentials.
+a_machine_with_no_credentials_is_still_asked() {
+    local output
+    output=$(output_of checkout_but_no_key)
+    grep -qE 'Registry token for|registry token is needed|No registry token supplied' <<< "$output" && return 0
+    echo "it went ahead without ever asking for a key"
+    tail -6 <<< "$output"
+    return 1
+}
+
 an_orphan_volume_stops_the_install() {
     local output
     output=$(output_of orphan_volume)
@@ -295,6 +358,11 @@ build_the_package
 write_machine_stubs
 
 run_install_from_state bare
+PULL_EXIT=0 run_install_from_state install_runs_through
+INSTALL_TOKEN= INSTALL_COMMAND=/srv/clone/ut-install \
+    run_install_from_state launched_from_a_checkout
+INSTALL_TOKEN= INSTALL_COMMAND=/srv/clone/ut-install \
+    run_install_from_state checkout_but_no_key
 run_install_from_state empty_settings
 run_install_from_state already_set
 run_install_from_state no_settings_dir
@@ -345,6 +413,20 @@ property "the checkout itself is left untouched" \
     the_checkout_is_left_alone
 property "an install too old to name its address has it read from its URLs" \
     the_address_is_read_from_the_urls
+
+printf '\n%sAn install with nobody watching%s\n' "$BOLD" "$NC"
+property "it finishes, and says so" \
+    an_install_that_worked_says_so
+property "the secrets can be found afterwards" \
+    the_secrets_are_findable_without_a_terminal
+property "and none of them reached the log" \
+    no_secret_reaches_the_log
+
+printf '\n%sLaunched from a checkout%s\n' "$BOLD" "$NC"
+property "it takes the checkout it is standing in, and asks for no token" \
+    a_checkout_under_foot_needs_no_token
+property "but a machine with no credentials is still asked for a key" \
+    a_machine_with_no_credentials_is_still_asked
 
 printf '\n%sA database nobody has the password for%s\n' "$BOLD" "$NC"
 property "the install stops, and says which volume and what to do" \

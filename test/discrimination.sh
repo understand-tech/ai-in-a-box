@@ -331,6 +331,34 @@ if grep -q 'checkouts_holding_settings' "$REPO_ROOT/ut-install"; then
         "every variable the stack requires has a value" \
         "sed -i.bak 's| CA_PASSWORD GPU_VM_API_TOKEN)| CA_PASSWORD)|' ut-install"
 
+if grep -q 'check_the_package_stamps_the_commit_it_was_built_from' "$REPO_ROOT/test/invariants.sh"; then
+    discriminates "a package that says nothing about the code inside it" \
+        "package-version-without-commit" \
+        "sed -i.bak 's|UT_RELEASE_VERSION=\\\\\"\${stamp}|UT_RELEASE_VERSION=\\\\\"\${version}|' packaging/build-deb.sh"
+fi
+
+if grep -q 'if ! terminal_is_reachable' "$REPO_ROOT/ut-install"; then
+    install_walk_discriminates "a terminal assumed rather than opened" \
+        "it finishes, and says so" \
+        "sed -i.bak 's|^terminal_is_reachable() .*$|terminal_is_reachable() { [[ -w /dev/tty ]]; }|' ut-install"
+
+    install_walk_discriminates "an install that finishes without saying where the secrets are" \
+        "the secrets can be found afterwards" \
+        "sed -i.bak 's|^        log_info \"No terminal here.*$|        :|' ut-install"
+fi
+
+if grep -q 'looks_like_a_checkout' "$REPO_ROOT/ut-install"; then
+    install_walk_discriminates "an installer blind to the checkout it stands in" \
+        "it takes the checkout it is standing in, and asks for no token" \
+        "sed -i.bak 's|^    \[\[ -f \"\$1/compose.yaml\" && -d \"\$1/.git\" \]\]$|    false|' ut-install"
+
+    # The guard this change stands next to without touching. A neighbouring
+    # correction that quietly opens the way in is exactly what it must not do.
+    install_walk_discriminates "a way in that no longer needs a key" \
+        "but a machine with no credentials is still asked for a key" \
+        "sed -i.bak 's|^    release_is_present && registry_credentials_stored && return 1$|    release_is_present \&\& return 1|' ut-install"
+fi
+
     install_walk_discriminates "a database nobody has the password for, accepted" \
         "the install stops, and says which volume and what to do" \
         "sed -i.bak 's|^    \[\[ -n \"\$(env_get \"\$env_file\" MONGODB_PASSWORD .*$|    true|' ut-install"
