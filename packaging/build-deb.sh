@@ -46,9 +46,8 @@ stage_release_files() {
     find "$root/$SHARE_DIR/caddy" "$root/$SHARE_DIR/appbuilder" -type f -exec chmod 644 {} +
 }
 
-# A number orders releases; it does not say what is inside one. dpkg installed
-# 2026.09.3 built from an older commit over 2026.09.2 and put a fixed defect
-# back, with nothing on the machine to explain it afterwards.
+# dpkg compares numbers, not contents: 2026.09.3 built from an older commit
+# installed over 2026.09.2 and put a fixed defect back, in silence.
 release_commit() {
     local commit
     commit=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null) \

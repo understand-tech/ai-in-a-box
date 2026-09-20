@@ -361,7 +361,8 @@ run_install_from_state bare
 PULL_EXIT=0 run_install_from_state install_runs_through
 INSTALL_TOKEN= INSTALL_COMMAND=/srv/clone/ut-install \
     run_install_from_state launched_from_a_checkout
-INSTALL_TOKEN= run_install_from_state checkout_but_no_key
+INSTALL_TOKEN= INSTALL_COMMAND=/srv/clone/ut-install \
+    run_install_from_state checkout_but_no_key
 run_install_from_state empty_settings
 run_install_from_state already_set
 run_install_from_state no_settings_dir

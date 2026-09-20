@@ -274,8 +274,8 @@ check_published_ports_are_allowed() {
     done <<< "$(published_port_entries "${COMPOSE_FILES[@]}")"
 }
 
-# The version only orders releases. Without the commit beside it, a package
-# installed on a box says nothing about the code it carries.
+# Static on purpose: building a package here would cost more than the 0.87 s
+# this whole file is allowed, so it reads the builder rather than its output.
 check_the_package_stamps_the_commit_it_was_built_from() {
     local builder="$REPO_ROOT/packaging/build-deb.sh"
     [[ -f "$builder" ]] || return 0

@@ -337,10 +337,10 @@ if grep -q 'check_the_package_stamps_the_commit_it_was_built_from' "$REPO_ROOT/t
         "sed -i.bak 's|UT_RELEASE_VERSION=\\\\\"\${stamp}|UT_RELEASE_VERSION=\\\\\"\${version}|' packaging/build-deb.sh"
 fi
 
-if grep -q 'a_terminal_is_watching' "$REPO_ROOT/ut-install"; then
+if grep -q 'if ! terminal_is_reachable' "$REPO_ROOT/ut-install"; then
     install_walk_discriminates "a terminal assumed rather than opened" \
         "it finishes, and says so" \
-        "sed -i.bak 's|^    { : > /dev/tty; } 2>/dev/null$|    [[ -w /dev/tty ]]|' ut-install"
+        "sed -i.bak 's|^terminal_is_reachable() .*$|terminal_is_reachable() { [[ -w /dev/tty ]]; }|' ut-install"
 
     install_walk_discriminates "an install that finishes without saying where the secrets are" \
         "the secrets can be found afterwards" \

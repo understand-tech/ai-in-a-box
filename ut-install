@@ -440,7 +440,7 @@ read_token() {
         [[ -r "$TOKEN_FILE" ]] || die "Token file not readable: ${TOKEN_FILE}"
         REGISTRY_TOKEN=$(tr -d '\r\n' < "$TOKEN_FILE")
     elif token_required; then
-        a_terminal_is_watching \
+        terminal_is_reachable \
             || die "A registry token is needed and there is no terminal to ask on. Pass --token-file, or set UT_REGISTRY_TOKEN."
         printf 'Registry token for %s (input hidden): ' "$REGISTRY_USER" > /dev/tty
         read -rs REGISTRY_TOKEN < /dev/tty
@@ -930,15 +930,9 @@ step_autostart() {
     log_info "Boot service and mDNS publisher installed"
 }
 
-# /dev/tty is crw-rw-rw- whether or not a controlling terminal exists, so `test
-# -w` answers on its permissions and opening it is the only honest question.
-a_terminal_is_watching() {
-    { : > /dev/tty; } 2>/dev/null
-}
-
 print_secrets_out_of_band() {
     local env_file=$1 admin_password backup_password
-    if ! a_terminal_is_watching; then
+    if ! terminal_is_reachable; then
         log_info "No terminal here, so nothing was printed. The secrets are in $(settings_directory "$env_file")/local.env"
         return 0
     fi
