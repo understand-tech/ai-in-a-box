@@ -307,7 +307,7 @@ if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
 
     capability_discriminates "checksums left in the order the filesystem gave them" \
         "the checksums are written in one order" \
-        "sed -i.bak 's/| sort -z | xargs -0 md5sum/| xargs -0 md5sum/' packaging/build-deb.sh"
+        "sed -i.bak 's/| LC_ALL=C sort -z | xargs -0 md5sum/| xargs -0 md5sum/' packaging/build-deb.sh"
 
     capability_discriminates "a size read off the block count" \
         "the installed size does not come from a block count" \

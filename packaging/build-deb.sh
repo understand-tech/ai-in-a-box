@@ -177,9 +177,11 @@ EOF
 write_md5sums() {
     local root=$1
     # find walks in directory order, which the filesystem decides too. Sorting
-    # is what makes two machines write this file the same way.
+    # is what makes two machines write this file the same way — under LC_ALL=C,
+    # because a UTF-8 collation orders ut-helper and ut_helper the other way
+    # round and the locale belongs to the machine as much as the block size does.
     ( cd "$root" && find . -type f ! -path './DEBIAN/*' -printf '%P\0' \
-        | sort -z | xargs -0 md5sum > DEBIAN/md5sums )
+        | LC_ALL=C sort -z | xargs -0 md5sum > DEBIAN/md5sums )
 }
 
 main() {
