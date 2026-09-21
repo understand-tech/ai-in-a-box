@@ -68,12 +68,17 @@ warn_about_a_tree_nobody_can_match() {
 }
 
 stamp_the_release_version() {
-    local root=$1 version=$2 commit stamp
+    local root=$1 version=$2 commit stamp built_at
     commit=$(release_commit)
     warn_about_a_tree_nobody_can_match "$commit"
     stamp="$version"
     [[ -n "$commit" ]] && stamp="${version}+${commit}"
-    sed "s|^UT_RELEASE_VERSION=.*|UT_RELEASE_VERSION=\"${stamp}\"|" \
+    # The same value the archive's timestamps are clamped to, so the stamp is
+    # the commit's date and not the hour this ran at: a build date that moved
+    # between two builds would make the package unreproducible again.
+    built_at="${SOURCE_DATE_EPOCH:-}"
+    sed -e "s|^UT_RELEASE_VERSION=.*|UT_RELEASE_VERSION=\"${stamp}\"|" \
+        -e "s|^UT_RELEASE_BUILT_AT=.*|UT_RELEASE_BUILT_AT=\"${built_at}\"|" \
         "$REPO_ROOT/release.env" > "$root/$SHARE_DIR/release.env"
     chmod 644 "$root/$SHARE_DIR/release.env"
 }

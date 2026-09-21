@@ -415,6 +415,12 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
     install_walk_discriminates "a disk floor that lets every machine through" \
         "the refusal names what is free and what is needed" \
         "sed -i.bak 's|^MIN_DISK_BYTES=.*|MIN_DISK_BYTES=0|' ut-install"
+
+    # The clock check reads one value out of release.env. Make that read fail and
+    # it skips in silence, which is the shape the defect would really take.
+    install_walk_discriminates "a clock nothing compares to anything" \
+        "the preflight stops rather than issue certificates nothing will accept" \
+        "sed -i.bak 's|^release_declares() {\$|release_declares() { return 1;|' ut-install"
 fi
 
 if grep -q 'checkouts_holding_settings' "$REPO_ROOT/ut-install"; then
