@@ -681,6 +681,31 @@ a_bill_of_materials_refuses_an_image_that_can_move() {
     return 1
 }
 
+# actions/attest reads three fields and nothing else: bomFormat, specVersion and
+# serialNumber. A document missing the third is refused as "unsupported format",
+# which is how release v2026.09.5-rc3 stopped after building and signing.
+a_bill_of_materials_carries_what_attestation_reads() {
+    local bom
+    bom=$("$REPO_ROOT/packaging/release-bom.sh" 9999.99.9 2>/dev/null)
+    grep -q '"bomFormat"' <<< "$bom" \
+        && grep -q '"specVersion"' <<< "$bom" \
+        && grep -q '"serialNumber": "urn:uuid:[0-9a-f-]*"' <<< "$bom" && return 0
+    echo "actions/attest would refuse this as an unsupported format:"
+    head -6 <<< "$bom"
+    return 1
+}
+
+# Two runs of the same release must produce the same document, or nobody can
+# check the published one against the release it describes.
+a_bill_of_materials_is_the_same_twice() {
+    local once twice
+    once=$("$REPO_ROOT/packaging/release-bom.sh" 9999.99.9 2>/dev/null)
+    twice=$("$REPO_ROOT/packaging/release-bom.sh" 9999.99.9 2>/dev/null)
+    [[ "$once" == "$twice" ]] && return 0
+    echo "two runs of the same release produced different documents"
+    return 1
+}
+
 the_release_publishes_what_it_is_made_of() {
     grep -q 'release-bom.sh' "$REPO_ROOT/.github/workflows/release.yml" && return 0
     echo "the release ships no bill of materials"
@@ -1079,6 +1104,10 @@ if [[ -x "$REPO_ROOT/packaging/release-bom.sh" ]]; then
         a_release_names_every_image_it_ships
     capability "it refuses to describe an image that can move" \
         a_bill_of_materials_refuses_an_image_that_can_move
+    capability "it carries the three fields attestation reads" \
+        a_bill_of_materials_carries_what_attestation_reads
+    capability "and two runs of one release write the same document" \
+        a_bill_of_materials_is_the_same_twice
     capability "and the release publishes what it is made of" \
         the_release_publishes_what_it_is_made_of
 fi

@@ -77,7 +77,7 @@ jobs:
         run: ./packaging/release-bom.sh "$VERSION" > "dist/understandtech_${VERSION}.cdx.json"
 
       - name: Attest the bill of materials
-        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: dist/understandtech_${{ env.VERSION }}_all.deb
           sbom-path: dist/understandtech_${{ env.VERSION }}.cdx.json

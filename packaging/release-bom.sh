@@ -66,14 +66,32 @@ component_for_the_package() {
     printf '    }'
 }
 
-# No timestamp and no serial number: both would change between two runs of the
-# same release, and a bill of materials that cannot be regenerated identically
-# is one nobody can check against the release it describes.
+# CycloneDX wants a serial number, and actions/attest refuses a document without
+# one — measured, it is the only field it checks beyond bomFormat and
+# specVersion. A random one would differ between two runs of the same release,
+# so this is a UUIDv5 over the version: same release, same serial.
+serial_number_for() {
+    local name=$1 hash sixth eighth
+    hash=$(printf \
+        '\x6b\xa7\xb8\x10\x9d\xad\x11\xd1\x80\xb4\x00\xc0\x4f\xd4\x30\xc8%s' "$name" \
+        | openssl dgst -sha1)
+    hash=${hash##* }
+    sixth=$(( 0x${hash:12:2} & 0x0f | 0x50 ))
+    eighth=$(( 0x${hash:16:2} & 0x3f | 0x80 ))
+    printf 'urn:uuid:%s-%s-%02x%s-%02x%s-%s' \
+        "${hash:0:8}" "${hash:8:4}" "$sixth" "${hash:14:2}" \
+        "$eighth" "${hash:18:2}" "${hash:20:12}"
+}
+
+# No timestamp: it would differ between two runs of the same release, and a bill
+# of materials that cannot be regenerated identically is one nobody can check
+# against the release it describes.
 write_bom() {
     local line
     printf '{\n'
     printf '  "bomFormat": "CycloneDX",\n'
     printf '  "specVersion": "1.6",\n'
+    printf '  "serialNumber": "%s",\n' "$(serial_number_for "understandtech-appliance ${VERSION}")"
     printf '  "version": 1,\n'
     printf '  "metadata": {\n'
     printf '    "component": {\n'
