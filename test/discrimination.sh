@@ -328,6 +328,16 @@ if [[ -x "$REPO_ROOT/packaging/release-bom.sh" ]]; then
     capability_discriminates "a release that ships no bill of materials" \
         "and the release publishes what it is made of" \
         "sed -i.bak '/release-bom.sh/d' .github/workflows/release.yml"
+
+    # What actually stopped v2026.09.5-rc3: the document was valid CycloneDX and
+    # attestation still refused it, for the one field it happens to read.
+    capability_discriminates "a document attestation would call unsupported" \
+        "it carries the three fields attestation reads" \
+        "sed -i.bak '/\"serialNumber\"/d' packaging/release-bom.sh"
+
+    capability_discriminates "a serial number drawn afresh every run" \
+        "and two runs of one release write the same document" \
+        "sed -i.bak 's|understandtech-appliance \${VERSION}|understandtech-appliance \${VERSION}\${RANDOM}|' packaging/release-bom.sh"
 fi
 
 if [[ -x "$REPO_ROOT/ut-verify" ]]; then
