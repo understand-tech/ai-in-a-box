@@ -887,11 +887,12 @@ step_wait_healthy() {
     log "     Waiting up to $((HEALTH_TIMEOUT / 60)) minutes for everything else."
 
     local deadline=$(( SECONDS + HEALTH_TIMEOUT ))
-    local pending loading name status health role line
+    local pending loading failed name status health role line
 
     while (( SECONDS < deadline )); do
         pending=""
         loading=""
+        failed=""
         while IFS='|' read -r name status health role; do
             [[ -n "$name" ]] || continue
             name=${name#/}
@@ -901,8 +902,10 @@ step_wait_healthy() {
             esac
             if role_is_waited_for "$role"; then
                 pending+="  ${name}: ${status}/${health}"$'\n'
-            else
+            elif [[ "$health" == "starting" ]]; then
                 loading+="  ${name}: ${status}/${health}"$'\n'
+            else
+                failed+="  ${name}: ${status}/${health}"$'\n'
             fi
         done < <(container_health_lines)
 
@@ -910,11 +913,13 @@ step_wait_healthy() {
             printf '\r\033[K'
             log_info "The platform is ready"
             report_inference_still_loading "$loading"
-            return 0
+            report_inference_that_failed "$failed" && return 0
+            return 1
         fi
 
-        printf '\r%s     %d service(s) still starting (%dm elapsed)%s\033[K' \
-            "$YELLOW" "$(printf '%s' "$pending" | grep -c .)" "$(( SECONDS / 60 ))" "$NC"
+        printf '\r%s     %d service(s) still starting: %s (%dm elapsed)%s\033[K' \
+            "$YELLOW" "$(printf '%s' "$pending" | grep -c .)" "$(names_in "$pending")" \
+            "$(( SECONDS / 60 ))" "$NC"
         sleep 15
     done
 
@@ -925,8 +930,16 @@ step_wait_healthy() {
     return 0
 }
 
-# Saying "still loading" about a container that has already failed would be the
-# fourth way this installer has claimed success it did not have.
+# A count tells the operator to keep waiting; a name tells them what to look at.
+names_in() {
+    local block=$1 line names=""
+    printf '%s' "$block" | while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        line=${line#  }
+        printf '%s ' "${line%%:*}"
+    done | sed 's/ $//; s/ /, /g'
+}
+
 report_inference_still_loading() {
     local loading=$1 line
     [[ -n "$loading" ]] || return 0
@@ -934,6 +947,20 @@ report_inference_still_loading() {
     log "     Inference is not ready yet, and the platform does not wait for it:"
     printf '%s' "$loading" | while IFS= read -r line; do [[ -n "$line" ]] && log "  ${line# }"; done
     log "     Follow it with: cd ${INSTALL_DIR} && docker compose ps"
+}
+
+# Saying "still loading" about a container that has already failed would be the
+# fourth way this installer has claimed success it did not have. A model that is
+# loading reports starting; one that gave up reports unhealthy, and the two must
+# not leave by the same door.
+report_inference_that_failed() {
+    local failed=$1 line
+    [[ -n "$failed" ]] || return 0
+    log_error ""
+    log_error "Inference did not start. The platform is up, the models are not:"
+    printf '%s' "$failed" | while IFS= read -r line; do [[ -n "$line" ]] && log_error "  ${line# }"; done
+    log_error "  cd ${INSTALL_DIR} && docker compose logs nim-llm"
+    return 1
 }
 
 step_autostart() {

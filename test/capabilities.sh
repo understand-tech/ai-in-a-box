@@ -287,6 +287,27 @@ a_service_without_a_role_is_waited_for() {
     return 1
 }
 
+an_inference_engine_that_failed_is_not_a_success() {
+    local report
+    report=$(installer_wait_over '/ut-caddy|running|healthy|control-plane
+/understandtech-nim-llm-1|running|unhealthy|inference
+')
+    grep -q '^EXIT=0$' <<< "$report" && { echo "$report"; return 1; }
+    grep -q 'nim-llm' <<< "$report" && return 0
+    echo "$report"
+    return 1
+}
+
+the_wait_names_what_is_late() {
+    local report
+    report=$(installer_wait_over '/ut-mongodb|running|starting|control-plane
+')
+    grep -q 'still starting' <<< "$report" || { echo "$report"; return 1; }
+    grep -q 'still starting.*ut-mongodb' <<< "$report" && return 0
+    echo "$report"
+    return 1
+}
+
 an_answer_at_the_prompt_is_taken() {
     local report
     report=$(installer_domain_answer ia.exemple.fr)
@@ -931,6 +952,10 @@ if [[ -x "$REPO_ROOT/ut-install" ]]; then
         a_control_plane_service_is_still_waited_for
     capability "a service that declares no role is waited for" \
         a_service_without_a_role_is_waited_for
+    capability "an inference engine that failed is not reported as a success" \
+        an_inference_engine_that_failed_is_not_a_success
+    capability "the wait names what is late, not just how many" \
+        the_wait_names_what_is_late
 
     if command -v python3 >/dev/null 2>&1; then
         capability "the address typed at the prompt is the one it takes" \

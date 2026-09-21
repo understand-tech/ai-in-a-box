@@ -185,6 +185,27 @@ install_walk_discriminates() {
 
 printf '\n%sCapabilities, seen failing%s\n\n' "$BOLD" "$NC"
 
+if grep -q 'role_is_waited_for' "$REPO_ROOT/ut-install"; then
+    capability_discriminates "the install waiting for the models again" \
+        "handed back while the models are still loading" \
+        "sed -i.bak 's|^    \\[\\[ \"\$1\" != \"inference\" \\]\\]\$|    return 0|' ut-install"
+
+    capability_discriminates "nothing waited for at all" \
+        "a control plane service still starting is waited for" \
+        "sed -i.bak 's|^    \\[\\[ \"\$1\" != \"inference\" \\]\\]\$|    return 1|' ut-install"
+
+    # An engine that gave up and one still loading must not leave by the same
+    # door: treating both as loading is how an install claims a success it does
+    # not have.
+    capability_discriminates "an engine that failed treated as one still loading" \
+        "inference engine that failed is not reported as a success" \
+        "sed -i.bak 's|elif \\[\\[ \"\$health\" == \"starting\" \\]\\]; then|elif true; then|' ut-install"
+
+    capability_discriminates "the wait counting without naming" \
+        "names what is late" \
+        "sed -i.bak 's|still starting: %s (%dm elapsed)|still starting (%dm elapsed)|; s|\"\$(names_in \"\$pending\")\" \\\\||' ut-install"
+fi
+
 capability_discriminates "the authority removed from the stack" \
     "the appliance runs its own certificate authority" \
     "sed -i.bak 's|^  step-ca:|  step-ca:\n    profiles: [\"never-enabled\"]|' compose.yaml"
