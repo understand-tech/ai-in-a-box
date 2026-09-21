@@ -104,9 +104,18 @@ link_configuration_into_project_directory() {
     ln -s "/$CONFIG_DIR/.env" "$root/$SHARE_DIR/.env"
 }
 
+# du reports blocks, and the filesystem decides how many: the same tree measured
+# 396 KiB on a runner and 348 here, which is enough to make a rebuilt package
+# differ from the one that was signed. Apparent size rounded per file is the
+# same number everywhere.
+installed_size_in_kib() {
+    find "$1" -type f -exec du -k --apparent-size {} + \
+        | awk '{ total += $1 } END { print total + 0 }'
+}
+
 write_control() {
     local root=$1 version=$2 size
-    size=$(du -sk "$root" | cut -f1)
+    size=$(installed_size_in_kib "$root")
     install -d "$root/DEBIAN"
     cat > "$root/DEBIAN/control" <<EOF
 Package: $PACKAGE
@@ -167,8 +176,10 @@ EOF
 
 write_md5sums() {
     local root=$1
+    # find walks in directory order, which the filesystem decides too. Sorting
+    # is what makes two machines write this file the same way.
     ( cd "$root" && find . -type f ! -path './DEBIAN/*' -printf '%P\0' \
-        | xargs -0 md5sum > DEBIAN/md5sums )
+        | sort -z | xargs -0 md5sum > DEBIAN/md5sums )
 }
 
 main() {

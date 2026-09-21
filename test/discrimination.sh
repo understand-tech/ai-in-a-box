@@ -304,6 +304,14 @@ if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
     capability_discriminates "a build that stamps the hour it ran at" \
         "the same tree builds the same bytes twice" \
         "sed -i.bak 's|^PACKAGE=|unset SOURCE_DATE_EPOCH\nPACKAGE=|' packaging/build-deb.sh"
+
+    capability_discriminates "checksums left in the order the filesystem gave them" \
+        "the checksums are written in one order" \
+        "sed -i.bak 's/| sort -z | xargs -0 md5sum/| xargs -0 md5sum/' packaging/build-deb.sh"
+
+    capability_discriminates "a size read off the block count" \
+        "the installed size does not come from a block count" \
+        "sed -i.bak 's|^    size=\$(installed_size_in_kib \"\$root\")\$|    size=\$(du -sk \"\$root\" \| cut -f1)|' packaging/build-deb.sh"
 fi
 
 if [[ -x "$REPO_ROOT/packaging/pin-images.sh" ]]; then

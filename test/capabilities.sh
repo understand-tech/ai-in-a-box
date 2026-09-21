@@ -360,6 +360,18 @@ digest_of()    { sha256sum < "$1" | cut -d' ' -f1; }
 say SAME_BYTES_TWICE "$([ "$(digest_of /out/first/understandtech_2026.09.1_all.deb)" \
     = "$(digest_of /out/second/understandtech_2026.09.1_all.deb)" ] && echo yes || echo no)"
 
+apparent_kib() { find "$1" -type f -exec du -k --apparent-size {} + | awk '{ t += $1 } END { print t + 0 }'; }
+
+sorted_checksums=$(dpkg-deb --ctrl-tarfile /out/understandtech_2026.09.1_all.deb 2>/dev/null \
+    | tar -xO ./md5sums 2>/dev/null | sort -c -k2 >/dev/null 2>&1 && echo yes || echo no)
+say MD5SUMS_IN_ONE_ORDER "$sorted_checksums"
+
+mkdir -p /unpacked
+dpkg-deb -x /out/understandtech_2026.09.1_all.deb /unpacked
+declared_size=$(dpkg-deb -f /out/understandtech_2026.09.1_all.deb Installed-Size)
+say SIZE_FREE_OF_THE_FILESYSTEM \
+    "$([ "$declared_size" = "$(apparent_kib /unpacked)" ] && echo yes || echo no)"
+
 dpkg -i --force-depends /out/understandtech_2026.09.1_all.deb >/dev/null 2>&1
 say INSTALLED_VERSION "$(dpkg-query -W -f='${Version}' understandtech 2>/dev/null)"
 say RELEASE_FILE      "$(present_file /usr/share/understandtech/compose.yaml)"
@@ -1116,6 +1128,13 @@ if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
     group "Distribution"
     capability "the same tree builds the same bytes twice" \
         reports SAME_BYTES_TWICE yes
+    # Two builds here agree because they share a filesystem. What the published
+    # v2026.09.5-rc5 and a rebuild of its own commit did not share was the
+    # block size and the directory order, and those two are the whole gap.
+    capability "the checksums are written in one order, not the filesystem's" \
+        reports MD5SUMS_IN_ONE_ORDER yes
+    capability "the installed size does not come from a block count" \
+        reports SIZE_FREE_OF_THE_FILESYSTEM yes
     capability "the release installs as a package, in its own place" \
         the_release_installs_to_its_own_place
     capability "the settings directory is prepared, and the package puts nothing in it" \
