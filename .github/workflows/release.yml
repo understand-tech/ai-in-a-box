@@ -8,6 +8,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   release:
@@ -15,8 +17,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # dpkg-deb writes the build time into the archive, so two builds a second
+      # apart differ. Fixing it to the commit's own date is what lets anyone
+      # rebuild this tag and get the bytes that were signed.
       - name: Read the version from the tag
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+        run: |
+          echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
 
       # A release that fails its own checks is worse than no release: it is
       # installed before anyone notices.
@@ -53,6 +60,15 @@ jobs:
       # the failure only shows up on a customer's offline machine.
       - name: Verify what was just signed
         run: ./ut-verify "dist/understandtech_${VERSION}_all.deb"
+
+      # release.pub is published beside the package it verifies, so whoever can
+      # replace one can replace both. An attestation is an anchor that does not
+      # rest on our own key: it ties this file to this workflow and this commit,
+      # and `gh attestation verify` checks it against GitHub instead.
+      - name: Attest what was built
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/understandtech_${{ env.VERSION }}_all.deb
 
       - name: Checksums
         run: |
