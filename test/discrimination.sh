@@ -316,6 +316,20 @@ if [[ -x "$REPO_ROOT/packaging/pin-images.sh" ]]; then
         "sed -i.bak 's|^already_pinned() {\$|already_pinned() { return 1;|' packaging/pin-images.sh"
 fi
 
+if [[ -x "$REPO_ROOT/packaging/release-bom.sh" ]]; then
+    capability_discriminates "a bill of materials that lists no image at all" \
+        "a release names every image it ships" \
+        "sed -i.bak 's|^image_lines() {\$|image_lines() { return 0;|' packaging/release-bom.sh"
+
+    capability_discriminates "a tag described as though it named one image" \
+        "it refuses to describe an image that can move" \
+        "sed -i.bak 's|^refuse_images_that_can_move() {\$|refuse_images_that_can_move() { return 0;|' packaging/release-bom.sh"
+
+    capability_discriminates "a release that ships no bill of materials" \
+        "and the release publishes what it is made of" \
+        "sed -i.bak '/release-bom.sh/d' .github/workflows/release.yml"
+fi
+
 if [[ -x "$REPO_ROOT/ut-verify" ]]; then
     capability_discriminates "a verification that refuses what the release signed" \
         "a package the release signed is accepted" \

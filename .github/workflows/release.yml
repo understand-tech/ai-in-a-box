@@ -70,11 +70,23 @@ jobs:
         with:
           subject-path: dist/understandtech_${{ env.VERSION }}_all.deb
 
+      # The package holds shell and configuration, so its own bill of materials
+      # names one component: itself. What the appliance is made of is the
+      # thirteen images, and release.env names them by digest since #67.
+      - name: What this release is made of
+        run: ./packaging/release-bom.sh "$VERSION" > "dist/understandtech_${VERSION}.cdx.json"
+
+      - name: Attest the bill of materials
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4
+        with:
+          subject-path: dist/understandtech_${{ env.VERSION }}_all.deb
+          sbom-path: dist/understandtech_${{ env.VERSION }}.cdx.json
+
       - name: Checksums
         run: |
           set -euo pipefail
           cp ut-verify packaging/release.pub dist/
-          ( cd dist && sha256sum understandtech_*.deb understandtech_*.deb.sig ut-verify release.pub > SHA256SUMS )
+          ( cd dist && sha256sum understandtech_*.deb understandtech_*.deb.sig understandtech_*.cdx.json ut-verify release.pub > SHA256SUMS )
 
       - name: Publish
         env:
@@ -94,6 +106,7 @@ jobs:
             "${prerelease[@]}" \
             dist/understandtech_"$VERSION"_all.deb \
             dist/understandtech_"$VERSION"_all.deb.sig \
+            dist/understandtech_"$VERSION".cdx.json \
             dist/ut-verify \
             dist/release.pub \
             dist/SHA256SUMS

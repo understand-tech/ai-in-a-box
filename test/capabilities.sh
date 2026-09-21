@@ -660,6 +660,33 @@ an_image_already_pinned_is_left_alone() {
     return 1
 }
 
+# A bill of materials listing fewer images than the stack runs is worse than
+# none: what is missing from it reads as absent from the product.
+a_release_names_every_image_it_ships() {
+    local declared listed
+    declared=$(grep -cE '^[A-Z_]*_IMAGE="' "$REPO_ROOT/release.env")
+    listed=$("$REPO_ROOT/packaging/release-bom.sh" 9999.99.9 2>/dev/null | grep -c '"type": "container"')
+    [[ "$declared" == "$listed" ]] && return 0
+    echo "release.env declares ${declared} images, the bill of materials lists ${listed}"
+    return 1
+}
+
+a_bill_of_materials_refuses_an_image_that_can_move() {
+    local probe="$WORK_DIR/bom"
+    mkdir -p "$probe"
+    printf 'LOOSE_IMAGE="registry.test/thing:1.2"\n' > "$probe/release.env"
+    RELEASE_ENV="$probe/release.env" "$REPO_ROOT/packaging/release-bom.sh" 9999.99.9 >/dev/null 2>&1 \
+        || return 0
+    echo "it described a tag as though it named one image"
+    return 1
+}
+
+the_release_publishes_what_it_is_made_of() {
+    grep -q 'release-bom.sh' "$REPO_ROOT/.github/workflows/release.yml" && return 0
+    echo "the release ships no bill of materials"
+    return 1
+}
+
 names_are_unchanged_by_default() {
     local rendered
     rendered=$(compose_config -f compose.yaml)
@@ -1045,6 +1072,15 @@ if [[ -x "$REPO_ROOT/packaging/pin-images.sh" ]]; then
         a_tag_gains_a_digest_without_losing_its_version
     capability "an image that already names its content is left alone" \
         an_image_already_pinned_is_left_alone
+fi
+
+if [[ -x "$REPO_ROOT/packaging/release-bom.sh" ]]; then
+    capability "a release names every image it ships" \
+        a_release_names_every_image_it_ships
+    capability "it refuses to describe an image that can move" \
+        a_bill_of_materials_refuses_an_image_that_can_move
+    capability "and the release publishes what it is made of" \
+        the_release_publishes_what_it_is_made_of
 fi
 
 if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
