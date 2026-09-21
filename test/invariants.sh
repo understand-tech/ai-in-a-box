@@ -137,19 +137,30 @@ seconds_in_duration() {
 
 # Each start_period is reported against the service it belongs to, so two
 # services sharing one value are two findings, not one.
+#
+# Only services ut-install waits for are bound by its budget. An inference
+# engine is left loading in the background, so its start_period answers to its
+# own health check and not to the installer. Without this distinction the check
+# would stay green for a reason that no longer holds.
 check_no_service_starts_slower_than_the_installer_waits() {
-    local budget line service period seconds
+    local budget entry line service role period seconds
     budget=$(grep -m1 -oE 'HEALTH_TIMEOUT="\$\{UT_HEALTH_TIMEOUT:-[0-9]+' "$REPO_ROOT/ut-install" 2>/dev/null \
         | grep -oE '[0-9]+$') || return 0
     [[ -n "$budget" ]] || return 0
     service=""
+    role=""
     while IFS= read -r line; do
-        case "$line" in
+        entry=${line%"${line##*[![:space:]]}"}
+        case "$entry" in
             "  "[a-z]*":")
-                service=${line#  }; service=${service%:}
+                service=${entry#  }; service=${service%:}; role=""
+                ;;
+            *ut.role:*)
+                role=$(printf '%s' "$entry" | sed 's/.*ut\.role:[[:space:]]*//; s/"//g')
                 ;;
             *start_period:*)
-                period=$(printf '%s' "$line" | grep -oE '[0-9]+[hms]') || continue
+                [[ "$role" != "inference" ]] || continue
+                period=$(printf '%s' "$entry" | grep -oE '[0-9]+[hms]') || continue
                 [[ -n "$period" ]] || continue
                 seconds=$(seconds_in_duration "$period")
                 (( seconds > budget )) || continue

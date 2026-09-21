@@ -868,38 +868,52 @@ container_health_lines() {
     compose_in_dir ps -q 2>/dev/null | while read -r container_id; do
         [[ -n "$container_id" ]] || continue
         docker inspect --format \
-            '{{.Name}}|{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
+            '{{.Name}}|{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}|{{index .Config.Labels "ut.role"}}' \
             "$container_id" 2>/dev/null || true
     done
 }
 
+# An unlabelled container is waited for. A compose file written before roles
+# existed then behaves exactly as it did, which is what an installed machine
+# replaying ut-install expects.
+role_is_waited_for() {
+    [[ "$1" != "inference" ]]
+}
+
 step_wait_healthy() {
-    log_step "Waiting for services to become ready"
-    log "     Inference containers load their models before reporting healthy;"
-    log "     their health check allows $((NIM_COLD_START_SECONDS / 60)) minutes for a cold start."
-    log "     Waiting up to $((HEALTH_TIMEOUT / 60)) minutes."
+    log_step "Waiting for the platform to become ready"
+    log "     Inference engines load their models in the background and are not"
+    log "     waited for; the platform is usable before they answer."
+    log "     Waiting up to $((HEALTH_TIMEOUT / 60)) minutes for everything else."
 
     local deadline=$(( SECONDS + HEALTH_TIMEOUT ))
-    local pending name status health line
+    local pending loading name status health role line
 
     while (( SECONDS < deadline )); do
         pending=""
-        while IFS='|' read -r name status health; do
+        loading=""
+        while IFS='|' read -r name status health role; do
             [[ -n "$name" ]] || continue
             name=${name#/}
             case "$health" in
-                healthy) ;;
-                none)    [[ "$status" == "running" ]] || pending+="  ${name}: ${status}"$'\n' ;;
-                *)       pending+="  ${name}: ${status}/${health}"$'\n' ;;
+                healthy) continue ;;
+                none)    [[ "$status" == "running" ]] && continue ;;
             esac
+            if role_is_waited_for "$role"; then
+                pending+="  ${name}: ${status}/${health}"$'\n'
+            else
+                loading+="  ${name}: ${status}/${health}"$'\n'
+            fi
         done < <(container_health_lines)
 
         if [[ -z "$pending" ]]; then
-            log_info "All services are ready"
+            printf '\r\033[K'
+            log_info "The platform is ready"
+            report_inference_still_loading "$loading"
             return 0
         fi
 
-        printf '\r%s     %d services still starting (%dm elapsed)%s\033[K' \
+        printf '\r%s     %d service(s) still starting (%dm elapsed)%s\033[K' \
             "$YELLOW" "$(printf '%s' "$pending" | grep -c .)" "$(( SECONDS / 60 ))" "$NC"
         sleep 15
     done
@@ -909,6 +923,17 @@ step_wait_healthy() {
     printf '%s' "$pending" | while IFS= read -r line; do [[ -n "$line" ]] && log_warn "$line"; done
     log_warn "Inspect one with: cd ${INSTALL_DIR} && docker compose logs <service>"
     return 0
+}
+
+# Saying "still loading" about a container that has already failed would be the
+# fourth way this installer has claimed success it did not have.
+report_inference_still_loading() {
+    local loading=$1 line
+    [[ -n "$loading" ]] || return 0
+    log ""
+    log "     Inference is not ready yet, and the platform does not wait for it:"
+    printf '%s' "$loading" | while IFS= read -r line; do [[ -n "$line" ]] && log "  ${line# }"; done
+    log "     Follow it with: cd ${INSTALL_DIR} && docker compose ps"
 }
 
 step_autostart() {
