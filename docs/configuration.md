@@ -226,6 +226,43 @@ long time — if this appliance was installed before that changed, it is still
 `DEBUG` in your file and no update touches it, because an explicit value always
 wins.
 
+## When the first install is slow to download
+
+A first install pulls about **21 GB**. The inference container is 10.7 GB of
+that, the model gateway 6.3 GB, and the other eight services share the rest.
+None of it is configurable — it is what the release is made of, and the
+`.cdx.json` published beside the package lists every image with its digest.
+
+Docker fetches **three layers at a time** by default. On a link that is not
+already saturated, raising that shortens the pull:
+
+```bash
+sudo tee /etc/docker/daemon.json >/dev/null <<'EOF'
+{ "max-concurrent-downloads": 8 }
+EOF
+sudo systemctl restart docker
+```
+
+Three things to know before doing it.
+
+**The restart stops every container on the machine**, a running stack included.
+Do it before the first install, or accept the interruption.
+
+**`/etc/docker/daemon.json` is shared.** The address-pool settings in
+[starting states](starting-states.md) live in the same file, and so does
+anything else on the machine that configures Docker. If the file already exists,
+add the key to it rather than replacing it.
+
+**And it may buy nothing.** Of the 116 distinct layers a first install fetches,
+93 are under 50 MB and **two carry 4.6 GB between them**. Concurrency helps when
+many medium layers queue behind the limit; it does not make a 2.7 GB layer
+arrive faster. Time the pull before and after rather than assume.
+
+An install that has to be quick on a slow link is a different problem:
+`ut-install --skip-pull` starts a stack whose images are already on the machine,
+which is how an air-gapped site works. Getting them there is not something this
+file can arrange.
+
 ## Running more than one stack on a machine
 
 Five variables make a stack independent of anything else on the machine:
