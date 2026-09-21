@@ -77,12 +77,14 @@ appliance. Change it and all six follow.
 | `Caddyfile` | Reverse proxy config — one site block per surface, hostnames from `UT_DOMAIN` |
 | `caddy/ingress-*.caddy` | One per ingress mode — global options and the `(tls)` snippets |
 | `caddy/certs/` | Where a `custom`-mode certificate goes (gitignored) |
-| `release.env` | What the release decides — image tags, model config, defaults. Replaced on every upgrade, and carries no secret |
+| `release.env` | What the release decides — the exact images, model config, defaults. Replaced on every upgrade, and carries no secret |
 | `setup-autostart.sh` | Installs the systemd boot service, and the mDNS alias publisher on a `.local` domain only; `--check` validates domain/TLS settings |
 | `ut-logs-archive` | Automated daily log archival with compression and retention |
 | `ut-certificate` | Obtains and renews a publicly trusted certificate by DNS-01, so nothing has to be installed on user machines |
 | `ut-verify` | Checks a package's signature offline, for a machine with no network — `dpkg` verifies nothing on its own |
 | `packaging/build-deb.sh` | Builds the Debian package: release in `/usr/share`, settings in `/etc`, data in `/var/lib` |
+| `packaging/pin-images.sh` | Rewrites every image in `release.env` as `name:tag@sha256:…`, so a version names one exact image and not whatever the tag points at today. `--check` reports without changing anything |
+| `packaging/release-bom.sh` | Writes what a release is made of, as CycloneDX: one component per image, named by digest. Reads `release.env` and nothing else — no registry, no pull |
 | `appbuilder/traefik/` | Static routing config for the App Builder's per-app router |
 | `test/` | The checks, and what each one exists to catch — see `test/README.md` |
 

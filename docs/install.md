@@ -53,7 +53,7 @@ the diagram has not been seen rendered — no rendering engine is installed here
 ## 1 · Get the release
 
 Releases are published at
-`https://github.com/understand-tech/ai-in-a-box/releases`. **Take all five
+`https://github.com/understand-tech/ai-in-a-box/releases`. **Take all six
 files**, not just the package:
 
 ```bash
@@ -62,14 +62,19 @@ BASE=https://github.com/understand-tech/ai-in-a-box/releases/download/v$VERSION
 
 mkdir ut-release && cd ut-release
 for f in understandtech_${VERSION}_all.deb understandtech_${VERSION}_all.deb.sig \
-         ut-verify release.pub SHA256SUMS; do
+         understandtech_${VERSION}.cdx.json ut-verify release.pub SHA256SUMS; do
     curl -fsSLO "$BASE/$f"
 done
 chmod +x ut-verify
 ```
 
-`SHA256SUMS` lists all four of the others, so downloading fewer makes the next
+`SHA256SUMS` lists all five of the others, so downloading fewer makes the next
 command report a failure on a release that is perfectly sound.
+
+`understandtech_${VERSION}.cdx.json` is the bill of materials: every image this
+version runs, named by its digest rather than by a tag a registry can repoint.
+Nothing needs it to install — it is there for whoever has to answer what is
+running on the machine.
 
 ## 2 · Check it before you install it
 
@@ -78,7 +83,7 @@ sha256sum -c SHA256SUMS
 ./ut-verify understandtech_${VERSION}_all.deb
 ```
 
-Expect four `OK` lines, then:
+Expect five `OK` lines, then:
 
 ```
 [ ok ] understandtech_2026.09.1_all.deb is signed by UnderstandTech
