@@ -285,6 +285,16 @@ if [[ -d "$REPO_ROOT/.github/workflows" ]]; then
         "printf 'NOT_INDENTED\n' >> .github/workflows/release.yml"
 fi
 
+if [[ -f "$REPO_ROOT/.github/dependabot.yml" ]]; then
+    capability_discriminates "an update channel that never looks at the actions" \
+        "the pinned actions have a way to move" \
+        "sed -i.bak 's|github-actions|npm|' .github/dependabot.yml"
+
+    capability_discriminates "an update channel GitHub cannot read" \
+        "the pinned actions have a way to move" \
+        "printf 'NOT_INDENTED\n' >> .github/dependabot.yml"
+fi
+
 # This one has its own lever rather than a mutation: the check builds its
 # destination, so breaking it means pointing it elsewhere. Sending a backup to
 # somewhere that does not answer is also the failure an operator will actually

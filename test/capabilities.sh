@@ -514,6 +514,20 @@ every_workflow_parses() {
     return 1
 }
 
+# Pinning an action to a commit is what stops a tag being moved under us, and it
+# is also what freezes the version for good. A channel GitHub cannot read fails
+# silently: the pins simply never move, and nothing says so.
+the_pinned_actions_have_a_way_to_move() {
+    local declared
+    declared=$(docker run --rm --entrypoint sh \
+        -v "$REPO_ROOT/.github":/g:ro mikefarah/yq:4 \
+        -c 'yq eval ".updates[].package-ecosystem" /g/dependabot.yml 2>/dev/null')
+
+    grep -qx 'github-actions' <<< "$declared" && return 0
+    echo "nothing updates the pinned actions — dependabot.yml declared: ${declared:-<nothing>}"
+    return 1
+}
+
 names_are_unchanged_by_default() {
     local rendered
     rendered=$(compose_config -f compose.yaml)
@@ -916,6 +930,11 @@ fi
 if [[ -d "$REPO_ROOT/.github/workflows" ]]; then
     capability "every workflow is one GitHub can read" \
         every_workflow_parses
+fi
+
+if [[ -f "$REPO_ROOT/.github/dependabot.yml" ]]; then
+    capability "the pinned actions have a way to move" \
+        the_pinned_actions_have_a_way_to_move
 fi
 
 group "Backward compatibility"
