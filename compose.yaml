@@ -42,7 +42,9 @@ x-public-urls:
 
 services:
 
-  caddy: 
+  caddy:
+    labels:
+      ut.role: "control-plane"
     image: caddy:2-alpine
     container_name: ${CONTAINER_PREFIX:-ut}-caddy
     restart: unless-stopped
@@ -110,6 +112,8 @@ services:
           memory: 64M
 
   step-ca:
+    labels:
+      ut.role: "control-plane"
     image: ${STEP_CA_IMAGE:-smallstep/step-ca:0.30.2}
     container_name: ${CONTAINER_PREFIX:-ut}-step-ca
     restart: unless-stopped
@@ -141,6 +145,8 @@ services:
           memory: 64M
 
   redis:
+    labels:
+      ut.role: "control-plane"
     image: redis:7.2-alpine
     container_name: ${CONTAINER_PREFIX:-ut}-redis
     restart: unless-stopped
@@ -172,6 +178,8 @@ services:
           memory: 256M
 
   mongodb:
+    labels:
+      ut.role: "control-plane"
     image: mongo:8.2
     container_name: ${CONTAINER_PREFIX:-ut}-mongodb
     restart: unless-stopped
@@ -203,6 +211,8 @@ services:
           memory: 1G
 
   mongodb-backup:
+    labels:
+      ut.role: "backup"
     image: ${DB_BACKUP_IMAGE:-ghcr.io/understand-tech/db-backup:4.1.100@sha256:28c0451ac69f832beb1abc41be4a2143b2b03430e42c54602433876f090227fa}
     container_name: ${CONTAINER_PREFIX:-ut}-mongodb-backup
     restart: unless-stopped
@@ -252,6 +262,8 @@ services:
           memory: 128M
 
   files-backup:
+    labels:
+      ut.role: "backup"
     image: restic/restic:0.18.1
     container_name: ${CONTAINER_PREFIX:-ut}-files-backup
     restart: unless-stopped
@@ -289,6 +301,8 @@ services:
           cpus: '2'
 
   api:
+    labels:
+      ut.role: "control-plane"
     image: ${API_IMAGE:-}
     container_name: ${CONTAINER_PREFIX:-ut}-api
     restart: unless-stopped
@@ -364,6 +378,8 @@ services:
           memory: 1G
 
   workers:
+    labels:
+      ut.role: "control-plane"
     image: ${WORKER_IMAGE:-}
     restart: unless-stopped
     command: ["sh", "-c", "rq worker --url redis://redis:6379 ut-api"]
@@ -412,6 +428,8 @@ services:
           memory: 512M
 
   frontend:
+    labels:
+      ut.role: "control-plane"
     image: ${FRONTEND_IMAGE:-}
     container_name: ${CONTAINER_PREFIX:-ut}-frontend
     restart: unless-stopped
@@ -442,6 +460,8 @@ services:
           memory: 128M
 
   api-customer:
+    labels:
+      ut.role: "control-plane"
     image: ${API_CUSTOMER_IMAGE:-}
     container_name: ${CONTAINER_PREFIX:-ut}-api-customer
     restart: unless-stopped
@@ -513,6 +533,8 @@ services:
           memory: 2G
 
   workers-customer:
+    labels:
+      ut.role: "control-plane"
     image: ${WORKER_CUSTOMER_IMAGE:-}
     restart: unless-stopped
     command: ["sh", "-c", "rq worker --url redis://redis:6379 ut-api-partners"]
@@ -556,6 +578,8 @@ services:
           memory: 2G
 
   app-llms:
+    labels:
+      ut.role: "control-plane"
     image: ${LLMS_APP_IMAGE:-}
     container_name: ${CONTAINER_PREFIX:-ut}-app-llms
     restart: unless-stopped
@@ -596,6 +620,8 @@ services:
           memory: 128M
 
   app-assistants:
+    labels:
+      ut.role: "control-plane"
     image: ${ASSISTANTS_APP_IMAGE:-}
     container_name: ${CONTAINER_PREFIX:-ut}-app-assistants
     restart: unless-stopped
@@ -639,6 +665,8 @@ services:
           memory: 128M
 
   admin-portal:
+    labels:
+      ut.role: "control-plane"
     image: ${ADMIN_PORTAL_IMAGE:-}
     container_name: ${CONTAINER_PREFIX:-ut}-admin-portal
     restart: unless-stopped
@@ -666,6 +694,8 @@ services:
           memory: 128M
 
   nim-llm:
+    labels:
+      ut.role: "inference"
     profiles:  ["nim", "nim-llm"]
     image: ${NIM_IMAGE:-}
     restart: unless-stopped
@@ -698,6 +728,8 @@ services:
       - ut-backend-network
 
   nim-vlm:
+    labels:
+      ut.role: "inference"
     profiles: ["nim", "nim-vlm"]
     image: ${NIM_IMAGE:-}
     restart: unless-stopped
@@ -730,6 +762,8 @@ services:
       - ut-backend-network
 
   llm:
+    labels:
+      ut.role: "inference"
     image: ${LLM_IMAGE:-}
     restart: unless-stopped
     expose:

@@ -160,6 +160,64 @@ check_no_service_starts_slower_than_the_installer_waits() {
     done < "$REPO_ROOT/compose.yaml"
 }
 
+SERVICE_ROLES="control-plane backup inference"
+
+judge_one_service_role() {
+    local service=$1 role=$2
+    [[ -n "$service" ]] || return 0
+    if [[ -z "$role" ]]; then
+        report "service-without-a-role:${service}" \
+            "${service} declares no ut.role label — ut-install cannot tell whether to wait for it or let it start in the background, so it waits, and the install is as long as its slowest service"
+        return 0
+    fi
+    case " ${SERVICE_ROLES} " in
+        *" ${role} "*) return 0 ;;
+    esac
+    report "service-with-an-unknown-role:${service}" \
+        "${service} declares ut.role ${role}, which is none of: ${SERVICE_ROLES} — ut-install would not know what to do with it"
+}
+
+# The role lives beside the service it describes. A list inside ut-install would
+# drift the first time a service is added, and nothing would say so.
+check_every_service_declares_its_role() {
+    local line entry in_services=false service="" role=""
+    while IFS= read -r line; do
+        # compose.yaml carries trailing spaces on some service lines; matching
+        # on the raw line silently skips those services.
+        entry=${line%"${line##*[![:space:]]}"}
+        case "$entry" in
+            "services:")
+                in_services=true
+                continue
+                ;;
+            [a-z]*:*)
+                if $in_services; then
+                    judge_one_service_role "$service" "$role"
+                fi
+                in_services=false
+                service=""
+                role=""
+                continue
+                ;;
+        esac
+        $in_services || continue
+        case "$entry" in
+            "  "[a-z]*":")
+                judge_one_service_role "$service" "$role"
+                service=${entry#  }
+                service=${service%:}
+                role=""
+                ;;
+            *ut.role:*)
+                role=$(printf '%s' "$line" | sed 's/.*ut\.role:[[:space:]]*//; s/"//g; s/[[:space:]]*$//')
+                ;;
+        esac
+    done < "$REPO_ROOT/compose.yaml"
+    if $in_services; then
+        judge_one_service_role "$service" "$role"
+    fi
+}
+
 # A backup deferred to a clock time cannot answer a health check that asks for a
 # recent archive: the service stays unhealthy until that hour comes round.
 check_the_first_backup_is_not_deferred_to_a_clock_time() {
@@ -376,6 +434,7 @@ main() {
     check_compose_declares_no_secret_default
     check_healthcheck_asks_for_a_certified_name
     check_no_service_starts_slower_than_the_installer_waits
+    check_every_service_declares_its_role
     check_the_first_backup_is_not_deferred_to_a_clock_time
     check_defaults_do_not_diverge
     check_required_variables_appear_in_the_template

@@ -117,6 +117,18 @@ if grep -q 'check_no_service_starts_slower_than_the_installer_waits' "$REPO_ROOT
         "sed -i.bak 's|^      start_period: 10m$|      start_period: 25h|' compose.yaml"
 fi
 
+if grep -q 'check_every_service_declares_its_role' "$REPO_ROOT/test/invariants.sh"; then
+    discriminates "a service whose role label was dropped" \
+        "service-without-a-role:nim-llm" \
+        "sed -i.bak '/^  nim-llm:\$/,/^      ut.role:/ s|^      ut.role: \"inference\"\$||' compose.yaml"
+
+    # A role nobody knows is worse than no role at all: ut-install would read it,
+    # find no match, and silently fall back to waiting for the service.
+    discriminates "a role spelled in a way nothing reads" \
+        "service-with-an-unknown-role:nim-llm" \
+        "sed -i.bak '/^  nim-llm:\$/,/^      ut.role:/ s|ut.role: \"inference\"|ut.role: \"inferences\"|' compose.yaml"
+fi
+
 if grep -q 'check_the_first_backup_is_not_deferred_to_a_clock_time' "$REPO_ROOT/test/invariants.sh"; then
     discriminates "the first backup put back on a clock time" \
         "first-backup-deferred:1520" \
