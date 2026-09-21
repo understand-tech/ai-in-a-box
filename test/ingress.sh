@@ -66,7 +66,7 @@ start_the_upstreams() {
 	auto_https off
 }
 :80 {
-	respond "stub 80" 200
+	respond "stub 80 proto={http.request.header.X-Forwarded-Proto}" 200
 }
 :8501 {
 	respond "stub 8501" 200
@@ -85,15 +85,65 @@ STUB
         "$CADDY_IMAGE" >/dev/null
 }
 
+# An operator's certificate, made the way one is made: a private authority and
+# one leaf covering the apex, the satellites and the generated applications. A
+# config file rather than -addext, because LibreSSL is what answers to `openssl`
+# on a developer's machine and does not know that option.
+write_an_operator_certificate() {
+    local dir="$WORK_DIR/certs"
+    mkdir -p "$dir"
+    cat > "$dir/leaf.cnf" <<EOF
+[req]
+distinguished_name = dn
+prompt             = no
+[dn]
+CN = ${DOMAIN}
+[leaf]
+basicConstraints = critical,CA:FALSE
+keyUsage         = critical,digitalSignature,keyEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName   = DNS:${DOMAIN},DNS:*.${DOMAIN},DNS:*.apps.${DOMAIN}
+EOF
+    printf '[req]\ndistinguished_name = dn\nprompt = no\nx509_extensions = ca\n[dn]\nCN = Operator Test CA\n[ca]\nbasicConstraints = critical,CA:TRUE\nkeyUsage = critical,keyCertSign\n' > "$dir/ca.cnf"
+    openssl req -x509 -newkey rsa:2048 -sha256 -days 30 -noenc \
+        -config "$dir/ca.cnf" -keyout "$dir/ca.key" -out "$dir/ca.crt" 2>/dev/null
+    openssl req -newkey rsa:2048 -noenc -config "$dir/leaf.cnf" \
+        -keyout "$dir/privkey.pem" -out "$dir/leaf.csr" 2>/dev/null
+    openssl x509 -req -in "$dir/leaf.csr" -CA "$dir/ca.crt" -CAkey "$dir/ca.key" \
+        -CAcreateserial -days 30 -sha256 -extfile "$dir/leaf.cnf" -extensions leaf \
+        -out "$dir/leaf.crt" 2>/dev/null
+    cat "$dir/leaf.crt" "$dir/ca.crt" > "$dir/fullchain.pem"
+    chmod 644 "$dir/fullchain.pem"; chmod 600 "$dir/privkey.pem"
+}
+
+# bash 3.2 treats "${empty[@]}" as an unbound variable under set -u, so the
+# expansion has to be guarded rather than quoted.
 start_the_front_door() {
-    local args=()
+    local mode=${1:-internal} args=() extra=()
     while IFS= read -r line; do args+=("$line"); done < <(aliases_for "$SURFACES")
+
+    case "$mode" in
+        custom)
+            write_an_operator_certificate
+            extra=(-v "$WORK_DIR/certs":/etc/caddy/certs:ro) ;;
+        edge)
+            # The mode's whole point: Caddy holds no certificate and serves
+            # plain HTTP, so a site address left on https:// would listen on
+            # 443 with nothing to present. UT_CADDY_SCHEME prefixes it.
+            extra=(-e UT_CADDY_SCHEME=http -e UT_TRUSTED_PROXIES=private_ranges) ;;
+    esac
+
     docker run -d --name ut-ingress-caddy --network "$NETWORK" "${args[@]}" \
-        -e UT_DOMAIN="$DOMAIN" \
+        -e UT_DOMAIN="$DOMAIN" ${extra[@]+"${extra[@]}"} \
         -v "$REPO_ROOT/Caddyfile":/etc/caddy/Caddyfile:ro \
-        -v "$REPO_ROOT/caddy/ingress-internal.caddy":/etc/caddy/ingress.caddy:ro \
+        -v "$REPO_ROOT/caddy/ingress-${mode}.caddy":/etc/caddy/ingress.caddy:ro \
         -v "$REPO_ROOT/caddy/no-internal-surface.caddy":/etc/caddy/surface.caddy:ro \
         "$CADDY_IMAGE" >/dev/null
+}
+
+restart_the_front_door_in() {
+    docker rm -f ut-ingress-caddy >/dev/null 2>&1
+    start_the_front_door "$1"
 }
 
 start_the_prober() {
@@ -106,10 +156,18 @@ start_the_prober() {
     done
 }
 
+SCHEME="https"
+
 status_of() {
     local host=$1 path=${2:-/}
     docker exec ut-ingress-probe curl -sk -o /dev/null -w '%{http_code}' \
-        --max-time 10 "https://${host}${path}" 2>/dev/null
+        --max-time 10 "${SCHEME}://${host}${path}" 2>/dev/null
+}
+
+body_of() {
+    local host=$1 path=${2:-/}; shift 2 || true
+    docker exec ut-ingress-probe curl -sk --max-time 10 "$@" \
+        "${SCHEME}://${host}${path}" 2>/dev/null
 }
 
 wait_for_the_front_door() {
@@ -119,7 +177,7 @@ wait_for_the_front_door() {
         [[ "$code" =~ ^[23] ]] && return 0
         sleep 2; waited=$((waited + 2))
     done
-    echo "the apex never answered — last code ${code:-none}"
+    echo "the apex never answered over ${SCHEME} — last code ${code:-none}"
     docker logs --tail 15 ut-ingress-caddy 2>&1
     return 1
 }
@@ -137,7 +195,7 @@ a_surface_answers() {
 
 a_path_reaches_its_upstream() {
     local host=$1 path=$2 expected=$3 body
-    body=$(docker exec ut-ingress-probe curl -sk --max-time 10 "https://${host}${path}" 2>/dev/null)
+    body=$(body_of "$host" "$path")
     [[ "$body" == "$expected" ]] && return 0
     echo "https://${host}${path} returned '${body}', expected '${expected}'"
     return 1
@@ -159,8 +217,7 @@ the_documented_callback_reaches_the_api() {
         echo "no redirect URI found in docs/first-run-configuration.md"
         return 1
     fi
-    body=$(docker exec ut-ingress-probe curl -sk --max-time 10 \
-        "https://${DOMAIN}${path}" 2>/dev/null)
+    body=$(body_of "$DOMAIN" "$path")
     [[ "$body" == "stub 8501" ]] && return 0
     echo "the documented URI ${path} is served by '${body:-nothing}', not the platform API"
     echo "an identity provider sent there would never reach the callback"
@@ -179,6 +236,44 @@ the_certificate_covers_the_name() {
     grep -qF "DNS:${host}" <<< "$names" && return 0
     grep -qF "DNS:${wildcard}" <<< "$names" && return 0
     echo "the certificate served for ${host} names neither it nor ${wildcard}: ${names:-nothing read}"
+    return 1
+}
+
+# A mode that quietly falls back to the appliance's own authority looks exactly
+# like one that works: the browser is happy, and the operator's certificate —
+# the whole reason their fleet needs no import — is never presented.
+the_supplied_certificate_is_the_one_served() {
+    local served supplied
+    served=$(docker exec ut-ingress-probe sh -c \
+        "echo | openssl s_client -connect ${DOMAIN}:443 -servername ${DOMAIN} 2>/dev/null \
+         | openssl x509 -noout -fingerprint -sha256" 2>/dev/null | tr -d ' ')
+    supplied=$(openssl x509 -in "$WORK_DIR/certs/leaf.crt" -noout -fingerprint -sha256 2>/dev/null | tr -d ' ')
+    [[ -n "$served" && "$served" == "$supplied" ]] && return 0
+    echo "served ${served:-nothing}"
+    echo "supplied ${supplied:-nothing}"
+    return 1
+}
+
+# The trap the ingress fragment warns about in prose and nothing checked: on
+# https Caddy listens on 443 expecting to hold the certificate itself, and the
+# plain HTTP a load balancer sends to 80 reaches nobody.
+caddy_holds_no_certificate_in_edge_mode() {
+    local code
+    code=$(docker exec ut-ingress-probe curl -s -o /dev/null -w '%{http_code}' \
+        --max-time 5 "https://${DOMAIN}/" 2>/dev/null)
+    [[ -z "$code" || "$code" == "000" ]] && return 0
+    echo "443 answered ${code} — Caddy is holding a certificate it should not have"
+    return 1
+}
+
+# Without trusted_proxies the applications see X-Forwarded-Proto: http and build
+# absolute URLs on http, which breaks the OIDC round trip — a failure that looks
+# like an identity provider problem and is not one.
+a_trusted_proxy_is_believed_about_the_scheme() {
+    local body
+    body=$(body_of "$DOMAIN" / -H 'X-Forwarded-Proto: https')
+    [[ "$body" == "stub 80 proto=https" ]] && return 0
+    echo "the upstream saw '${body:-nothing}' instead of a forwarded https scheme"
     return 1
 }
 
@@ -203,7 +298,7 @@ done
 
 printf '\n%sThe routes inside the platform%s\n' "$BOLD" "$NC"
 surface "the apex serves the frontend" \
-    a_path_reaches_its_upstream "$DOMAIN" / "stub 80"
+    a_path_reaches_its_upstream "$DOMAIN" / "stub 80 proto=https"
 surface "/api goes to the platform API, not the frontend" \
     a_path_reaches_its_upstream "$DOMAIN" /api/anything "stub 8501"
 surface "the administration portal is not the API" \
@@ -220,6 +315,22 @@ surface "the apex certificate names the apex" \
     the_certificate_covers_the_name "$DOMAIN"
 surface "a generated application gets a certificate for its own name" \
     the_certificate_covers_the_name "demo.apps.${DOMAIN}"
+
+printf '\n%sMode custom — the certificate comes from the operator%s\n' "$BOLD" "$NC"
+restart_the_front_door_in custom
+surface "custom mode comes up" wait_for_the_front_door
+surface "it serves the certificate it was given, not one of its own" \
+    the_supplied_certificate_is_the_one_served
+surface "the apex still answers" a_surface_answers "$DOMAIN"
+surface "a generated application still answers" a_surface_answers "demo.apps.${DOMAIN}"
+
+printf '\n%sMode edge — TLS is terminated upstream%s\n' "$BOLD" "$NC"
+restart_the_front_door_in edge
+SCHEME="http"
+surface "edge mode comes up on plain HTTP" wait_for_the_front_door
+surface "it holds no certificate on 443" caddy_holds_no_certificate_in_edge_mode
+surface "it believes a trusted proxy about the scheme" \
+    a_trusted_proxy_is_believed_about_the_scheme
 
 printf '\n%s%d served%s' "$GREEN" "$PASSED" "$NC"
 if (( FAILED )); then
