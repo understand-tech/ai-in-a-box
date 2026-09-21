@@ -40,8 +40,9 @@ sudo ut-install --domain box.example.com
 ```
 
 `ut-install` writes `/etc/understandtech/.env`, generates every secret, pulls
-the images, starts the stack, waits for every service to be healthy and
-installs the boot service. It is safe to interrupt and safe to re-run.
+the images, starts the stack, waits for the platform to be healthy and installs
+the boot service. It does not wait for the inference engines, which load their
+weights in the background. It is safe to interrupt and safe to re-run.
 
 It prints two secrets **once** at the end — the initial admin password and the
 backup password. Losing the backup password makes every snapshot unreadable,

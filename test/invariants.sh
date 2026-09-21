@@ -137,19 +137,30 @@ seconds_in_duration() {
 
 # Each start_period is reported against the service it belongs to, so two
 # services sharing one value are two findings, not one.
+#
+# Only services ut-install waits for are bound by its budget. An inference
+# engine is left loading in the background, so its start_period answers to its
+# own health check and not to the installer. Without this distinction the check
+# would stay green for a reason that no longer holds.
 check_no_service_starts_slower_than_the_installer_waits() {
-    local budget line service period seconds
+    local budget entry line service role period seconds
     budget=$(grep -m1 -oE 'HEALTH_TIMEOUT="\$\{UT_HEALTH_TIMEOUT:-[0-9]+' "$REPO_ROOT/ut-install" 2>/dev/null \
         | grep -oE '[0-9]+$') || return 0
     [[ -n "$budget" ]] || return 0
     service=""
+    role=""
     while IFS= read -r line; do
-        case "$line" in
+        entry=${line%"${line##*[![:space:]]}"}
+        case "$entry" in
             "  "[a-z]*":")
-                service=${line#  }; service=${service%:}
+                service=${entry#  }; service=${service%:}; role=""
+                ;;
+            *ut.role:*)
+                role=$(printf '%s' "$entry" | sed 's/.*ut\.role:[[:space:]]*//; s/"//g')
                 ;;
             *start_period:*)
-                period=$(printf '%s' "$line" | grep -oE '[0-9]+[hms]') || continue
+                [[ "$role" != "inference" ]] || continue
+                period=$(printf '%s' "$entry" | grep -oE '[0-9]+[hms]') || continue
                 [[ -n "$period" ]] || continue
                 seconds=$(seconds_in_duration "$period")
                 (( seconds > budget )) || continue
@@ -158,6 +169,64 @@ check_no_service_starts_slower_than_the_installer_waits() {
                 ;;
         esac
     done < "$REPO_ROOT/compose.yaml"
+}
+
+SERVICE_ROLES="control-plane backup inference"
+
+judge_one_service_role() {
+    local service=$1 role=$2
+    [[ -n "$service" ]] || return 0
+    if [[ -z "$role" ]]; then
+        report "service-without-a-role:${service}" \
+            "${service} declares no ut.role label — ut-install cannot tell whether to wait for it or let it start in the background, so it waits, and the install is as long as its slowest service"
+        return 0
+    fi
+    case " ${SERVICE_ROLES} " in
+        *" ${role} "*) return 0 ;;
+    esac
+    report "service-with-an-unknown-role:${service}" \
+        "${service} declares ut.role ${role}, which is none of: ${SERVICE_ROLES} — ut-install would not know what to do with it"
+}
+
+# The role lives beside the service it describes. A list inside ut-install would
+# drift the first time a service is added, and nothing would say so.
+check_every_service_declares_its_role() {
+    local line entry in_services=false service="" role=""
+    while IFS= read -r line; do
+        # compose.yaml carries trailing spaces on some service lines; matching
+        # on the raw line silently skips those services.
+        entry=${line%"${line##*[![:space:]]}"}
+        case "$entry" in
+            "services:")
+                in_services=true
+                continue
+                ;;
+            [a-z]*:*)
+                if $in_services; then
+                    judge_one_service_role "$service" "$role"
+                fi
+                in_services=false
+                service=""
+                role=""
+                continue
+                ;;
+        esac
+        $in_services || continue
+        case "$entry" in
+            "  "[a-z]*":")
+                judge_one_service_role "$service" "$role"
+                service=${entry#  }
+                service=${service%:}
+                role=""
+                ;;
+            *ut.role:*)
+                role=$(printf '%s' "$line" | sed 's/.*ut\.role:[[:space:]]*//; s/"//g; s/[[:space:]]*$//')
+                ;;
+        esac
+    done < "$REPO_ROOT/compose.yaml"
+    if $in_services; then
+        judge_one_service_role "$service" "$role"
+    fi
 }
 
 # A backup deferred to a clock time cannot answer a health check that asks for a
@@ -376,6 +445,7 @@ main() {
     check_compose_declares_no_secret_default
     check_healthcheck_asks_for_a_certified_name
     check_no_service_starts_slower_than_the_installer_waits
+    check_every_service_declares_its_role
     check_the_first_backup_is_not_deferred_to_a_clock_time
     check_defaults_do_not_diverge
     check_required_variables_appear_in_the_template

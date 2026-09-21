@@ -236,6 +236,78 @@ EOF
     python3 "$SCRIPT_DIR/answer-a-prompt.py" "$probe/run.sh" "$answer" | tr -d '\r'
 }
 
+# step_wait_healthy is never reached by fresh-install.sh, which stops where the
+# installer would pull images. Driving the function directly, with the container
+# list it reads replaced, is the only way to watch it decide.
+installer_wait_over() {
+    local lines=$1 probe
+    probe=$(mktemp -d "$WORK_DIR/wait.XXXXXX")
+    cat > "$probe/run.sh" <<EOF
+set +u
+UT_INSTALL_DIR="$probe" source "$REPO_ROOT/ut-install" >/dev/null 2>&1
+set +eE
+trap - ERR
+HEALTH_TIMEOUT=1
+container_health_lines() { printf '%s' '$lines'; }
+step_wait_healthy
+printf 'EXIT=%s\n' "\$?"
+EOF
+    bash "$probe/run.sh" 2>&1 | tr -d '\r'
+}
+
+the_platform_is_ready_while_inference_still_loads() {
+    local report
+    report=$(installer_wait_over '/ut-caddy|running|healthy|control-plane
+/understandtech-nim-llm-1|running|starting|inference
+')
+    grep -q 'The platform is ready' <<< "$report" \
+        && grep -q 'nim-llm' <<< "$report" \
+        && return 0
+    echo "$report"
+    return 1
+}
+
+a_control_plane_service_is_still_waited_for() {
+    local report
+    report=$(installer_wait_over '/ut-mongodb|running|starting|control-plane
+')
+    grep -q 'The platform is ready' <<< "$report" && { echo "$report"; return 1; }
+    grep -q 'ut-mongodb' <<< "$report" && return 0
+    echo "$report"
+    return 1
+}
+
+a_service_without_a_role_is_waited_for() {
+    local report
+    report=$(installer_wait_over '/ut-something|running|starting|
+')
+    grep -q 'The platform is ready' <<< "$report" && { echo "$report"; return 1; }
+    grep -q 'ut-something' <<< "$report" && return 0
+    echo "$report"
+    return 1
+}
+
+an_inference_engine_that_failed_is_not_a_success() {
+    local report
+    report=$(installer_wait_over '/ut-caddy|running|healthy|control-plane
+/understandtech-nim-llm-1|running|unhealthy|inference
+')
+    grep -q '^EXIT=0$' <<< "$report" && { echo "$report"; return 1; }
+    grep -q 'nim-llm' <<< "$report" && return 0
+    echo "$report"
+    return 1
+}
+
+the_wait_names_what_is_late() {
+    local report
+    report=$(installer_wait_over '/ut-mongodb|running|starting|control-plane
+')
+    grep -q 'still starting' <<< "$report" || { echo "$report"; return 1; }
+    grep -q 'still starting.*ut-mongodb' <<< "$report" && return 0
+    echo "$report"
+    return 1
+}
+
 an_answer_at_the_prompt_is_taken() {
     local report
     report=$(installer_domain_answer ia.exemple.fr)
@@ -874,6 +946,16 @@ if [[ -x "$REPO_ROOT/ut-install" ]]; then
         an_address_already_configured_is_kept
     capability "the preflight resolves the address in use, not the fallback" \
         the_preflight_checks_the_address_in_use
+    capability "the platform is handed back while the models are still loading" \
+        the_platform_is_ready_while_inference_still_loads
+    capability "a control plane service still starting is waited for" \
+        a_control_plane_service_is_still_waited_for
+    capability "a service that declares no role is waited for" \
+        a_service_without_a_role_is_waited_for
+    capability "an inference engine that failed is not reported as a success" \
+        an_inference_engine_that_failed_is_not_a_success
+    capability "the wait names what is late, not just how many" \
+        the_wait_names_what_is_late
 
     if command -v python3 >/dev/null 2>&1; then
         capability "the address typed at the prompt is the one it takes" \
