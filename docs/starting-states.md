@@ -47,6 +47,7 @@ builds it in a container, runs the installer, and checks the outcome.
 | **Two separate machines.** | They do not share a secret. |
 | **Docker's address pools are full.** A machine that has run generated applications. | **Stops in the preflight**, before writing anything, and says how to reclaim space. |
 | **A machine too small.** Less free disk than the model weights need. | **Stops in the preflight**, naming both numbers — what is free, and what is needed. |
+| **A machine whose clock is behind the release.** A dead battery, or no network to set it from. | **Stops in the preflight.** Certificates issued on that clock are refused as not yet valid, and nothing else on the machine would say why. |
 
 ### Why two of these matter more than they look
 

@@ -143,6 +143,10 @@ state_setup() {
         no_settings_dir) echo 'rm -rf /etc/understandtech' ;;
         pools_full)    echo ': # the daemon refuses through the stub' ;;
         disk_too_small) echo ': # the free space is answered through the stub' ;;
+        # A release dated in the future is the same arithmetic as a clock in the
+        # past, and it needs no stub around date, which everything else uses.
+        clock_before_the_release)
+            echo "sed -i 's|^UT_RELEASE_BUILT_AT=.*|UT_RELEASE_BUILT_AT=\"4102444800\"|' /usr/share/understandtech/release.env" ;;
         orphan_volume) echo ': # the volume is asserted through the stub' ;;
         volume_with_shipped_password)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'MONGODB_USERNAME="mongoadmin"\nMONGODB_PASSWORD="12345678"\n'"'"' > /etc/understandtech/local.env' ;;
@@ -273,6 +277,15 @@ the_preflight_stops_on_a_disk_too_small() {
     return 1
 }
 
+the_preflight_stops_on_a_clock_before_the_release() {
+    local output
+    output=$(output_of clock_before_the_release)
+    grep -q 'before this release was built' <<< "$output" \
+        && ! grep -q 'Writing the configuration' <<< "$output" && return 0
+    echo "$output"
+    return 1
+}
+
 the_preflight_stops_on_full_pools() {
     local output
     output=$(output_of pools_full)
@@ -394,6 +407,7 @@ MONGO_VOLUME_EXISTS=yes run_install_from_state orphan_volume
 MONGO_VOLUME_EXISTS=yes run_install_from_state volume_with_shipped_password -
 NETWORK_CREATE_EXIT=1 run_install_from_state pools_full
 DISK_AVAIL_BYTES=$((91 * 1000 * 1000 * 1000)) run_install_from_state disk_too_small
+run_install_from_state clock_before_the_release
 run_install_from_state previous_checkout -
 run_install_from_state checkout_without_domain -
 
@@ -432,6 +446,10 @@ property "the preflight stops before anything is written" \
 printf '\n%sA machine too small to hold the models%s\n' "$BOLD" "$NC"
 property "the refusal names what is free and what is needed" \
     the_preflight_stops_on_a_disk_too_small
+
+printf '\n%sA machine whose clock is behind the release%s\n' "$BOLD" "$NC"
+property "the preflight stops rather than issue certificates nothing will accept" \
+    the_preflight_stops_on_a_clock_before_the_release
 
 printf '\n%sAn install that still lives in a git checkout%s\n' "$BOLD" "$NC"
 property "its settings are carried over, not regenerated" \

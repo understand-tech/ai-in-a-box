@@ -187,6 +187,26 @@ install_walk_discriminates() {
     fi
 }
 
+ingress_discriminates() {
+    local description=$1 expected=$2 mutation=$3
+    fresh_copy
+    ( cd "$COPY" && eval "$mutation" ) >/dev/null 2>&1
+    find "$COPY" -name '*.bak' -delete 2>/dev/null
+
+    local output
+    output=$( cd "$COPY" && SURFACE_FILTER="$expected" ./test/ingress.sh 2>&1 )
+
+    if grep '✘' <<< "$output" | grep -qF "$expected"; then
+        printf '  %s✔%s %s\n' "$GREEN" "$NC" "$description"
+        PASSED=$((PASSED + 1))
+    else
+        printf '  %s✘%s %s\n' "$RED" "$NC" "$description"
+        printf '%s      "%s" was expected to fail and did not%s\n' "$DIM" "$expected" "$NC"
+        FAILED=$((FAILED + 1))
+        FAILURES+=("$description")
+    fi
+}
+
 printf '\n%sCapabilities, seen failing%s\n\n' "$BOLD" "$NC"
 
 if grep -q 'role_is_waited_for' "$REPO_ROOT/ut-install"; then
@@ -415,6 +435,12 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
     install_walk_discriminates "a disk floor that lets every machine through" \
         "the refusal names what is free and what is needed" \
         "sed -i.bak 's|^MIN_DISK_BYTES=.*|MIN_DISK_BYTES=0|' ut-install"
+
+    # The clock check reads one value out of release.env. Make that read fail and
+    # it skips in silence, which is the shape the defect would really take.
+    install_walk_discriminates "a clock nothing compares to anything" \
+        "the preflight stops rather than issue certificates nothing will accept" \
+        "sed -i.bak 's|^release_declares() {\$|release_declares() { return 1;|' ut-install"
 fi
 
 if grep -q 'checkouts_holding_settings' "$REPO_ROOT/ut-install"; then
@@ -481,6 +507,20 @@ fi
     install_walk_discriminates "two machines given the same secret" \
         "two installs do not share a secret" \
         "sed -i.bak 's|^random_alphanumeric() {$|random_alphanumeric() { printf %s the-same-everywhere; return 0;|' ut-install"
+fi
+
+if [[ -x "$REPO_ROOT/test/ingress.sh" ]]; then
+    printf '\n%sThe front door, seen failing%s\n\n' "$BOLD" "$NC"
+
+    ingress_discriminates "a surface whose upstream no longer exists" \
+        "https://llms.box.example.test is served" \
+        "sed -i.bak 's|reverse_proxy app-llms:80|reverse_proxy nowhere:80|' Caddyfile"
+
+    # The defect this caught the day it was written: a redirect URI that the
+    # ingress sends to the frontend, where no callback is ever handled.
+    ingress_discriminates "a documented redirect URI that never reaches the API" \
+        "the documented OIDC redirect URI reaches the platform API" \
+        "sed -i.bak 's|/api/openid/callback|/en/login/openid-auth|' docs/first-run-configuration.md"
 fi
 
 printf '\n%s%d discriminate%s' "$GREEN" "$PASSED" "$NC"

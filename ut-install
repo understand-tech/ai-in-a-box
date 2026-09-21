@@ -211,6 +211,14 @@ resolve_install_dir() {
 
 registry_credentials_stored() { grep -q "$REGISTRY" /root/.docker/config.json 2>/dev/null; }
 
+release_declares() {
+    local key=$1 line
+    line=$(grep -m1 "^${key}=" "$INSTALL_DIR/release.env" 2>/dev/null) || return 1
+    line=${line#*=}; line=${line%\"}; line=${line#\"}
+    [[ -n "$line" ]] || return 1
+    printf '%s' "$line"
+}
+
 nvidia_runtime_registered() {
     docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q nvidia
 }
@@ -278,6 +286,32 @@ preflight() {
     else
         log_error "No usable GPU detected (nvidia-smi)."
         blocking=1
+    fi
+
+    # A box whose battery died boots in 1970 and nothing on it can tell: offline
+    # there is no authority to ask. What can be proved without one is that the
+    # clock is not earlier than the release — a package cannot have been built
+    # after the machine that installs it.
+    local built_at now
+    built_at=$(release_declares UT_RELEASE_BUILT_AT || true)
+    if [[ "$built_at" =~ ^[0-9]+$ ]]; then
+        now=$(date +%s)
+        if (( now >= built_at )); then
+            log_info "Clock: $(date -u '+%Y-%m-%d %H:%M UTC')"
+        else
+            log_error "Clock: $(date -u '+%Y-%m-%d %H:%M UTC') — before this release was built"
+            log_error "  ($(date -u -d "@${built_at}" '+%Y-%m-%d %H:%M UTC' 2>/dev/null || printf 'epoch %s' "$built_at"))."
+            log_error "  The clock is wrong, and every certificate issued here will be refused as"
+            log_error "  not yet valid. Set it, then run this again:"
+            log_error "    sudo timedatectl set-time 'YYYY-MM-DD HH:MM:SS'"
+            blocking=1
+        fi
+    fi
+
+    if command -v timedatectl >/dev/null 2>&1 \
+        && [[ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" != yes ]]; then
+        log_warn "The clock is not synchronised. On a machine with no network that is expected —"
+        log_warn "  set it by hand and check it, because certificate validity depends on it."
     fi
 
     local available_bytes disk_target

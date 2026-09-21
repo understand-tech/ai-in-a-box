@@ -23,6 +23,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: ./test/capabilities.sh
 
+  # The only suite that reaches a service actually running. It can, because the
+  # front door is caddy:2-alpine — public — and stubs answer for the eight
+  # upstreams. The application images stay out of reach of any runner.
+  ingress:
+    name: the front door actually serves
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: ./test/ingress.sh
+
   migration:
     name: an existing install survives the upgrade
     runs-on: ubuntu-24.04
