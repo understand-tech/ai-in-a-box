@@ -346,9 +346,19 @@ export OUT_DIR=/out
 /src/packaging/build-deb.sh 2026.09.1 >/dev/null
 /src/packaging/build-deb.sh 2026.09.2 >/dev/null
 
+OUT_DIR=/out/first  SOURCE_DATE_EPOCH=1750000000 /src/packaging/build-deb.sh 2026.09.1 >/dev/null
+# Back to back the two builds share a second, so their file times match by luck
+# and the comparison passes whether the date is fixed or not.
+sleep 2
+OUT_DIR=/out/second SOURCE_DATE_EPOCH=1750000000 /src/packaging/build-deb.sh 2026.09.1 >/dev/null
+
 say() { printf '%s=%s\n' "$1" "$2"; }
 present_dir()  { [ -d "$1" ] && echo present || echo gone; }
 present_file() { [ -f "$1" ] && echo present || echo gone; }
+digest_of()    { sha256sum < "$1" | cut -d' ' -f1; }
+
+say SAME_BYTES_TWICE "$([ "$(digest_of /out/first/understandtech_2026.09.1_all.deb)" \
+    = "$(digest_of /out/second/understandtech_2026.09.1_all.deb)" ] && echo yes || echo no)"
 
 dpkg -i --force-depends /out/understandtech_2026.09.1_all.deb >/dev/null 2>&1
 say INSTALLED_VERSION "$(dpkg-query -W -f='${Version}' understandtech 2>/dev/null)"
@@ -597,6 +607,22 @@ the_pinned_actions_have_a_way_to_move() {
 
     grep -qx 'github-actions' <<< "$declared" && return 0
     echo "nothing updates the pinned actions — dependabot.yml declared: ${declared:-<nothing>}"
+    return 1
+}
+
+# Building the same bytes twice is only worth anything if the release asks for
+# it: with the build time left free, what was signed can never be rebuilt.
+the_release_fixes_the_date_it_builds_with() {
+    grep -q 'SOURCE_DATE_EPOCH' "$REPO_ROOT/.github/workflows/release.yml" && return 0
+    echo "release.yml lets dpkg-deb stamp the build time — the published package cannot be rebuilt"
+    return 1
+}
+
+# ut-verify and release.pub travel beside the package they check, so our own key
+# proves nothing to someone handed all three at once.
+the_release_attests_what_it_built() {
+    grep -q 'attest-build-provenance' "$REPO_ROOT/.github/workflows/release.yml" && return 0
+    echo "nothing ties the package to this workflow except our own signature"
     return 1
 }
 
@@ -981,6 +1007,8 @@ fi
 
 if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
     group "Distribution"
+    capability "the same tree builds the same bytes twice" \
+        reports SAME_BYTES_TWICE yes
     capability "the release installs as a package, in its own place" \
         the_release_installs_to_its_own_place
     capability "the settings directory is prepared, and the package puts nothing in it" \
@@ -1017,6 +1045,13 @@ fi
 if [[ -f "$REPO_ROOT/.github/dependabot.yml" ]]; then
     capability "the pinned actions have a way to move" \
         the_pinned_actions_have_a_way_to_move
+fi
+
+if [[ -f "$REPO_ROOT/.github/workflows/release.yml" ]]; then
+    capability "the release fixes the date it builds with" \
+        the_release_fixes_the_date_it_builds_with
+    capability "the release attests what it built" \
+        the_release_attests_what_it_built
 fi
 
 group "Backward compatibility"

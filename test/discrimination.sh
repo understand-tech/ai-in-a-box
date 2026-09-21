@@ -296,6 +296,10 @@ if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
     capability_discriminates "a dependency nobody calls" \
         "every dependency it declares" \
         "sed -i.bak 's|^Depends: openssl|Depends: curl, openssl|' packaging/build-deb.sh"
+
+    capability_discriminates "a build that stamps the hour it ran at" \
+        "the same tree builds the same bytes twice" \
+        "sed -i.bak 's|^PACKAGE=|unset SOURCE_DATE_EPOCH\nPACKAGE=|' packaging/build-deb.sh"
 fi
 
 if [[ -x "$REPO_ROOT/ut-verify" ]]; then
@@ -326,6 +330,16 @@ if [[ -f "$REPO_ROOT/.github/dependabot.yml" ]]; then
     capability_discriminates "an update channel GitHub cannot read" \
         "the pinned actions have a way to move" \
         "printf 'NOT_INDENTED\n' >> .github/dependabot.yml"
+fi
+
+if [[ -f "$REPO_ROOT/.github/workflows/release.yml" ]]; then
+    capability_discriminates "a release that lets the build time float" \
+        "the release fixes the date it builds with" \
+        "sed -i.bak '/SOURCE_DATE_EPOCH/d' .github/workflows/release.yml"
+
+    capability_discriminates "a release resting on our own key alone" \
+        "the release attests what it built" \
+        "sed -i.bak '/attest-build-provenance/d' .github/workflows/release.yml"
 fi
 
 # This one has its own lever rather than a mutation: the check builds its
