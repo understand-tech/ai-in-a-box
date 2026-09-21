@@ -39,6 +39,89 @@ nor a dependency on Avahi, because the names are yours to publish. Changing
 `UT_DOMAIN` off `.local` later and re-running `setup-autostart.sh` disables the
 publisher that was installed before.
 
+## Deciding by what the site already has
+
+Two questions decide everything, and they are **independent**: who resolves the
+six names, and who is trusted for the certificate. What follows is what each
+answer costs on the machines people actually use — which is the cost that
+matters, because it is the one you cannot do yourself.
+
+### Who resolves the names
+
+| What the site has | What to publish | What each machine needs |
+|---|---|---|
+| **A DNS server** — a domain controller, a resolver, a firewall that answers | three records: the apex, `*.<domain>`, `*.apps.<domain>` | **nothing** |
+| **No DNS server, one flat segment** | nothing: give the appliance a `.local` address and it publishes the names itself | nothing on macOS. **Two changes on Linux** — below. Windows is **unverified** |
+| **No DNS server, no mDNS** | nothing | five lines in `/etc/hosts`, per machine — **and generated applications stay unreachable**, because `hosts` has no wildcard |
+
+Three records, not six: `*.<domain>` covers the four satellite names. The third
+is needed because a single-level wildcard does not reach `*.apps.<domain>`.
+
+### Who is trusted
+
+| What the site has | Mode | What each machine needs |
+|---|---|---|
+| **An internal PKI** — AD Certificate Services, or any enterprise CA | `custom` | **nothing.** Their machines already trust that root |
+| **A load balancer holding your own certificate** | `edge` | **nothing**, for the same reason |
+| **A public domain and outbound access** | `custom` with `ut-certificate` | nothing. Not available on an isolated site |
+| **None of those** | `internal`, the default | the appliance's root — one import, and **that import can be pushed** |
+
+**The fewest actions on user machines is an internal PKI.** Nothing else comes
+close: the appliance presents a certificate the fleet already trusts, and no one
+visits a desk. If the site has AD Certificate Services, ask for a certificate
+covering the apex, `*.<domain>` and `*.apps.<domain>`, and use `custom`.
+
+### Pushing the root instead of visiting every desk
+
+In `internal` mode the root has to reach each machine. On a managed fleet that
+is one administrator task, not one task per person.
+
+| Fleet | Where the root goes |
+|---|---|
+| **Windows, Active Directory** | Group Policy → Computer Configuration → Policies → Windows Settings → Security Settings → Public Key Policies → **Trusted Root Certification Authorities** |
+| **Intune, or any MDM** | a **trusted certificate** profile — Windows, macOS, iOS and Android all take one |
+| **macOS, Jamf** | a configuration profile carrying a certificate payload |
+| **Linux, configuration management** | the file into `/usr/local/share/ca-certificates/`, then `update-ca-certificates` |
+
+**On Linux the system store is not the whole story.** Firefox keeps its own, and
+Chrome reads an NSS database rather than `/etc/ssl/certs`. A fleet that pushes
+only to the system store will still see warnings in those browsers.
+
+Export the root from the appliance first:
+
+```bash
+docker exec ut-caddy cat /data/caddy/pki/authorities/local/root.crt > ut-root-ca.crt
+openssl x509 -in ut-root-ca.crt -noout -subject -fingerprint -sha256
+```
+
+**Keep that fingerprint and publish it by another route** — on the delivery note,
+or wherever the site records such things. Whoever receives the file has no other
+way to tell it apart from a root someone else supplied.
+
+### A `.local` address on Linux clients
+
+Measured on a stock Ubuntu client: `mdns4_minimal` resolves `.local` names of
+**exactly two labels**. The apex answers; `admin.<domain>` and the satellites do
+not, because they have three.
+
+The fix has **two halves, and each is inoperative alone**:
+
+- `mdns4` in the `hosts:` line of `/etc/nsswitch.conf`;
+- `.local` listed in `/etc/mdns.allow`.
+
+Applying one of the two looks like it worked — the apex already resolved — and
+leaves every satellite unreachable.
+
+macOS resolves all three depths natively, verified. **Windows has never been
+measured**, so do not plan on it without checking first.
+
+### What an isolated site removes from the list
+
+`ut-certificate` needs to reach a public authority and a DNS provider's API, so
+on a site with no outbound access it is **not an option**. Everything else in
+both tables still applies: an internal PKI is still the answer with the fewest
+actions, and the appliance's own authority is still the fallback.
+
 ## Choosing how TLS is terminated
 
 `UT_INGRESS_MODE` has three values. Pick by what you have, not by what sounds
