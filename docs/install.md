@@ -143,11 +143,17 @@ not needed — the six names come from your zone.
 What it does, in order: writes `/etc/understandtech/.env`, **generates every
 secret**, checks the address resolves, prepares the certificate authority
 directory, creates the App Builder network, pulls the images, starts the stack,
-waits for every service to be healthy, applies the certificate policy, and
+waits for the platform to be healthy, applies the certificate policy, and
 installs the boot service.
 
-Allow up to 45 minutes: the inference engines download and load their model
-weights.
+**It hands back as soon as the platform answers**, usually within a minute of
+the images being on the machine. The inference engines keep loading their model
+weights in the background — up to 45 minutes on a first install — and the
+installer says so, with the command to follow them. Sign in and configure while
+they load.
+
+Follow them with `sudo docker compose ps` in `/usr/share/understandtech`. It
+needs `sudo`: the settings file it reads is `0600`.
 
 ## 6 · Write down what it prints at the end
 
