@@ -576,6 +576,20 @@ a_package_nobody_signed_is_refused() {
         && verdict_is NO_SIGNATURE_AT_ALL refused
 }
 
+# ut-verify exists because dpkg verifies nothing on its own and a customer's box
+# has no network. That second half had never been exercised: every run of it so
+# far had one. mongo:8.2 is the only image this suite already pulls that ships
+# the openssl CLI — which is the point, since --network none cannot install it.
+a_package_verifies_with_no_network_at_all() {
+    local work="$WORK_DIR/signing" said
+    signature_verdicts >/dev/null
+    said=$(docker run --rm --network none -v "$work":/w:ro --entrypoint sh mongo:8.2 \
+        -c '/w/ut-verify /w/package.deb' 2>&1)
+    grep -q 'is signed by' <<< "$said" && return 0
+    echo "with no network at all, ut-verify said: ${said:-nothing}"
+    return 1
+}
+
 the_shipped_key_is_the_one_the_release_is_signed_with() {
     local embedded versioned
     embedded=$("$REPO_ROOT/ut-verify" --fingerprint)
@@ -1161,6 +1175,8 @@ if [[ -x "$REPO_ROOT/ut-verify" ]]; then
         a_package_nobody_signed_is_refused
     capability "the key ut-verify carries is the key the release is signed with" \
         the_shipped_key_is_the_one_the_release_is_signed_with
+    capability "and it verifies with no network at all" \
+        a_package_verifies_with_no_network_at_all
 fi
 
 if [[ -d "$REPO_ROOT/.github/workflows" ]]; then

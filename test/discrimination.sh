@@ -377,6 +377,12 @@ if [[ -x "$REPO_ROOT/ut-verify" ]]; then
         "not signed at all is refused" \
         "sed -i.bak 's|^    if openssl dgst .*; then$|    if true; then|' ut-verify"
 
+    # The regression this guards is a key fetched rather than carried: it
+    # passes on a developer's machine and fails on the only machine that counts.
+    capability_discriminates "a key fetched instead of carried" \
+        "and it verifies with no network at all" \
+        "sed -i.bak 's|^RELEASE_PUBLIC_KEY=.*|RELEASE_PUBLIC_KEY=\$(wget -qO- https://example.invalid/key)|' ut-verify"
+
     capability_discriminates "a shipped key that is not the signing key" \
         "the key ut-verify carries is the key the release is signed with" \
         "openssl ecparam -name prime256v1 -genkey -noout -out /tmp/other-\$\$.pem 2>/dev/null && openssl ec -in /tmp/other-\$\$.pem -pubout -out packaging/release.pub 2>/dev/null"
@@ -518,6 +524,16 @@ if [[ -x "$REPO_ROOT/test/ingress.sh" ]]; then
 
     # The defect this caught the day it was written: a redirect URI that the
     # ingress sends to the frontend, where no callback is ever handled.
+    # custom mode falling back to the appliance's own authority is invisible: the
+    # browser is happy and the operator's fleet still needs an import.
+    ingress_discriminates "custom mode quietly serving its own certificate" \
+        "it serves the certificate it was given" \
+        "sed -i.bak '/fullchain.pem/ s|.*|    tls internal|' caddy/ingress-custom.caddy"
+
+    ingress_discriminates "an upstream proxy no longer believed about the scheme" \
+        "it believes a trusted proxy about the scheme" \
+        "sed -i.bak '/trusted_proxies/d' caddy/ingress-edge.caddy"
+
     ingress_discriminates "a documented redirect URI that never reaches the API" \
         "the documented OIDC redirect URI reaches the platform API" \
         "sed -i.bak 's|/api/openid/callback|/en/login/openid-auth|' docs/first-run-configuration.md"
