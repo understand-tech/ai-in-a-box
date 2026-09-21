@@ -204,7 +204,7 @@ registry timeout. It also keeps the boot path away from a credential trap: the
 unit runs as root, but `docker login ghcr.io` runs without sudo, so root's
 credential store has no `ghcr.io` entry and any pull it attempted would fail on
 the private images. Pull as your normal user before the first
-`docker compose up -d`, and after every image-tag change.
+`docker compose up -d`, and after every image change.
 
 The service unit sets `WorkingDirectory` and lets `docker compose` read `.env`
 itself. It deliberately does not use `EnvironmentFile`: systemd's parser strips

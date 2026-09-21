@@ -626,6 +626,40 @@ the_release_attests_what_it_built() {
     return 1
 }
 
+pinning_report() {
+    local probe="$WORK_DIR/pinning"
+    mkdir -p "$probe/stub"
+    printf '#!/bin/sh\necho sha256:%s\n' "$(printf '1%.0s' $(seq 64))" > "$probe/stub/docker"
+    chmod +x "$probe/stub/docker"
+    {
+        printf 'LOOSE_IMAGE="registry.test/thing:1.2"\n'
+        printf 'FIRM_IMAGE="registry.test/other:3@sha256:%s"\n' "$(printf '2%.0s' $(seq 64))"
+    } > "$probe/release.env"
+    PATH="$probe/stub:$PATH" RELEASE_ENV="$probe/release.env" \
+        "$REPO_ROOT/packaging/pin-images.sh" >/dev/null 2>&1
+    cat "$probe/release.env"
+}
+
+# A digest names the content, a tag names the version. Dropping the tag would
+# make release.env unreadable to whoever has to say which version a box runs.
+a_tag_gains_a_digest_without_losing_its_version() {
+    local report
+    report=$(pinning_report)
+    grep -q "^LOOSE_IMAGE=\"registry.test/thing:1.2@sha256:1" <<< "$report" && return 0
+    echo "the tag was not pinned, or the version was lost:"
+    echo "$report"
+    return 1
+}
+
+an_image_already_pinned_is_left_alone() {
+    local report
+    report=$(pinning_report)
+    grep -q "^FIRM_IMAGE=\"registry.test/other:3@sha256:2\{64\}\"$" <<< "$report" && return 0
+    echo "an image that already named its content was rewritten:"
+    echo "$report"
+    return 1
+}
+
 names_are_unchanged_by_default() {
     local rendered
     rendered=$(compose_config -f compose.yaml)
@@ -1003,6 +1037,14 @@ if [[ -x "$REPO_ROOT/ut-install" ]]; then
         capability "answering nothing at the prompt keeps what the machine already answers on" \
             an_empty_answer_keeps_the_configured_address
     fi
+fi
+
+if [[ -x "$REPO_ROOT/packaging/pin-images.sh" ]]; then
+    group "What a version names"
+    capability "a tag gains a digest without losing its version" \
+        a_tag_gains_a_digest_without_losing_its_version
+    capability "an image that already names its content is left alone" \
+        an_image_already_pinned_is_left_alone
 fi
 
 if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then

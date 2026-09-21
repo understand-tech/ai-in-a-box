@@ -159,6 +159,10 @@ discriminates "verbose logs in the template" \
     "verbose-log-level:LOG_LEVEL" \
     "sed -i.bak 's|^LOG_LEVEL=.*|LOG_LEVEL=\"DEBUG\"|' release.env"
 
+discriminates "an image named by a tag the registry can repoint" \
+    "unpinned-image:NIM_IMAGE" \
+    "sed -i.bak 's|^NIM_IMAGE=.*|NIM_IMAGE=\"ghcr.io/understand-tech/nim/nvidia/model-free-nim:2.0.9\"|' release.env"
+
 discriminates "a documented path that does not exist" \
     "missing-documented-path:nowhere.yaml" \
     "printf '\nSee \`nowhere.yaml\` for details.\n' >> README.md"
@@ -300,6 +304,16 @@ if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
     capability_discriminates "a build that stamps the hour it ran at" \
         "the same tree builds the same bytes twice" \
         "sed -i.bak 's|^PACKAGE=|unset SOURCE_DATE_EPOCH\nPACKAGE=|' packaging/build-deb.sh"
+fi
+
+if [[ -x "$REPO_ROOT/packaging/pin-images.sh" ]]; then
+    capability_discriminates "a registry that answers nothing, taken for an answer" \
+        "a tag gains a digest without losing its version" \
+        "sed -i.bak 's|^digest_of() {\$|digest_of() { return 0;|' packaging/pin-images.sh"
+
+    capability_discriminates "a digest appended to a reference that had one" \
+        "an image that already names its content is left alone" \
+        "sed -i.bak 's|^already_pinned() {\$|already_pinned() { return 1;|' packaging/pin-images.sh"
 fi
 
 if [[ -x "$REPO_ROOT/ut-verify" ]]; then
