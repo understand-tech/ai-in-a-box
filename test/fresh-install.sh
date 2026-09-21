@@ -45,11 +45,16 @@ build_the_package() {
         sh -c "OUT_DIR=/out ./packaging/build-deb.sh '$VERSION'" >/dev/null
 }
 
-# The installer talks to a Docker daemon and to nvidia-smi. Handing it the real
-# ones would have it log into a registry and create volumes on whatever machine
-# runs this; stubs answer the handful of questions it asks, and are what lets a
-# starting state be set up at all — "a mongo volume is already there" is a
+# The installer talks to a Docker daemon, to nvidia-smi and to df. Handing it the
+# real ones would have it log into a registry and create volumes on whatever
+# machine runs this; stubs answer the handful of questions it asks, and are what
+# lets a starting state be set up at all — "a mongo volume is already there" is a
 # sentence only a stub can say.
+#
+# df is stubbed for a second reason: the preflight needs 250 GB and a GitHub
+# runner offers 91, so left alone this suite passes or fails on the disk of
+# whoever runs it rather than on the installer. It was green here on 378 GB and
+# red in CI on the same commit.
 write_machine_stubs() {
     cat > "$WORK_DIR/stubs.sh" <<'STUBS'
 mkdir -p /stub
@@ -74,7 +79,12 @@ case "$1" in
     *)  echo "NVIDIA GB10" ;;
 esac
 NVIDIA
-chmod +x /stub/docker /stub/nvidia-smi
+cat > /stub/df <<'DF'
+#!/bin/sh
+echo "Avail"
+echo "${DISK_AVAIL_BYTES:-$((400 * 1000 * 1000 * 1000))}"
+DF
+chmod +x /stub/docker /stub/nvidia-smi /stub/df
 mkdir -p /etc/cdi && : > /etc/cdi/nvidia.yaml
 : > /stub/docker-calls
 export PATH=/stub:$PATH
@@ -116,6 +126,7 @@ PROBE
         -e MONGO_VOLUME_EXISTS="${MONGO_VOLUME_EXISTS:-no}" \
         -e NETWORK_CREATE_EXIT="${NETWORK_CREATE_EXIT:-0}" \
         -e PULL_EXIT="${PULL_EXIT:-9}" \
+        -e DISK_AVAIL_BYTES="${DISK_AVAIL_BYTES:-}" \
         debian:12-slim bash /w/walk-$state.sh >/dev/null 2>&1
 }
 
@@ -131,6 +142,7 @@ state_setup() {
         already_set)   echo 'install -m 600 /usr/share/understandtech/release.env /etc/understandtech/.env' ;;
         no_settings_dir) echo 'rm -rf /etc/understandtech' ;;
         pools_full)    echo ': # the daemon refuses through the stub' ;;
+        disk_too_small) echo ': # the free space is answered through the stub' ;;
         orphan_volume) echo ': # the volume is asserted through the stub' ;;
         volume_with_shipped_password)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'MONGODB_USERNAME="mongoadmin"\nMONGODB_PASSWORD="12345678"\n'"'"' > /etc/understandtech/local.env' ;;
@@ -246,6 +258,18 @@ running_it_again_changes_nothing() {
     after=$(settings_of already_set | grep -c .)
     [[ "$before" == "$after" ]] && return 0
     echo "the settings went from ${before} lines to ${after} on a second run"
+    return 1
+}
+
+# 91 GB is what a GitHub runner actually offers, and what sent this suite red
+# before df was stubbed. An operator reads the two numbers or has nothing to act
+# on, so the refusal has to carry both.
+the_preflight_stops_on_a_disk_too_small() {
+    local output
+    output=$(output_of disk_too_small)
+    grep -qE 'Disk: 91 GB free on .* [0-9]+ GB needed' <<< "$output" \
+        && ! grep -q 'Writing the configuration' <<< "$output" && return 0
+    echo "$output"
     return 1
 }
 
@@ -369,6 +393,7 @@ run_install_from_state no_settings_dir
 MONGO_VOLUME_EXISTS=yes run_install_from_state orphan_volume
 MONGO_VOLUME_EXISTS=yes run_install_from_state volume_with_shipped_password -
 NETWORK_CREATE_EXIT=1 run_install_from_state pools_full
+DISK_AVAIL_BYTES=$((91 * 1000 * 1000 * 1000)) run_install_from_state disk_too_small
 run_install_from_state previous_checkout -
 run_install_from_state checkout_without_domain -
 
@@ -403,6 +428,10 @@ property "running the installer again changes nothing" \
 printf '\n%sA machine whose Docker address pools are full%s\n' "$BOLD" "$NC"
 property "the preflight stops before anything is written" \
     the_preflight_stops_on_full_pools
+
+printf '\n%sA machine too small to hold the models%s\n' "$BOLD" "$NC"
+property "the refusal names what is free and what is needed" \
+    the_preflight_stops_on_a_disk_too_small
 
 printf '\n%sAn install that still lives in a git checkout%s\n' "$BOLD" "$NC"
 property "its settings are carried over, not regenerated" \
