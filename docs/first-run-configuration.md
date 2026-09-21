@@ -73,7 +73,7 @@ Workspace, Auth0, Keycloak, or any OIDC-compliant one.
 | Client ID | The application ID assigned to this appliance in your IdP | Your IdP's app registration page |
 | Client secret | The secret that authenticates the application | Generated during app registration |
 | Secret key | A key used to sign and verify session tokens | Choose a long random string, 32 characters or more |
-| Redirect URI | Where the IdP sends people after they sign in | `https://<your-domain>/en/login/openid-auth` |
+| Redirect URI | Where the IdP sends people after they sign in | `https://<your-domain>/api/openid/callback` |
 | Server metadata URL | The IdP's `.well-known/openid-configuration` endpoint | See the table below |
 | Token endpoint URL | Exchanges authorization codes for tokens | In the metadata response |
 | JWKS endpoint URL | Serves the public keys that verify tokens | In the metadata response |
