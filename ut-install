@@ -946,7 +946,7 @@ report_inference_still_loading() {
     log ""
     log "     Inference is not ready yet, and the platform does not wait for it:"
     printf '%s' "$loading" | while IFS= read -r line; do [[ -n "$line" ]] && log "  ${line# }"; done
-    log "     Follow it with: cd ${INSTALL_DIR} && docker compose ps"
+    log "     Follow it with: cd ${INSTALL_DIR} && sudo docker compose ps"
 }
 
 # Saying "still loading" about a container that has already failed would be the
