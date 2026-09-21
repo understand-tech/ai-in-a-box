@@ -117,9 +117,15 @@ sudo ut-install --check
 ```
 
 Changes nothing. It reports Docker's version, whether the GPU is reachable from
-containers, free disk, RAM, and whether the address resolves. Every problem it
-names is one you would otherwise meet halfway through, with services already
-running.
+containers, free disk, RAM, the clock, and whether the address resolves. Every
+problem it names is one you would otherwise meet halfway through, with services
+already running.
+
+**The clock is checked against the release's own build date.** Offline there is
+no authority to ask, but a package cannot have been built after the machine
+installing it — so a clock earlier than the release is wrong, and every
+certificate issued on it would be refused as not yet valid. On a machine with no
+network, set the clock by hand before installing.
 
 The GPU check accepts either mechanism — the legacy `nvidia` docker runtime, or
 CDI device files under `/etc/cdi` and `/var/run/cdi`. Recent NVIDIA toolkits
