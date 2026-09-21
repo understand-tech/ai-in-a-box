@@ -84,7 +84,7 @@ runs, from two others:
 
 | File | Whose it is | On an update |
 |---|---|---|
-| `/usr/share/understandtech/release.env` | ours | **replaced.** What this version decides: image tags, defaults, model settings. No secret is ever in it |
+| `/usr/share/understandtech/release.env` | ours | **replaced.** What this version decides: the exact images, defaults, model settings. No secret is ever in it |
 | `/etc/understandtech/local.env` | yours | **never touched.** Your address, your overrides, and every secret the installer generated |
 | `/etc/understandtech/.env` | built from the two | rebuilt. Yours wins over ours, every time |
 
