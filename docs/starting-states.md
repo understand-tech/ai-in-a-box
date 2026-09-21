@@ -46,8 +46,9 @@ builds it in a container, runs the installer, and checks the outcome.
 | **A database nobody has the password for.** A mongo volume is there, `.env` holds no password. | **Stops**, names the volume, gives the two ways out. |
 | **Two separate machines.** | They do not share a secret. |
 | **Docker's address pools are full.** A machine that has run generated applications. | **Stops in the preflight**, before writing anything, and says how to reclaim space. |
+| **A machine too small.** Less free disk than the model weights need. | **Stops in the preflight**, naming both numbers — what is free, and what is needed. |
 
-### Why the last two matter more than they look
+### Why two of these matter more than they look
 
 **The orphan volume** is not hypothetical — it is what a machine looks like
 after `docker compose down`, a cleanup of images, and a removed checkout. The

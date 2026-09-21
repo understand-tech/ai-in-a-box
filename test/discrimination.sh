@@ -341,6 +341,10 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
     install_walk_discriminates "an empty settings file kept as if configured" \
         "and the result still renders" \
         "sed -i.bak 's|^render_settings() {$|render_settings() { return 0;|' ut-install"
+
+    install_walk_discriminates "a disk floor that lets every machine through" \
+        "the refusal names what is free and what is needed" \
+        "sed -i.bak 's|^MIN_DISK_BYTES=.*|MIN_DISK_BYTES=0|' ut-install"
 fi
 
 if grep -q 'checkouts_holding_settings' "$REPO_ROOT/ut-install"; then
