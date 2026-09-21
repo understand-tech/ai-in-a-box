@@ -1,14 +1,5 @@
-Install from the APT repository, which verifies a signed index before
-downloading anything:
-
-```bash
-sudo apt update && sudo apt install understandtech
-sudo ut-install
-```
-
-For a machine with no network, carry the package in and **check it first** —
-`dpkg` ships with `no-debsig`, so it installs a local file without verifying
-any signature:
+**Check the package before installing it.** `dpkg` ships with `no-debsig`, so
+it installs a local file without verifying any signature:
 
 ```bash
 ./ut-verify understandtech_VERSION_all.deb
