@@ -11,8 +11,13 @@ on:
     - cron: '0 3 * * *'
   workflow_dispatch:
 
+# packages: read is what lets the automatic token pull the backup image, which
+# became private when it was republished under our own registry. No secret to
+# create: the package grants this repository read access, and GITHUB_TOKEN
+# carries it.
 permissions:
   contents: read
+  packages: read
 
 jobs:
   machine-identity:
@@ -29,4 +34,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Sign in to the registry that holds the backup image
+        run: echo "${{ secrets.GITHUB_TOKEN }}" \
+          | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
       - run: ./test/database-restore.sh
