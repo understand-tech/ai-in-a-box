@@ -24,6 +24,10 @@ MIN_RAM_KB=$((24 * 1024 * 1024))
 # at 50 MB over 5 files per service — leaves the rest for the database, the
 # uploads and thirty days of backups.
 MIN_DISK_BYTES_NO_INFERENCE=$((60 * 1000 * 1000 * 1000))
+# The thirteen services left once the engines are out reserve 10 GB at the
+# replica counts the release ships (WORKER_REPLICAS=2, WORKER_CUSTOMER_REPLICAS=2):
+# api-customer and workers-customer take 2 GB each, mongodb and api 1 GB each,
+# the rest 64 to 512 MB. 12 leaves the host its own.
 MIN_RAM_KB_NO_INFERENCE=$((12 * 1024 * 1024))
 NIM_COLD_START_SECONDS=2700
 
@@ -198,11 +202,14 @@ the_inference_is_served_by_another_machine() {
 # died and a machine that never had an accelerator leave the same trace, and the
 # first one is a failure nobody would look for.
 role_this_machine_was_installed_as() {
-    if the_inference_is_served_by_another_machine; then
-        printf 'control plane — generates nothing here, inference comes from %s' \
-            "$(env_get "$INSTALL_DIR/.env" VLLM_LLM_BASE_URL 2>/dev/null || echo 'VLLM_LLM_BASE_URL, which is unset')"
-    else
+    if ! the_inference_is_served_by_another_machine; then
         printf 'appliance — inference runs on this machine'
+    elif the_inference_url_names_a_service_this_machine_will_not_run; then
+        printf 'control plane — and nothing serves it yet: VLLM_LLM_BASE_URL still names %s' \
+            "${INTERNAL_INFERENCE_HOST:-no host at all}"
+    else
+        printf 'control plane — generates nothing here, inference comes from %s' \
+            "$(env_get "$INSTALL_DIR/.env" VLLM_LLM_BASE_URL 2>/dev/null)"
     fi
 }
 
@@ -764,6 +771,58 @@ migrate_existing_settings_into_local() {
     log_info "The file as it was: ${local_file%/*}/env.before-split"
 }
 
+# Waiving the accelerator check is not enough to install: left alone, the release
+# keeps COMPOSE_PROFILES="nim" and the stack still asks docker for an nvidia
+# device it will not find. Measured on a machine with none: the engines are
+# created, then `could not select device driver "nvidia"` stops the install after
+# the images have already been pulled.
+#
+# It goes to local.env, which render_settings lets win over release.env, so an
+# operator who wrote these two by hand keeps exactly what they chose.
+write_the_settings_a_machine_without_an_accelerator_needs() {
+    local local_file=$1 compose_files
+
+    compose_files=$(env_get "$local_file" COMPOSE_FILE 2>/dev/null || true)
+    [[ -n "$compose_files" ]] || compose_files=$(release_declares COMPOSE_FILE || echo "compose.yaml")
+
+    case "$compose_files" in
+        *compose.no-gpu.yaml*) ;;
+        *) env_set "$local_file" COMPOSE_FILE "${compose_files}:compose.no-gpu.yaml" ;;
+    esac
+
+    if [[ "$(env_get "$local_file" COMPOSE_PROFILES 2>/dev/null || true)" != "" ]] \
+        || [[ -n "$(release_declares COMPOSE_PROFILES || true)" ]]; then
+        env_set "$local_file" COMPOSE_PROFILES ""
+    fi
+
+    log_info "Inference left to another machine: no engine is started here"
+
+    if the_inference_url_names_a_service_this_machine_will_not_run; then
+        log_warn "VLLM_LLM_BASE_URL still names ${INTERNAL_INFERENCE_HOST}, an engine this"
+        log_warn "  machine no longer starts. The platform will come up and answer nothing"
+        log_warn "  a model has to write. Point it at a machine that serves inference:"
+        log_warn "    echo 'VLLM_LLM_BASE_URL=\"https://<that machine>/v1\"' | sudo tee -a ${local_file}"
+    fi
+}
+
+INTERNAL_INFERENCE_HOST=""
+
+# The release points VLLM_LLM_BASE_URL at nim-llm, a service on this machine's
+# own compose network. On a control plane that service is never started, so the
+# default is not a remote address waiting to be used — it is a dead one, and the
+# summary would otherwise announce it as the source of inference.
+the_inference_url_names_a_service_this_machine_will_not_run() {
+    local url host
+    url=$(env_get "$INSTALL_DIR/.env" VLLM_LLM_BASE_URL 2>/dev/null || true)
+    [[ -n "$url" ]] || url=$(release_declares VLLM_LLM_BASE_URL || true)
+    host=${url#*://}; host=${host%%/*}; host=${host%%:*}
+    INTERNAL_INFERENCE_HOST="$host"
+    case "$host" in
+        nim-llm|nim-vlm|llm|localhost|127.0.0.1|"") return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # Compose reads .env from the project directory and interpolates ${} from it, so
 # it has to stay one flat file — a list of sources would not be read at all.
 render_settings() {
@@ -813,6 +872,8 @@ step_configure() {
         env_set "$local_file" UT_DOMAIN "$DOMAIN"
         log_info "Address set to ${DOMAIN} — every other URL derives from it"
     fi
+
+    $NO_GPU && write_the_settings_a_machine_without_an_accelerator_needs "$local_file"
 
     render_settings "$env_file" "$local_file"
     generate_database_credentials "$env_file" "$local_file"

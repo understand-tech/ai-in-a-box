@@ -181,6 +181,10 @@ discriminates "a stand-in kept for a service that is gone" \
     "stub-overlay-names-a-service-that-is-gone" \
     "sed -i.bak 's|^  admin-portal:|  admin-portal-renamed:|' compose.yaml"
 
+discriminates "a healthcheck moved to a route the stand-in answers 404 on" \
+    "stub-serves-no-route-for-a-healthcheck" \
+    "sed -i.bak 's|http://localhost:8501/api/docs|http://localhost:8501/api/healthz|' compose.yaml"
+
 
 install_walk_discriminates() {
     local description=$1 expected=$2 mutation=$3
@@ -544,6 +548,14 @@ fi
     install_walk_discriminates "a control plane asked for the storage of an appliance" \
         "the disk floor follows what the machine will actually hold" \
         "sed -i.bak 's|^MIN_DISK_BYTES_NO_INFERENCE=.*|MIN_DISK_BYTES_NO_INFERENCE=\$MIN_DISK_BYTES|' ut-install"
+
+    install_walk_discriminates "an accelerator waived without the settings that follow" \
+        "the flag writes a configuration that asks docker for no GPU" \
+        "sed -i.bak 's|^    \$NO_GPU && write_the_settings_a_machine_without_an_accelerator_needs.*|    :|' ut-install"
+
+    install_walk_discriminates "an inference address left pointing at a service nothing starts" \
+        "it says the inference address still points at nothing" \
+        "sed -i.bak 's|^    if the_inference_url_names_a_service_this_machine_will_not_run; then|    if false; then|' ut-install"
 fi
 
 if [[ -x "$REPO_ROOT/test/ingress.sh" ]]; then

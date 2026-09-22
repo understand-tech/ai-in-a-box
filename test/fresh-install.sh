@@ -148,7 +148,7 @@ state_setup() {
         # the inference is elsewhere; undeclared, nothing does.
         no_accelerator_declared|no_accelerator_on_a_smaller_disk)
             echo 'rm -f /stub/nvidia-smi && install -d -m 750 /etc/understandtech && printf '"'"'COMPOSE_FILE="compose.yaml:compose.no-gpu.yaml"\n'"'"' > /etc/understandtech/.env' ;;
-        no_accelerator_undeclared)
+        no_accelerator_undeclared|no_accelerator_by_flag)
             echo 'rm -f /stub/nvidia-smi' ;;
         # A release dated in the future is the same arithmetic as a clock in the
         # past, and it needs no stub around date, which everything else uses.
@@ -326,6 +326,29 @@ the_preflight_stops_when_nothing_says_the_inference_is_elsewhere() {
     return 1
 }
 
+# Waiving the check and writing nothing was the first version of this, and it
+# installed a machine that pulled the engines and then could not start them:
+# `could not select device driver "nvidia"`, after the images were down.
+the_flag_writes_a_configuration_that_asks_for_no_gpu() {
+    local settings
+    settings=$(settings_of no_accelerator_by_flag)
+    grep -q 'compose.no-gpu.yaml' <<< "$settings" \
+        && ! grep -qE '^COMPOSE_PROFILES="?nim' <<< "$settings" && return 0
+    grep -E '^COMPOSE_FILE|^COMPOSE_PROFILES' <<< "$settings"
+    return 1
+}
+
+# The release points VLLM_LLM_BASE_URL at nim-llm, a service a control plane
+# never starts. Installing without saying so leaves a platform that comes up
+# healthy and cannot answer anything a model has to write.
+the_install_says_the_inference_url_points_nowhere() {
+    local output
+    output=$(output_of no_accelerator_by_flag)
+    grep -q 'VLLM_LLM_BASE_URL still names' <<< "$output" && return 0
+    echo "$output"
+    return 1
+}
+
 # The engines account for 43.1 GB of the 55.29 GB measured on a box in service.
 # A machine that serves none of it should not be turned away over the storage
 # they would have taken.
@@ -471,6 +494,7 @@ run_install_from_state no_accelerator_undeclared
 # 91 GB: under the 250 GB an appliance needs, over the 60 GB a control plane does.
 DISK_AVAIL_BYTES=$((91 * 1000 * 1000 * 1000)) \
     run_install_from_state no_accelerator_on_a_smaller_disk
+INSTALL_COMMAND="ut-install --no-gpu" run_install_from_state no_accelerator_by_flag
 
 printf '%sA machine with nothing on it%s\n' "$BOLD" "$NC"
 property "the install reaches the point where it pulls images" \
@@ -522,6 +546,10 @@ property "the preflight stops when nothing says the inference is elsewhere" \
     the_preflight_stops_when_nothing_says_the_inference_is_elsewhere
 property "the disk floor follows what the machine will actually hold" \
     the_disk_floor_follows_what_the_machine_will_actually_hold
+property "the flag writes a configuration that asks docker for no GPU" \
+    the_flag_writes_a_configuration_that_asks_for_no_gpu
+property "it says the inference address still points at nothing" \
+    the_install_says_the_inference_url_points_nowhere
 
 printf '\n%sAn install that still lives in a git checkout%s\n' "$BOLD" "$NC"
 property "its settings are carried over, not regenerated" \

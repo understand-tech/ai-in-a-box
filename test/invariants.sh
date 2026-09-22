@@ -477,11 +477,21 @@ services_the_stub_overlay_replaces() {
          /STUB_IMAGE/ && svc { print svc; svc="" }' "$REPO_ROOT/test/compose.stub.yaml" 2>/dev/null
 }
 
-ports_a_healthcheck_asks_for() {
+healthcheck_urls_of() {
     awk -v want="$1" '
         /^  [a-z][a-z-]*:$/ { svc=$1; sub(":","",svc); inblock=(svc==want) }
         inblock && /test:/ { print }
-    ' "$REPO_ROOT/compose.yaml" | grep -oE '(localhost|127\.0\.0\.1):[0-9]+' | cut -d: -f2 | sort -u
+    ' "$REPO_ROOT/compose.yaml" | grep -oE '(localhost|127\.0\.0\.1):[0-9]+[^"[:space:]]*'
+}
+
+ports_a_healthcheck_asks_for() {
+    healthcheck_urls_of "$1" | sed -E 's|^[^:]+:([0-9]+).*|\1|' | sort -u
+}
+
+# An empty path is "/": curl -f http://localhost:80 asks for the same route as
+# wget http://127.0.0.1:8080/, and the stand-in has to serve it either way.
+paths_a_healthcheck_asks_for() {
+    healthcheck_urls_of "$1" | sed -E 's|^[^:]+:[0-9]+||' | sed -E 's|^$|/|' | sort -u
 }
 
 # A stand-in that answers a port the real service no longer uses passes its
@@ -491,7 +501,7 @@ ports_a_healthcheck_asks_for() {
 check_the_stub_overlay_still_matches_the_services() {
     [[ -f "$REPO_ROOT/test/compose.stub.yaml" ]] || return 0
 
-    local service port
+    local service port path
     for service in $(services_the_stub_overlay_replaces); do
         if ! grep -qE "^  ${service}:$" "$REPO_ROOT/compose.yaml"; then
             report "stub-overlay-names-a-service-that-is-gone" \
@@ -502,6 +512,11 @@ check_the_stub_overlay_still_matches_the_services() {
             grep -qE "^:${port}( |\{)" "$REPO_ROOT/test/stub.caddy" 2>/dev/null && continue
             report "stub-answers-no-port-for-a-healthcheck" \
                 "${service} is healthchecked on port ${port}, which test/stub.caddy does not listen on"
+        done
+        for path in $(paths_a_healthcheck_asks_for "$service"); do
+            grep -qE "^[[:space:]]*handle ${path} \{" "$REPO_ROOT/test/stub.caddy" 2>/dev/null && continue
+            report "stub-serves-no-route-for-a-healthcheck" \
+                "${service} is healthchecked on ${path}, which test/stub.caddy answers 404"
         done
     done
 }
