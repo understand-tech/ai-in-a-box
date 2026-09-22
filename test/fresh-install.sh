@@ -320,10 +320,13 @@ an_install_that_worked_says_so() {
     return 1
 }
 
+# Matching the path alone was not enough: any message naming local.env satisfied
+# it, and the preflight gained one. What this property means is that the run with
+# no terminal said where the secrets went, so it asks for that sentence.
 the_secrets_are_findable_without_a_terminal() {
     local output
     output=$(output_of install_runs_through)
-    grep -qi 'local.env' <<< "$output" && return 0
+    grep -q 'The secrets are in' <<< "$output" && return 0
     echo "nothing told the operator where the secrets are"
     return 1
 }
