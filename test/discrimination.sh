@@ -173,6 +173,7 @@ discriminates "a documented path that does not exist" \
     "missing-documented-path:nowhere.yaml" \
     "printf '\nSee \`nowhere.yaml\` for details.\n' >> README.md"
 
+
 install_walk_discriminates() {
     local description=$1 expected=$2 mutation=$3
     fresh_copy
@@ -523,6 +524,18 @@ fi
     install_walk_discriminates "two machines given the same secret" \
         "two installs do not share a secret" \
         "sed -i.bak 's|^random_alphanumeric() {$|random_alphanumeric() { printf %s the-same-everywhere; return 0;|' ut-install"
+
+    install_walk_discriminates "a declared machine refused anyway" \
+        "the install goes on when the inference is served elsewhere" \
+        "sed -i.bak 's|^the_inference_is_served_by_another_machine() {\$|the_inference_is_served_by_another_machine() { return 1;|' ut-install"
+
+    install_walk_discriminates "an accelerator waived on its absence alone" \
+        "the preflight stops when nothing says the inference is elsewhere" \
+        "sed -i.bak 's|^the_inference_is_served_by_another_machine() {\$|the_inference_is_served_by_another_machine() { return 0;|' ut-install"
+
+    install_walk_discriminates "a control plane asked for the storage of an appliance" \
+        "the disk floor follows what the machine will actually hold" \
+        "sed -i.bak 's|^MIN_DISK_BYTES_NO_INFERENCE=.*|MIN_DISK_BYTES_NO_INFERENCE=\$MIN_DISK_BYTES|' ut-install"
 fi
 
 if [[ -x "$REPO_ROOT/test/ingress.sh" ]]; then

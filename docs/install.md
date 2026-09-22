@@ -131,6 +131,36 @@ The GPU check accepts either mechanism — the legacy `nvidia` docker runtime, o
 CDI device files under `/etc/cdi` and `/var/run/cdi`. Recent NVIDIA toolkits
 register no docker runtime at all, so a working machine can have none.
 
+### A machine that serves no inference
+
+A machine whose inference comes from elsewhere has no accelerator to find, and
+saying so lets the install go on:
+
+```bash
+sudo ut-install --check --no-gpu
+```
+
+A settings file already carrying `compose.no-gpu.yaml` in `COMPOSE_FILE` says the
+same thing, so a laboratory stack set up as described below needs no flag.
+
+Two things follow from the declaration, and only from it:
+
+- **The accelerator check becomes a warning.** It is waived on the *absence* of
+  an accelerator, never on a broken one: a machine where `nvidia-smi` answers but
+  Docker cannot reach the GPU is still refused, flag or no flag. A driver that
+  stopped answering after a kernel upgrade looks exactly like a machine that
+  never had one, and the second must not cover for the first.
+- **The disk and memory floors follow.** 60 GB instead of 250, 12 GB of RAM
+  instead of 24. The engines and their weights account for most of what an
+  appliance stores, and a machine that runs none of them will never use it.
+
+Nothing else changes. The install still writes the same configuration, issues the
+same certificates and installs the same units. `VLLM_LLM_BASE_URL` has to name a
+machine that does generate, or the platform comes up answering nothing.
+
+The summary printed at the end names the role the machine was installed as, and
+it is kept in the install log.
+
 ## 5 · Configure and start
 
 ```bash

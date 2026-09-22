@@ -143,6 +143,13 @@ state_setup() {
         no_settings_dir) echo 'rm -rf /etc/understandtech' ;;
         pools_full)    echo ': # the daemon refuses through the stub' ;;
         disk_too_small) echo ': # the free space is answered through the stub' ;;
+        # Every other state stubs nvidia-smi, so a machine with no accelerator is
+        # the one where that stub is taken away. Declared, the settings file says
+        # the inference is elsewhere; undeclared, nothing does.
+        no_accelerator_declared|no_accelerator_on_a_smaller_disk)
+            echo 'rm -f /stub/nvidia-smi && install -d -m 750 /etc/understandtech && printf '"'"'COMPOSE_FILE="compose.yaml:compose.no-gpu.yaml"\n'"'"' > /etc/understandtech/.env' ;;
+        no_accelerator_undeclared)
+            echo 'rm -f /stub/nvidia-smi' ;;
         # A release dated in the future is the same arithmetic as a clock in the
         # past, and it needs no stub around date, which everything else uses.
         clock_before_the_release)
@@ -298,6 +305,40 @@ the_preflight_stops_on_a_clock_before_the_release() {
     return 1
 }
 
+the_install_goes_on_when_the_inference_is_elsewhere() {
+    local output
+    output=$(output_of no_accelerator_declared)
+    grep -q 'the inference is served by another machine' <<< "$output" \
+        && grep -q 'Writing the configuration' <<< "$output" && return 0
+    echo "$output"
+    return 1
+}
+
+# The other half of the pair, and the one that matters: a driver that stopped
+# answering looks exactly like a machine that never had a GPU. Waiving the check
+# on the absence alone would install a box that generates nothing.
+the_preflight_stops_when_nothing_says_the_inference_is_elsewhere() {
+    local output
+    output=$(output_of no_accelerator_undeclared)
+    grep -q 'No usable GPU detected' <<< "$output" \
+        && ! grep -q 'Writing the configuration' <<< "$output" && return 0
+    echo "$output"
+    return 1
+}
+
+# The engines account for 43.1 GB of the 55.29 GB measured on a box in service.
+# A machine that serves none of it should not be turned away over the storage
+# they would have taken.
+the_disk_floor_follows_what_the_machine_will_actually_hold() {
+    local output
+    output=$(output_of no_accelerator_on_a_smaller_disk)
+    grep -q 'Disk: 91 GB free' <<< "$output" \
+        && ! grep -q '250 GB needed' <<< "$output" \
+        && grep -q 'Writing the configuration' <<< "$output" && return 0
+    echo "$output"
+    return 1
+}
+
 the_preflight_stops_on_full_pools() {
     local output
     output=$(output_of pools_full)
@@ -425,6 +466,11 @@ DISK_AVAIL_BYTES=$((91 * 1000 * 1000 * 1000)) run_install_from_state disk_too_sm
 run_install_from_state clock_before_the_release
 run_install_from_state previous_checkout -
 run_install_from_state checkout_without_domain -
+run_install_from_state no_accelerator_declared
+run_install_from_state no_accelerator_undeclared
+# 91 GB: under the 250 GB an appliance needs, over the 60 GB a control plane does.
+DISK_AVAIL_BYTES=$((91 * 1000 * 1000 * 1000)) \
+    run_install_from_state no_accelerator_on_a_smaller_disk
 
 printf '%sA machine with nothing on it%s\n' "$BOLD" "$NC"
 property "the install reaches the point where it pulls images" \
@@ -468,6 +514,14 @@ property "the refusal names what is free and what is needed" \
 printf '\n%sA machine whose clock is behind the release%s\n' "$BOLD" "$NC"
 property "the preflight stops rather than issue certificates nothing will accept" \
     the_preflight_stops_on_a_clock_before_the_release
+
+printf '\n%sA machine with no accelerator at all%s\n' "$BOLD" "$NC"
+property "the install goes on when the inference is served elsewhere" \
+    the_install_goes_on_when_the_inference_is_elsewhere
+property "the preflight stops when nothing says the inference is elsewhere" \
+    the_preflight_stops_when_nothing_says_the_inference_is_elsewhere
+property "the disk floor follows what the machine will actually hold" \
+    the_disk_floor_follows_what_the_machine_will_actually_hold
 
 printf '\n%sAn install that still lives in a git checkout%s\n' "$BOLD" "$NC"
 property "its settings are carried over, not regenerated" \
