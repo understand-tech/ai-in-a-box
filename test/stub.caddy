@@ -1,0 +1,27 @@
+{
+	admin off
+	auto_https off
+	log {
+		output discard
+	}
+}
+
+# One file serves every stubbed service: each container listens on its own port
+# and ignores the blocks it was not given. The routes are the ones the real
+# healthchecks ask for, so compose.yaml's own `test:` lines are left untouched
+# and still have to pass.
+
+:8501 {
+	respond /api/docs "stub api" 200
+	respond /api/v3/docs "stub api-customer" 200
+	respond * "stub 8501" 200
+}
+
+:80 {
+	respond /api/health "stub app" 200
+	respond * "stub 80" 200
+}
+
+:8080 {
+	respond * "stub admin-portal" 200
+}

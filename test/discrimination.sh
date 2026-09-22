@@ -173,6 +173,14 @@ discriminates "a documented path that does not exist" \
     "missing-documented-path:nowhere.yaml" \
     "printf '\nSee \`nowhere.yaml\` for details.\n' >> README.md"
 
+discriminates "a stand-in answering a port no healthcheck asks for" \
+    "stub-answers-no-port-for-a-healthcheck" \
+    "sed -i.bak 's|^:8501 {|:9501 {|' test/stub.caddy"
+
+discriminates "a stand-in kept for a service that is gone" \
+    "stub-overlay-names-a-service-that-is-gone" \
+    "sed -i.bak 's|^  admin-portal:|  admin-portal-renamed:|' compose.yaml"
+
 
 install_walk_discriminates() {
     local description=$1 expected=$2 mutation=$3

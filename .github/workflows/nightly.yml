@@ -30,3 +30,15 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: ./test/database-restore.sh
+
+  # Belongs here for the reason above: it brings mongo, redis, step-ca and caddy
+  # up for real, and those four move without this repository changing. The price
+  # of the schedule is that a compose.yaml change which breaks the stack is found
+  # the next morning rather than on its own pull request.
+  stub-stack:
+    name: the stack comes up on public stand-ins
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: ./test/stub-stack.sh

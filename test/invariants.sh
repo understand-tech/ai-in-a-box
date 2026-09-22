@@ -472,6 +472,40 @@ compare_with_baseline() {
     printf ' — %s known issue(s) accepted in the baseline\n' "$(printf '%s\n' "$baseline" | grep -c . || true)"
 }
 
+services_the_stub_overlay_replaces() {
+    awk '/^  [a-z][a-z-]*:$/ { svc=$1; sub(":","",svc) }
+         /STUB_IMAGE/ && svc { print svc; svc="" }' "$REPO_ROOT/test/compose.stub.yaml" 2>/dev/null
+}
+
+ports_a_healthcheck_asks_for() {
+    awk -v want="$1" '
+        /^  [a-z][a-z-]*:$/ { svc=$1; sub(":","",svc); inblock=(svc==want) }
+        inblock && /test:/ { print }
+    ' "$REPO_ROOT/compose.yaml" | grep -oE '(localhost|127\.0\.0\.1):[0-9]+' | cut -d: -f2 | sort -u
+}
+
+# A stand-in that answers a port the real service no longer uses passes its
+# healthcheck and proves nothing. This is what keeps test/stub.caddy honest when
+# compose.yaml moves: the overlay is a second description of the same services,
+# and a second description nobody compares is how the two drift apart.
+check_the_stub_overlay_still_matches_the_services() {
+    [[ -f "$REPO_ROOT/test/compose.stub.yaml" ]] || return 0
+
+    local service port
+    for service in $(services_the_stub_overlay_replaces); do
+        if ! grep -qE "^  ${service}:$" "$REPO_ROOT/compose.yaml"; then
+            report "stub-overlay-names-a-service-that-is-gone" \
+                "test/compose.stub.yaml replaces '${service}', which compose.yaml no longer declares"
+            continue
+        fi
+        for port in $(ports_a_healthcheck_asks_for "$service"); do
+            grep -qE "^:${port}( |\{)" "$REPO_ROOT/test/stub.caddy" 2>/dev/null && continue
+            report "stub-answers-no-port-for-a-healthcheck" \
+                "${service} is healthchecked on port ${port}, which test/stub.caddy does not listen on"
+        done
+    done
+}
+
 main() {
     check_plaintext_secrets
     check_release_env_ships_no_secret
@@ -490,6 +524,7 @@ main() {
     check_images_are_pinned
     check_production_defaults
     check_documented_paths_exist
+    check_the_stub_overlay_still_matches_the_services
     compare_with_baseline
 }
 
