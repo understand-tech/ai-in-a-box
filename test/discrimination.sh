@@ -553,6 +553,10 @@ fi
         "the flag writes a configuration that asks docker for no GPU" \
         "sed -i.bak 's|^    \$NO_GPU && write_the_settings_a_machine_without_an_accelerator_needs.*|    :|' ut-install"
 
+    install_walk_discriminates "an address prepared in local.env read too late to count" \
+        "it stays quiet when the address already names another machine" \
+        "sed -i.bak '/local.env\" VLLM_LLM_BASE_URL/d' ut-install"
+
     install_walk_discriminates "an inference address left pointing at a service nothing starts" \
         "it says the inference address still points at nothing" \
         "sed -i.bak 's|^    if the_inference_url_names_a_service_this_machine_will_not_run; then|    if false; then|' ut-install"

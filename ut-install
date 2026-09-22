@@ -813,7 +813,12 @@ INTERNAL_INFERENCE_HOST=""
 # summary would otherwise announce it as the source of inference.
 the_inference_url_names_a_service_this_machine_will_not_run() {
     local url host
+    # Read in the order render_settings resolves them, and local.env before the
+    # release: on a first install .env does not exist yet, and an operator who
+    # prepared local.env beforehand would otherwise be told their address is the
+    # dead default.
     url=$(env_get "$INSTALL_DIR/.env" VLLM_LLM_BASE_URL 2>/dev/null || true)
+    [[ -n "$url" ]] || url=$(env_get "$(settings_directory "$INSTALL_DIR/.env")/local.env" VLLM_LLM_BASE_URL 2>/dev/null || true)
     [[ -n "$url" ]] || url=$(release_declares VLLM_LLM_BASE_URL || true)
     host=${url#*://}; host=${host%%/*}; host=${host%%:*}
     INTERNAL_INFERENCE_HOST="$host"

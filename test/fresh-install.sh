@@ -150,6 +150,10 @@ state_setup() {
             echo 'rm -f /stub/nvidia-smi && install -d -m 750 /etc/understandtech && printf '"'"'COMPOSE_FILE="compose.yaml:compose.no-gpu.yaml"\n'"'"' > /etc/understandtech/.env' ;;
         no_accelerator_undeclared|no_accelerator_by_flag)
             echo 'rm -f /stub/nvidia-smi' ;;
+        # local.env written before the first install, the way the warning itself
+        # tells an operator to write it.
+        no_accelerator_pointed_at_a_real_machine)
+            echo 'rm -f /stub/nvidia-smi && install -d -m 750 /etc/understandtech && printf '"'"'VLLM_LLM_BASE_URL="https://inference.example.test/v1"\n'"'"' > /etc/understandtech/local.env' ;;
         # A release dated in the future is the same arithmetic as a clock in the
         # past, and it needs no stub around date, which everything else uses.
         clock_before_the_release)
@@ -349,6 +353,15 @@ the_install_says_the_inference_url_points_nowhere() {
     return 1
 }
 
+the_install_says_nothing_when_the_address_is_already_set() {
+    local output
+    output=$(output_of no_accelerator_pointed_at_a_real_machine)
+    grep -q 'Writing the configuration' <<< "$output" \
+        && ! grep -q 'still names' <<< "$output" && return 0
+    echo "$output"
+    return 1
+}
+
 # The engines account for 43.1 GB of the 55.29 GB measured on a box in service.
 # A machine that serves none of it should not be turned away over the storage
 # they would have taken.
@@ -495,6 +508,7 @@ run_install_from_state no_accelerator_undeclared
 DISK_AVAIL_BYTES=$((91 * 1000 * 1000 * 1000)) \
     run_install_from_state no_accelerator_on_a_smaller_disk
 INSTALL_COMMAND="ut-install --no-gpu" run_install_from_state no_accelerator_by_flag
+INSTALL_COMMAND="ut-install --no-gpu" run_install_from_state no_accelerator_pointed_at_a_real_machine
 
 printf '%sA machine with nothing on it%s\n' "$BOLD" "$NC"
 property "the install reaches the point where it pulls images" \
@@ -550,6 +564,8 @@ property "the flag writes a configuration that asks docker for no GPU" \
     the_flag_writes_a_configuration_that_asks_for_no_gpu
 property "it says the inference address still points at nothing" \
     the_install_says_the_inference_url_points_nowhere
+property "it stays quiet when the address already names another machine" \
+    the_install_says_nothing_when_the_address_is_already_set
 
 printf '\n%sAn install that still lives in a git checkout%s\n' "$BOLD" "$NC"
 property "its settings are carried over, not regenerated" \
