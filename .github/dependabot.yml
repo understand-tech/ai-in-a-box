@@ -1,0 +1,25 @@
+version: 2
+
+# Dependabot reads this file from the default branch and nowhere else, which is
+# why it sits on main. The second block is the one that matters: it targets
+# 2026-Q4, where the workflows that pin actions by digest actually live. The
+# first keeps this branch's own nightly.yml from drifting.
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "2026-Q4"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions:
+        patterns:
+          - "*"
