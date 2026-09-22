@@ -163,6 +163,12 @@ discriminates "an image named by a tag the registry can repoint" \
     "unpinned-image:NIM_IMAGE" \
     "sed -i.bak 's|^NIM_IMAGE=.*|NIM_IMAGE=\"ghcr.io/understand-tech/nim/nvidia/model-free-nim:2.0.9\"|' release.env"
 
+if grep -q 'check_every_setting_reaches_something' "$REPO_ROOT/test/invariants.sh"; then
+    discriminates "a setting the stack never reads" \
+        "setting-reaches-nothing:DEAD_SETTING" \
+        "printf 'DEAD_SETTING=\"nothing reads this\"\n' >> release.env"
+fi
+
 discriminates "a documented path that does not exist" \
     "missing-documented-path:nowhere.yaml" \
     "printf '\nSee \`nowhere.yaml\` for details.\n' >> README.md"

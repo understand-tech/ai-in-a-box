@@ -243,6 +243,39 @@ check_the_first_backup_is_not_deferred_to_a_clock_time() {
         "the database backup defaults to ${begin}, a time of day: nothing is backed up before it comes, and the health check that looks for an archive cannot pass until then"
 }
 
+# A setting nothing interpolates reaches nothing. No compose file declares an
+# env_file, so a value that is neither a render-time substitution nor an entry in
+# an environment: block cannot travel to a container — whatever the image's code
+# does with the name. Measured on 2026-09-21: release.env read
+# AGENT_MAX_OUTPUT_TOKENS=24576 while the App Builder received 8192, thirty lines
+# above under another name.
+SETTINGS_READ_OUTSIDE_THE_STACK=(
+    COMPOSE_FILE COMPOSE_PROFILES COMPOSE_PROJECT_NAME
+    UT_RELEASE_VERSION UT_RELEASE_BUILT_AT
+)
+
+check_every_setting_reaches_something() {
+    local key name exempt interpolated
+    # The Caddyfile spells it {$VAR} and compose ${VAR}, and the overlays count
+    # too: a setting used only by compose.compute.yaml is not dead.
+    interpolated=$( {
+        grep -ohE '\$\{[A-Za-z_][A-Za-z0-9_]*' "$REPO_ROOT"/compose*.yaml 2>/dev/null | tr -d '${'
+        grep -ohE '\{\$[A-Za-z_][A-Za-z0-9_]*' "$REPO_ROOT/Caddyfile" "$REPO_ROOT"/caddy/*.caddy 2>/dev/null | tr -d '{$'
+    } | sort -u )
+
+    while read -r key; do
+        [[ -n "$key" ]] || continue
+        exempt=0
+        for name in "${SETTINGS_READ_OUTSIDE_THE_STACK[@]}"; do
+            [[ "$key" == "$name" ]] && exempt=1
+        done
+        (( exempt == 0 )) || continue
+        grep -qx "$key" <<< "$interpolated" && continue
+        report "setting-reaches-nothing:${key}" \
+            "release.env declares ${key} and nothing interpolates it — the value cannot travel to any container"
+    done <<< "$(env_keys)"
+}
+
 check_defaults_do_not_diverge() {
     local key defaults count
     while read -r key; do
@@ -447,6 +480,7 @@ main() {
     check_no_service_starts_slower_than_the_installer_waits
     check_every_service_declares_its_role
     check_the_first_backup_is_not_deferred_to_a_clock_time
+    check_every_setting_reaches_something
     check_defaults_do_not_diverge
     check_required_variables_appear_in_the_template
     check_required_variables_have_a_value_or_are_generated
