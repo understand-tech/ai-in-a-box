@@ -553,6 +553,10 @@ fi
         "the flag writes a configuration that asks docker for no GPU" \
         "sed -i.bak 's|^    \$NO_GPU && write_the_settings_a_machine_without_an_accelerator_needs.*|    :|' ut-install"
 
+    capability_discriminates "a status tool that calls an empty directory healthy" \
+        "a directory with no install is refused, not called healthy" \
+        "sed -i.bak 's|^    \[\[ -f \"\$INSTALL_DIR/compose.yaml\" \]\].*|    :|' ut-status"
+
     install_walk_discriminates "an address prepared in local.env read too late to count" \
         "it stays quiet when the address already names another machine" \
         "sed -i.bak '/local.env\" VLLM_LLM_BASE_URL/d' ut-install"
