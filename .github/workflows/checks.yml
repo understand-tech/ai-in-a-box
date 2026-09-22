@@ -8,17 +8,39 @@ on:
 permissions:
   contents: read
 
+# Every suite runs twice: once on x86-64 and once on arm64, which is the only
+# architecture the product ships. Until now nothing exercised it.
+#
+# Branch protection requires three of these checks by their exact name, so the
+# x86 leg keeps the bare name it had before the matrix existed. Renaming it
+# would leave a pull request waiting forever on a check that no longer reports.
 jobs:
   invariants:
-    name: repository invariants
-    runs-on: ubuntu-24.04
+    name: repository invariants${{ matrix.suffix }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            suffix: ""
+          - runner: ubuntu-24.04-arm
+            suffix: " on arm64"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: ./test/invariants.sh
 
   capabilities:
-    name: capabilities
-    runs-on: ubuntu-24.04
+    name: capabilities${{ matrix.suffix }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            suffix: ""
+          - runner: ubuntu-24.04-arm
+            suffix: " on arm64"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: ./test/capabilities.sh
@@ -27,15 +49,31 @@ jobs:
   # front door is caddy:2-alpine — public — and stubs answer for the eight
   # upstreams. The application images stay out of reach of any runner.
   ingress:
-    name: the front door actually serves
-    runs-on: ubuntu-24.04
+    name: the front door actually serves${{ matrix.suffix }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            suffix: ""
+          - runner: ubuntu-24.04-arm
+            suffix: " on arm64"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: ./test/ingress.sh
 
   migration:
-    name: an existing install survives the upgrade
-    runs-on: ubuntu-24.04
+    name: an existing install survives the upgrade${{ matrix.suffix }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            suffix: ""
+          - runner: ubuntu-24.04-arm
+            suffix: " on arm64"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
