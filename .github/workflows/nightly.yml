@@ -20,10 +20,21 @@ permissions:
   packages: read
 
 jobs:
+  # Both architectures, because one of these checks fails here and passes on an
+  # arm64 laptop, and a single runner cannot tell which half of that difference
+  # matters — the architecture, or the runner.
   machine-identity:
-    name: machine identity holds offline
-    runs-on: ubuntu-24.04
+    name: machine identity holds offline${{ matrix.suffix }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            suffix: ""
+          - runner: ubuntu-24.04-arm
+            suffix: " on arm64"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: ./test/machine-identity.sh
