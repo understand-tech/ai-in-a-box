@@ -45,11 +45,13 @@ fi
 
 property() {
     local description=$1; shift
-    if "$@" >/dev/null 2>&1; then
+    local output
+    if output=$("$@" 2>&1); then
         printf '  %s✔%s %s\n' "$GREEN" "$NC" "$description"
         PASSED=$((PASSED + 1))
     else
         printf '  %s✘%s %s\n' "$RED" "$NC" "$description"
+        printf '%s      %s%s\n' "$DIM" "${output//$'\n'/$'\n'      }" "$NC"
         FAILED=$((FAILED + 1))
     fi
 }
