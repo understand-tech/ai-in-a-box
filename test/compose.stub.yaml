@@ -1,0 +1,63 @@
+# Public stand-ins for the ten private images, so the stack can be brought up to
+# healthy without a registry token. Everything that is already public stays
+# real: mongodb, redis, caddy, step-ca and restic are the ones whose behaviour
+# the lifecycle depends on.
+#
+# The healthchecks are NOT overridden here. caddy:2-alpine carries curl, so
+# compose.yaml's own `test:` lines run unchanged against a port that really
+# answers. A stub that passed by having its check replaced would prove nothing.
+#
+# It lives under test/ rather than at the root because packaging/build-deb.sh
+# installs compose*.yaml into the package, and this file has no business on a
+# customer machine.
+
+services:
+
+  api:
+    image: ${STUB_IMAGE:-caddy:2-alpine}
+    volumes:
+      - ./test/stub.caddy:/etc/caddy/Caddyfile:ro
+
+  api-customer:
+    image: ${STUB_IMAGE:-caddy:2-alpine}
+    volumes:
+      - ./test/stub.caddy:/etc/caddy/Caddyfile:ro
+
+  frontend:
+    image: ${STUB_IMAGE:-caddy:2-alpine}
+    volumes:
+      - ./test/stub.caddy:/etc/caddy/Caddyfile:ro
+
+  app-llms:
+    image: ${STUB_IMAGE:-caddy:2-alpine}
+    volumes:
+      - ./test/stub.caddy:/etc/caddy/Caddyfile:ro
+
+  app-assistants:
+    image: ${STUB_IMAGE:-caddy:2-alpine}
+    volumes:
+      - ./test/stub.caddy:/etc/caddy/Caddyfile:ro
+
+  admin-portal:
+    image: ${STUB_IMAGE:-caddy:2-alpine}
+    volumes:
+      - ./test/stub.caddy:/etc/caddy/Caddyfile:ro
+
+  # The workers carry no healthcheck: they are queue consumers, and what the
+  # lifecycle needs from them here is that they stay up without a private image.
+  workers:
+    image: ${STUB_IMAGE:-caddy:2-alpine}
+    command: ["sleep", "infinity"]
+
+  workers-customer:
+    image: ${STUB_IMAGE:-caddy:2-alpine}
+    command: ["sleep", "infinity"]
+
+  # Its healthcheck looks for an archive younger than two days, which a stub
+  # cannot produce and a fresh install does not have either. Nothing depends on
+  # it being healthy, so it is left out of the run rather than faked.
+  mongodb-backup:
+    profiles: ["not-in-the-stub-run"]
+
+  files-backup:
+    profiles: ["not-in-the-stub-run"]

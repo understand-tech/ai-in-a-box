@@ -1,0 +1,50 @@
+{
+	admin off
+	auto_https off
+	log {
+		output discard
+	}
+}
+
+# One file serves every stubbed service: each container listens on its own port
+# and ignores the blocks it was not given. The routes are the ones the real
+# healthchecks ask for, so compose.yaml's own `test:` lines are left untouched
+# and still have to pass.
+#
+# The catch-all answers 404, never 200, and `handle` keeps the blocks mutually
+# exclusive. A stand-in that said 200 to anything would keep passing after a
+# healthcheck moved to another path — the check would be green against a route
+# nothing serves.
+
+:8501 {
+	handle /api/docs {
+		respond "stub api" 200
+	}
+	handle /api/v3/docs {
+		respond "stub api-customer" 200
+	}
+	handle {
+		respond "no such route on this stand-in" 404
+	}
+}
+
+:80 {
+	handle /api/health {
+		respond "stub app" 200
+	}
+	handle / {
+		respond "stub frontend" 200
+	}
+	handle {
+		respond "no such route on this stand-in" 404
+	}
+}
+
+:8080 {
+	handle / {
+		respond "stub admin-portal" 200
+	}
+	handle {
+		respond "no such route on this stand-in" 404
+	}
+}
