@@ -11,24 +11,46 @@ on:
     - cron: '0 3 * * *'
   workflow_dispatch:
 
+# packages: read is what lets the automatic token pull the backup image, which
+# became private when it was republished under our own registry. No secret to
+# create: the package grants this repository read access, and GITHUB_TOKEN
+# carries it.
 permissions:
   contents: read
+  packages: read
 
 jobs:
+  # Both architectures, because one of these checks fails here and passes on an
+  # arm64 laptop, and a single runner cannot tell which half of that difference
+  # matters — the architecture, or the runner.
   machine-identity:
-    name: machine identity holds offline
-    runs-on: ubuntu-24.04
+    name: machine identity holds offline${{ matrix.suffix }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            suffix: ""
+          - runner: ubuntu-24.04-arm
+            suffix: " on arm64"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: ./test/machine-identity.sh
 
+  # arm64, because the backup image is. It was republished for the appliance,
+  # which is a DGX Spark, and only for that architecture — an x86 runner pulls
+  # it happily and then dies on "exec /init: exec format error".
   database-restore:
     name: database archives restore identically
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Sign in to the registry that holds the backup image
+        run: echo "${{ secrets.GITHUB_TOKEN }}" \
+          | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
       - run: ./test/database-restore.sh
 
   # Belongs here for the reason above: it brings mongo, redis, step-ca and caddy

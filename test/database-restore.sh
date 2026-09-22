@@ -3,7 +3,15 @@
 set -uo pipefail
 
 MONGO_IMAGE=$(grep -m1 -oE 'mongo:[0-9.]+' "$(dirname "${BASH_SOURCE[0]}")/../compose.yaml" || echo mongo:8.2)
-BACKUP_IMAGE=$(grep -m1 -oE 'tiredofit/db-backup:[0-9.]+' "$(dirname "${BASH_SOURCE[0]}")/../compose.yaml" || echo tiredofit/db-backup:4.1.100)
+# The release decides this image, and it stopped being an upstream name on
+# 2026-09-18 when Docker Hub withdrew every versioned tag of tiredofit/db-backup.
+# Grepping compose for that name then found nothing and this fell back to the tag
+# that no longer exists — and nothing said so, because this suite only runs from
+# the default branch, which was not this one until 2026-09-22. No fallback now:
+# a silent one is what hid eleven days of a dead check.
+BACKUP_IMAGE=$(sed -n 's/^DB_BACKUP_IMAGE="\(.*\)"$/\1/p' \
+    "$(dirname "${BASH_SOURCE[0]}")/../release.env" | head -1)
+[[ -n "$BACKUP_IMAGE" ]] || { echo ">>> release.env declares no DB_BACKUP_IMAGE" >&2; exit 1; }
 RUN=dbr-$$
 NET=$RUN-net
 SOURCE_NODE=$RUN-source
@@ -20,6 +28,18 @@ cleanup() {
 trap cleanup EXIT
 
 echo "images: $MONGO_IMAGE, $BACKUP_IMAGE"
+
+# The backup image became private on 2026-09-18. Saying so here turns "manifest
+# unknown" into the one sentence that names what is missing — this suite runs
+# where no registry login exists.
+if ! docker image inspect "$BACKUP_IMAGE" >/dev/null 2>&1 \
+    && ! docker pull "$BACKUP_IMAGE" >/dev/null 2>&1; then
+    echo ">>> FAILED: ${BACKUP_IMAGE} could not be pulled." >&2
+    echo ">>> It is private, and this run holds no registry credentials." >&2
+    echo ">>> The restore path is unverified until one is supplied." >&2
+    exit 1
+fi
+
 docker network create "$NET" >/dev/null
 docker volume create "$ARCHIVE_VOLUME" >/dev/null
 
