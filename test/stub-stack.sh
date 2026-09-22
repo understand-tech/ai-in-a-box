@@ -44,6 +44,7 @@ write_settings() {
     install -d "$WORK_DIR/data/ca/certs" "$WORK_DIR/data/app-data"
     cat > "$WORK_DIR/env" <<SETTINGS
 COMPOSE_PROJECT_NAME="$PROJECT"
+COMPOSE_PROFILES=""
 RESOURCE_PREFIX="$PROJECT"
 CONTAINER_PREFIX="$PROJECT"
 DATA_ROOT="$WORK_DIR/data"
@@ -69,13 +70,14 @@ WORKER_CUSTOMER_REPLICAS="1"
 SETTINGS
 }
 
-# Every compose invocation goes through here. Splitting them meant the settings
-# reached `up` and not `ps`, which reported a healthy service as missing — the
-# check failed while the stack was fine.
+# Every compose invocation goes through here, and --env-file is what makes it
+# safe to run anywhere: compose reads the project's own .env otherwise, and an
+# installed machine always has one. Ours carried COMPOSE_PROFILES="nim", so the
+# engines were started on a host with no GPU and the run died on
+# `could not select device driver "nvidia"`.
 compose_here() {
     ( cd "$REPO_ROOT" \
-        && env $(grep -v '^#' "$WORK_DIR/env" | tr -d '"' | xargs) \
-           docker compose -p "$PROJECT" $COMPOSE_ARGS "$@" )
+        && docker compose --env-file "$WORK_DIR/env" -p "$PROJECT" $COMPOSE_ARGS "$@" )
 }
 
 service_is_healthy() {
