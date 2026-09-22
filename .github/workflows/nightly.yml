@@ -1,0 +1,66 @@
+name: nightly
+
+# This file lives on main and tests 2026-Q4, which is deliberate and is the only
+# reason it exists here.
+#
+# A schedule only ever fires from the default branch. main is the default branch
+# and carries none of the code these checks exercise — no test/, no release.env,
+# no ut-install. Keeping the workflow here and checking out 2026-Q4 is what lets
+# the nightly keep running while the two branches stay separate.
+#
+# Scheduled rather than triggered by a push, because these are the checks that
+# can break without anyone changing this repository: they exercise upstream
+# images — mongo, db-backup, step-ca — which move on their own.
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+# packages: read is what lets the automatic token pull the backup image, which
+# became private when it was republished under our own registry. No secret to
+# create: the package grants this repository read access, and GITHUB_TOKEN
+# carries it.
+permissions:
+  contents: read
+  packages: read
+
+env:
+  TESTED_BRANCH: 2026-Q4
+
+jobs:
+  # Both architectures, because the recovery check once failed on a hosted
+  # runner and passed on an arm64 laptop, and a single runner cannot tell which
+  # half of that difference matters — the architecture, or the runner.
+  machine-identity:
+    name: machine identity holds offline${{ matrix.suffix }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            suffix: ""
+          - runner: ubuntu-24.04-arm
+            suffix: " on arm64"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TESTED_BRANCH }}
+      - run: ./test/machine-identity.sh
+
+  # arm64, because the backup image is. It was republished for the appliance,
+  # which is a DGX Spark, and only for that architecture — an x86 runner pulls
+  # it happily and then dies on "exec /init: exec format error".
+  database-restore:
+    name: database archives restore identically
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TESTED_BRANCH }}
+      - name: Sign in to the registry that holds the backup image
+        run: echo "${{ secrets.GITHUB_TOKEN }}" \
+          | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - run: ./test/database-restore.sh
