@@ -234,25 +234,33 @@ a_backed_up_root_survives_the_machine() {
     token=$(docker exec "$SPARE_CA" step ca token node --provisioner admin --password-file /tmp/p 2>/dev/null | tail -1)
     spare_client 'step ca certificate node /certs/node.crt /certs/node.key --token "$TOKEN" \
         && chmod 644 /certs/node.crt /certs/node.key' -e TOKEN="$token" >/dev/null 2>&1
-    spare_node_renews >/dev/null 2>&1 || return 1
+    spare_node_renews >/dev/null 2>&1 \
+        || { echo "the spare node could not renew before anything was backed up"; return 1; }
 
     before=$(docker run --rm -v "$SPARE_ROOT":/ca:ro alpine:3 cksum /ca/certs/root_ca.crt | cut -d' ' -f1)
 
     restic_on_spare init >/dev/null 2>&1
-    restic_on_spare backup /work/ca --quiet >/dev/null 2>&1 || return 1
+    restic_on_spare backup /work/ca --quiet >/dev/null 2>&1 \
+        || { echo "restic could not back the authority up"; return 1; }
 
     docker rm -f "$SPARE_CA" >/dev/null 2>&1
     docker run --rm -v "$SPARE_WORK":/w alpine:3 sh -c 'rm -rf /w/ca' >/dev/null 2>&1
-    [[ -e "$SPARE_ROOT/config/ca.json" ]] && return 1
+    if [[ -e "$SPARE_ROOT/config/ca.json" ]]; then
+        echo "the authority was still on disk after being removed, so restoring it would prove nothing"
+        return 1
+    fi
 
     restic_on_spare restore latest --target / --quiet >/dev/null 2>&1
-    [[ -e "$SPARE_ROOT/config/ca.json" ]] || return 1
+    [[ -e "$SPARE_ROOT/config/ca.json" ]] \
+        || { echo "restic restored nothing: ${SPARE_ROOT}/config/ca.json is absent"; return 1; }
 
     spare_authority_starts
     after=$(docker run --rm -v "$SPARE_ROOT":/ca:ro alpine:3 cksum /ca/certs/root_ca.crt | cut -d' ' -f1)
-    [[ "$before" == "$after" ]] || return 1
+    [[ "$before" == "$after" ]] \
+        || { echo "the root came back changed: ${before} before, ${after} after"; return 1; }
 
-    spare_node_renews
+    spare_node_renews \
+        || { echo "the restored authority refuses to renew a certificate it had issued"; return 1; }
 }
 
 echo "Machine identity"
