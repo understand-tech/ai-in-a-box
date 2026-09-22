@@ -774,6 +774,26 @@ step_configure() {
     log_info "Data directories ready under ${DATA_DIR}"
 }
 
+# The platform's API builds its OpenAI client while it loads its modules, from
+# OA_KEY, so an empty value is an exception rather than a disabled feature: the
+# container restarts forever and the eight services that depend on it never
+# start. Measured on a bare install, 2026-09-21 — thirty-five restarts before
+# anyone read far enough up the Python traceback to find the name.
+#
+# A warning and not a refusal. This installer cannot know whether a later
+# release still carries that, and refusing an install that would have worked is
+# worse than a sentence nobody needed.
+say_what_the_platform_will_not_start_without() {
+    local env_file="$INSTALL_DIR/.env" local_file
+    [[ -n "$(env_get "$env_file" OA_KEY 2>/dev/null || true)" ]] && return 0
+    local_file="$(settings_directory "$env_file")/local.env"
+    log_warn "OA_KEY has no value. The platform API builds an OpenAI client as it"
+    log_warn "  loads, so it will restart in a loop and everything waiting on it"
+    log_warn "  will stay down. Any non-empty value is enough — the client is"
+    log_warn "  built here, never called:"
+    log_warn "    echo 'OA_KEY=\"not-configured\"' | sudo tee -a ${local_file}"
+}
+
 step_check_resolution() {
     log_step "Checking how ${DOMAIN} resolves"
 
@@ -1116,6 +1136,7 @@ main() {
     step_registry_login
     step_fetch_repo
     step_configure
+    say_what_the_platform_will_not_start_without
     step_check_resolution
     step_docker_group
     step_certificate_authority_root

@@ -277,6 +277,18 @@ the_preflight_stops_on_a_disk_too_small() {
     return 1
 }
 
+# The name in the Python traceback is OPENAI_API_KEY, which exists nowhere in
+# this appliance. Saying OA_KEY before the pull is the difference between one
+# sentence and eight minutes of reading container logs.
+the_install_names_what_would_keep_the_platform_down() {
+    local output
+    output=$(output_of bare)
+    grep -q 'OA_KEY has no value' <<< "$output" \
+        && grep -q 'restart in a loop' <<< "$output" && return 0
+    echo "$output"
+    return 1
+}
+
 the_preflight_stops_on_a_clock_before_the_release() {
     local output
     output=$(output_of clock_before_the_release)
@@ -308,10 +320,13 @@ an_install_that_worked_says_so() {
     return 1
 }
 
+# Matching the path alone was not enough: any message naming local.env satisfied
+# it, and the preflight gained one. What this property means is that the run with
+# no terminal said where the secrets went, so it asks for that sentence.
 the_secrets_are_findable_without_a_terminal() {
     local output
     output=$(output_of install_runs_through)
-    grep -qi 'local.env' <<< "$output" && return 0
+    grep -q 'The secrets are in' <<< "$output" && return 0
     echo "nothing told the operator where the secrets are"
     return 1
 }
@@ -420,6 +435,9 @@ property "what it wrote renders a stack" \
     the_settings_render_a_stack bare
 property "the secrets are not the ones the template ships" \
     secrets_are_not_the_shipped_ones bare
+
+property "it names the setting the platform will not start without" \
+    the_install_names_what_would_keep_the_platform_down
 
 printf '\n%sA settings file that exists but says nothing%s\n' "$BOLD" "$NC"
 property "it is filled rather than kept" \
