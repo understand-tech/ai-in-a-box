@@ -1228,6 +1228,38 @@ if [[ -f "$REPO_ROOT/backup-files.sh" ]]; then
         the_database_leaves_the_machine_with_the_files
 fi
 
+# A status tool that says nothing is wrong when there is nothing to check is
+# worse than none: it would answer "serving" on a machine that was never
+# installed.
+ut_status_refuses() {
+    local dir=$1 expected=$2 output
+    output=$( "$REPO_ROOT/ut-status" --dir "$dir" 2>&1 ) && return 1
+    grep -q "$expected" <<< "$output" && return 0
+    echo "$output"
+    return 1
+}
+
+a_directory_with_no_install_is_refused() {
+    local dir
+    dir=$(mktemp -d)
+    ut_status_refuses "$dir" "No install in"
+}
+
+an_install_that_was_never_configured_is_refused() {
+    local dir
+    dir=$(mktemp -d)
+    cp "$REPO_ROOT/compose.yaml" "$dir/"
+    ut_status_refuses "$dir" "was it ever installed"
+}
+
+if [[ -x "$REPO_ROOT/ut-status" ]]; then
+    group "Telling whether an install serves"
+    capability "a directory with no install is refused, not called healthy" \
+        a_directory_with_no_install_is_refused
+    capability "an install that was never configured is refused" \
+        an_install_that_was_never_configured_is_refused
+fi
+
 printf '\n%s%d verified%s' "$GREEN" "$PASSED" "$NC"
 if (( FAILED )); then
     printf ', %s%d failing%s\n' "$RED" "$FAILED" "$NC"

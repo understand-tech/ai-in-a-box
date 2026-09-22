@@ -29,7 +29,7 @@ fresh_copy() {
     mkdir -p "$COPY"
     ( cd "$REPO_ROOT" && tar -cf - release.env compose.yaml compose.appbuilder.yaml \
         compose.compute.yaml compose.no-gpu.yaml Caddyfile caddy backup-files.sh \
-        setup-autostart.sh ut-logs-archive ut-install ut-certificate ut-verify appbuilder docs \
+        setup-autostart.sh ut-logs-archive ut-install ut-certificate ut-verify ut-status appbuilder docs \
         packaging README.md test .github 2>/dev/null ) | tar -xf - -C "$COPY" 2>/dev/null
 }
 
@@ -552,6 +552,10 @@ fi
     install_walk_discriminates "an accelerator waived without the settings that follow" \
         "the flag writes a configuration that asks docker for no GPU" \
         "sed -i.bak 's|^    \$NO_GPU && write_the_settings_a_machine_without_an_accelerator_needs.*|    :|' ut-install"
+
+    capability_discriminates "a status tool that calls an empty directory healthy" \
+        "a directory with no install is refused, not called healthy" \
+        "sed -i.bak 's|^    \[\[ -f \"\$INSTALL_DIR/compose.yaml\" \]\].*|    :|' ut-status"
 
     install_walk_discriminates "an address prepared in local.env read too late to count" \
         "it stays quiet when the address already names another machine" \

@@ -211,12 +211,26 @@ terminal.
 ## 7 · Verify
 
 ```bash
-cd /usr/share/understandtech
-docker compose ps
+sudo ut-status
 ```
 
-Every service should read `healthy`. Then open `https://<your-domain>` and sign
-in with the admin password.
+It reports every service, asks each public surface on this machine, and says
+where the inference comes from. It exits non-zero when a service is unhealthy or
+a surface does not answer, so it can be called from cron or a check.
+
+```text
+==> Services
+[ ok ] every service is healthy or running
+
+==> Surfaces, asked on this machine
+[ ok ] https://box.example/
+[ ok ] https://admin.box.example/
+...
+
+[ ok ] The install is serving on https://box.example
+```
+
+Then open `https://<your-domain>` and sign in with the admin password.
 
 In the default TLS mode the browser warns on first visit: the certificate is
 signed by an authority only this machine knows. That is expected — see
