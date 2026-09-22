@@ -223,6 +223,13 @@ restic_on_spare() {
         "$RESTIC_IMAGE" "$@"
 }
 
+# Read through a container, like every other read of this tree. The host-side
+# test this replaces called config/ca.json absent on both hosted runners and
+# present on a laptop, on the same commit.
+the_authority_is_on_disk() {
+    docker run --rm -v "$SPARE_WORK":/w alpine:3 sh -c 'test -e /w/ca/config/ca.json'
+}
+
 a_backed_up_root_survives_the_machine() {
     local token before after
     mkdir -p "$SPARE_ROOT" && chmod 777 "$SPARE_ROOT"
@@ -247,14 +254,15 @@ a_backed_up_root_survives_the_machine() {
 
     docker rm -f "$SPARE_CA" >/dev/null 2>&1
     docker run --rm -v "$SPARE_WORK":/w alpine:3 sh -c 'rm -rf /w/ca' >/dev/null 2>&1
-    if [[ -e "$SPARE_ROOT/config/ca.json" ]]; then
+    if the_authority_is_on_disk; then
         echo "the authority was still on disk after being removed, so restoring it would prove nothing"
         return 1
     fi
 
-    restic_on_spare restore latest --target / --quiet >/dev/null 2>&1
-    [[ -e "$SPARE_ROOT/config/ca.json" ]] \
-        || { echo "restic restored nothing: ${SPARE_ROOT}/config/ca.json is absent"; return 1; }
+    restic_on_spare restore latest --target / --quiet \
+        || { echo "restic refused to restore the snapshot it had just written"; return 1; }
+    the_authority_is_on_disk \
+        || { echo "restic restored nothing: ca/config/ca.json is absent under ${SPARE_WORK}"; return 1; }
 
     spare_authority_starts
     after=$(docker run --rm -v "$SPARE_ROOT":/ca:ro alpine:3 cksum /ca/certs/root_ca.crt | cut -d' ' -f1)
