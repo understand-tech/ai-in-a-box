@@ -450,6 +450,10 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
 
     # The clock check reads one value out of release.env. Make that read fail and
     # it skips in silence, which is the shape the defect would really take.
+    install_walk_discriminates "an install that lets the operator find out from a traceback" \
+        "it names the setting the platform will not start without" \
+        "sed -i.bak 's|^say_what_the_platform_will_not_start_without() {\$|say_what_the_platform_will_not_start_without() { return 0;|' ut-install"
+
     install_walk_discriminates "a clock nothing compares to anything" \
         "the preflight stops rather than issue certificates nothing will accept" \
         "sed -i.bak 's|^release_declares() {\$|release_declares() { return 1;|' ut-install"
