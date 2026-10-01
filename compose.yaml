@@ -620,7 +620,7 @@ services:
       - HF_TOKEN=${HF_TOKEN:-${HF_API_TOKEN:-}}
       - NIM_MODEL_PATH=${NIM_VLM_MODEL_PATH:-hf://Qwen/Qwen3-VL-4B-Instruct}
       - NIM_SERVED_MODEL_NAME=${VLM_MODEL:-Qwen/Qwen3-VL-4B-Instruct}
-      - NIM_PASSTHROUGH_ARGS=${NIM_VLM_PASSTHROUGH_ARGS:---gpu-memory-utilization 0.25 --max-model-len 8192}
+      - NIM_PASSTHROUGH_ARGS=${NIM_VLM_PASSTHROUGH_ARGS:---gpu-memory-utilization 0.25 --max-model-len 16384}
     ports:
       - "127.0.0.1:8002:8000"
     volumes:
