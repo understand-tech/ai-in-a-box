@@ -1,0 +1,318 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PACKAGE_SHARE_DIR="/usr/share/understandtech"
+INSTALL_DIR="${UT_INSTALL_DIR:-}"
+OUT_DIR="$PWD"
+DAYS=30
+SCHEMA=1
+
+if [[ -t 1 ]]; then
+    RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'; BOLD=$'\033[1m'; NC=$'\033[0m'
+else
+    RED=""; GREEN=""; YELLOW=""; BOLD=""; NC=""
+fi
+
+log_info()  { printf '%s[ ok ]%s %s\n' "$GREEN" "$NC" "$*"; }
+log_warn()  { printf '%s[warn]%s %s\n' "$YELLOW" "$NC" "$*"; }
+log_error() { printf '%s[fail]%s %s\n' "$RED" "$NC" "$*" >&2; }
+
+usage() {
+    cat <<'EOF'
+ut-report — writes what this machine can say about its own load, for us to size it.
+
+  sudo ut-report                 the last 30 days, written in the current directory
+  sudo ut-report --days 7        a shorter window
+  sudo ut-report --out /media/usb
+
+It writes a directory holding report.json, MANIFEST.txt and SHA256SUMS. Read the
+manifest before sending it: it says what the report holds and what it never
+holds. Nothing is sent anywhere; the directory is yours to pass on.
+
+Options
+  --dir PATH     Install directory. Defaults to /usr/share/understandtech when
+                 installed from the package, the script's directory otherwise.
+  --days N       Hours covered, counted back from now, in days (default: 30).
+  --out PATH     Where the report directory is written (default: here).
+  -h, --help     This message.
+EOF
+}
+
+resolve_install_dir() {
+    [[ -n "$INSTALL_DIR" ]] && return 0
+    if [[ -f "$PACKAGE_SHARE_DIR/compose.yaml" ]]; then
+        INSTALL_DIR="$PACKAGE_SHARE_DIR"
+    else
+        INSTALL_DIR="$SCRIPT_DIR"
+    fi
+}
+
+env_get() {
+    local file=$1 key=$2 line
+    line=$(grep -m1 -E "^${key}=" "$file" 2>/dev/null) || return 1
+    line=${line#*=}; line=${line%\"}; line=${line#\"}
+    printf '%s' "$line"
+}
+
+compose_here() { ( cd "$INSTALL_DIR" && docker compose "$@" ); }
+
+data_root() {
+    local root
+    root=$(env_get "$INSTALL_DIR/.env" DATA_ROOT || true)
+    printf '%s' "${root:-/var/lib/understandtech}"
+}
+
+# Drawn once and kept: it lets us tell two reports from the same machine apart
+# without the report naming the customer.
+install_id() {
+    local file
+    file="$(data_root)/install-id"
+    if [[ ! -s "$file" ]]; then
+        mkdir -p "$(dirname "$file")"
+        od -An -tx1 -N 16 /dev/urandom | tr -d ' \n' > "$file"
+    fi
+    cat "$file"
+}
+
+urlencode() {
+    local string=$1 i char encoded=""
+    for (( i = 0; i < ${#string}; i++ )); do
+        char=${string:i:1}
+        case "$char" in
+            [a-zA-Z0-9._~-]) encoded+=$char ;;
+            *) encoded+=$(printf '%%%02X' "'$char") ;;
+        esac
+    done
+    printf '%s' "$encoded"
+}
+
+# The recorder publishes no port, so it is asked from inside its own container.
+ask_the_recorder() {
+    compose_here exec -T metrics wget -qO- "http://localhost:9090/api/v1/$1" 2>/dev/null
+}
+
+engines_recorded() {
+    ask_the_recorder "query?query=$(urlencode 'count by (instance) (up{job="inference"} == 1)')" \
+        | grep -oE '"instance":"[^"]+"' | cut -d'"' -f4 | sort -u
+}
+
+# One "hour value" line per hour of the window, the hour as a Unix timestamp.
+hourly() {
+    local query=$1 end start
+    end=$(date +%s); end=$(( end - end % 3600 )); start=$(( end - DAYS * 86400 ))
+    ask_the_recorder "query_range?query=$(urlencode "$query")&start=${start}&end=${end}&step=3600" \
+        | grep -oE '\[[0-9.]+,"[^"]*"\]' | tr -d '[]"' | tr ',' ' ' | awk '{ printf "%d %s\n", $1, $2 }'
+}
+
+# One service at a time: compose refuses the whole list when one name in it is
+# not declared, and an empty answer would then read as no engine at all.
+an_engine_runs_here() {
+    local engine
+    for engine in nim-llm nim-vlm; do
+        [[ -n "$(compose_here ps -q "$engine" 2>/dev/null)" ]] && return 0
+    done
+    return 1
+}
+
+the_database_runs_here() {
+    [[ -n "$(compose_here ps -q mongodb 2>/dev/null)" ]]
+}
+
+# The platform keeps two records of who asked what: the gateway's, for the App
+# Builder and the API, and the chat's. Only the number of distinct people per
+# hour leaves the database container; who they are never does.
+users_by_hour() {
+    compose_here exec -T mongodb sh -c '
+        mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" \
+            --authenticationDatabase admin "$MONGO_INITDB_DATABASE" --eval "
+            const since = Date.now() / 1000 - '"$DAYS"' * 86400;
+            const people = {};
+            const seen = (seconds, who) => {
+                if (!who) return;
+                const hour = Math.floor(seconds / 3600) * 3600;
+                (people[hour] = people[hour] || new Set()).add(who);
+            };
+            db.gateway_usage.find({ ts: { \$gte: since } }, { _id: 0, ts: 1, user_email: 1 })
+                .forEach(d => seen(d.ts, d.user_email));
+            db.prompt_response_collector.find({ time: { \$gte: new Date(since * 1000) } }, { _id: 0, time: 1, user: 1 })
+                .forEach(d => seen(d.time.getTime() / 1000, d.user));
+            Object.keys(people).sort().forEach(h => print(h + \" \" + people[h].size));
+        "' 2>/dev/null
+}
+
+running_images() {
+    local id
+    while read -r id; do
+        [[ -n "$id" ]] || continue
+        docker inspect -f '{{index .Config.Labels "com.docker.compose.service"}} {{.Config.Image}}' "$id" 2>/dev/null
+    done <<< "$(compose_here ps -q 2>/dev/null)"
+}
+
+# Joined on the hour, since a series with nothing to say for an hour has no
+# point there at all: the four lists are not the same length.
+engine_hours() {
+    local engine=$1 dir=$2 field
+    for field in requests running_peak waiting_peak ttft_p95_s; do
+        [[ -s "$dir/$field" ]] || printf 'series-missing:%s:%s\n' "$engine" "$field" >> "$dir/warnings"
+    done
+    awk '
+        FNR == 1 { field = FILENAME; sub(".*/", "", field) }
+        { hours[$1] = 1; value[$1, field] = $2 }
+        END {
+            n = split("requests running_peak waiting_peak ttft_p95_s", fields, " ")
+            for (h in hours) {
+                line = "{\"hour\": " h
+                for (i = 1; i <= n; i++) {
+                    v = value[h, fields[i]]
+                    if (v == "" || v == "NaN" || v == "+Inf") v = "null"
+                    line = line ", \"" fields[i] "\": " v
+                }
+                print line "}"
+            }
+        }
+    ' "$dir/requests" "$dir/running_peak" "$dir/waiting_peak" "$dir/ttft_p95_s" | sort -t: -k2 -n | paste -sd, -
+}
+
+capacity_section() {
+    local work=$1 engine dir first=true selector engines
+    engines=$(engines_recorded || true)
+    if [[ -z "$engines" ]] && an_engine_runs_here; then
+        printf 'recorder-missing: an engine runs here and nothing recorded it\n' >> "$work/warnings"
+    fi
+    printf '['
+    while read -r engine; do
+        [[ -n "$engine" ]] || continue
+        dir="$work/$(printf '%s' "$engine" | tr -c 'a-zA-Z0-9\n' '_')"
+        mkdir -p "$dir"
+        selector="instance=\"${engine}\""
+        hourly "sum(increase(vllm:request_success_total{${selector}}[1h]))" > "$dir/requests"
+        hourly "max(max_over_time(vllm:num_requests_running{${selector}}[1h]))" > "$dir/running_peak"
+        hourly "max(max_over_time(vllm:num_requests_waiting{${selector}}[1h]))" > "$dir/waiting_peak"
+        hourly "histogram_quantile(0.95, sum by (le) (rate(vllm:time_to_first_token_seconds_bucket{${selector}}[1h])))" > "$dir/ttft_p95_s"
+        awk '{ s += $2 } END { print s + 0 }' "$dir/requests" >> "$work/requests_served"
+        $first || printf ', '
+        first=false
+        printf '{"engine": "%s", "hours": [%s]}' "$engine" "$(engine_hours "$engine" "$dir")"
+        cat "$dir/warnings" >> "$work/warnings" 2>/dev/null || true
+    done <<< "$engines"
+    printf ']'
+}
+
+users_section() {
+    local work=$1 lines
+    if ! the_database_runs_here; then
+        printf '[]'
+        return 0
+    fi
+    lines=$(users_by_hour || true)
+    if [[ -z "$lines" ]] && (( $(awk '{ s += $1 } END { print s + 0 }' "$work/requests_served" 2>/dev/null || echo 0) > 0 )); then
+        printf 'users-missing: the engines served requests and no user was counted\n' >> "$work/warnings"
+    fi
+    printf '['
+    printf '%s\n' "$lines" | awk 'NF == 2 { printf "%s{\"hour\": %d, \"users\": %d}", (n++ ? ", " : ""), $1, $2 }'
+    printf ']'
+}
+
+images_section() {
+    running_images | sort -u | awk 'NF == 2 { printf "%s{\"service\": \"%s\", \"image\": \"%s\"}", (n++ ? ", " : ""), $1, $2 }'
+}
+
+history_section() {
+    local history
+    history="$(data_root)/install-history.jsonl"
+    [[ -f "$history" ]] || return 0
+    paste -sd, - < "$history"
+}
+
+warnings_section() {
+    local work=$1
+    [[ -s "$work/warnings" ]] || return 0
+    sort -u "$work/warnings" | awk '{ gsub(/"/, ""); printf "%s\"%s\"", (n++ ? ", " : ""), $0 }'
+}
+
+write_manifest() {
+    local out=$1 id=$2 checksum=$3
+    cat > "$out/MANIFEST.txt" <<EOF
+UnderstandTech usage report
+Install ${id}, the last ${DAYS} days, written $(date -u '+%Y-%m-%d %H:%M UTC').
+
+What it holds
+  - per hour and per inference engine: requests served, the most requests
+    running and waiting at once, and the 95th percentile time to first token
+  - per hour: how many distinct people sent a request — a number, never who
+  - every run of ut-install and every ut-status verdict on this machine
+  - the release, and the image each service runs
+
+What it never holds
+  - no document, conversation, prompt, answer or extract of one
+  - no user name, e-mail address, API key or IP address
+  - no setting, password or secret, and not this machine's address
+
+Files
+  report.json  sha256 ${checksum}
+EOF
+}
+
+write_report() {
+    local out=$1 work id release capacity users checksum
+    work=$(mktemp -d)
+    id=$(install_id)
+    release=$(env_get "$INSTALL_DIR/release.env" UT_RELEASE_VERSION || true)
+    capacity=$(capacity_section "$work")
+    users=$(users_section "$work")
+    mkdir -p "$out"
+    {
+        printf '{\n'
+        printf '  "schema": %d,\n' "$SCHEMA"
+        printf '  "generated_at": "%s",\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+        printf '  "install_id": "%s",\n' "$id"
+        printf '  "window_days": %d,\n' "$DAYS"
+        printf '  "release": "%s",\n' "${release:-unstamped}"
+        printf '  "images": [%s],\n' "$(images_section)"
+        printf '  "capacity": %s,\n' "$capacity"
+        printf '  "users_by_hour": %s,\n' "$users"
+        printf '  "history": [%s],\n' "$(history_section)"
+        printf '  "warnings": [%s]\n' "$(warnings_section "$work")"
+        printf '}\n'
+    } > "$out/report.json"
+    checksum=$(openssl dgst -sha256 -r "$out/report.json" | cut -d' ' -f1)
+    printf '%s  report.json\n' "$checksum" > "$out/SHA256SUMS"
+    write_manifest "$out" "$id" "$checksum"
+    rm -rf "$work"
+}
+
+main() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --dir)     INSTALL_DIR="${2:?--dir needs a path}"; shift ;;
+            --days)    DAYS="${2:?--days needs a number}"; shift ;;
+            --out)     OUT_DIR="${2:?--out needs a path}"; shift ;;
+            -h|--help) usage; exit 0 ;;
+            *)         usage; exit 1 ;;
+        esac
+        shift
+    done
+    [[ "$DAYS" =~ ^[1-9][0-9]*$ ]] || { log_error "--days takes a whole number of days."; exit 1; }
+
+    resolve_install_dir
+    [[ -f "$INSTALL_DIR/compose.yaml" ]] || { log_error "No install in ${INSTALL_DIR}."; exit 1; }
+    [[ -f "$INSTALL_DIR/.env" ]] || { log_error "No configuration in ${INSTALL_DIR} — was it ever installed?"; exit 1; }
+
+    local out
+    out="${OUT_DIR}/ut-report-$(date -u '+%Y%m%dT%H%MZ')"
+    write_report "$out"
+
+    if grep -q '"warnings": \[\]' "$out/report.json"; then
+        log_info "Report written to ${out}"
+    else
+        log_warn "Report written to ${out}, with what it could not find listed under warnings:"
+        sed -n 's/.*"warnings": \[\(.*\)\]/\1/p' "$out/report.json" | tr ',' '\n' | sed 's/^ *"/  /; s/"$//'
+    fi
+    printf '%sRead %s/MANIFEST.txt before passing it on.%s\n' "$BOLD" "$out" "$NC"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

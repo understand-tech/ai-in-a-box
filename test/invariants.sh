@@ -400,6 +400,19 @@ check_the_package_ships_what_the_stack_mounts() {
     done
 }
 
+check_every_tool_ships() {
+    local builder="$REPO_ROOT/packaging/build-deb.sh" staged tool name
+    [[ -f "$builder" ]] || return 0
+    staged=$(sed -n '/^stage_commands()/,/^}/p' "$builder")
+    for tool in "$REPO_ROOT"/ut-*; do
+        [[ -f "$tool" && -x "$tool" ]] || continue
+        name=${tool##*/}
+        grep -qF "\$REPO_ROOT/${name}\"" <<< "$staged" && continue
+        report "tool-not-shipped:${name}" \
+            "${name} sits beside the other operator tools and build-deb.sh does not install it — a machine installed from the package does not have it"
+    done
+}
+
 check_images_are_pinned() {
     local key value
     while read -r key; do
@@ -574,6 +587,7 @@ main() {
     check_published_ports_are_allowed
     check_the_package_stamps_the_commit_it_was_built_from
     check_the_package_ships_what_the_stack_mounts
+    check_every_tool_ships
     check_images_are_pinned
     check_compose_images_are_pinned
     check_the_recorder_is_bounded

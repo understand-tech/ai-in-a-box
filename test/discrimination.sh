@@ -30,7 +30,7 @@ fresh_copy() {
     mkdir -p "$COPY"
     ( cd "$REPO_ROOT" && tar -cf - release.env compose.yaml compose.appbuilder.yaml \
         compose.compute.yaml compose.no-gpu.yaml Caddyfile caddy metrics backup-files.sh \
-        setup-autostart.sh ut-logs-archive ut-install ut-certificate ut-verify ut-status appbuilder docs \
+        setup-autostart.sh ut-logs-archive ut-install ut-certificate ut-verify ut-status ut-report appbuilder docs \
         packaging README.md test .github 2>/dev/null ) | tar -xf - -C "$COPY" 2>/dev/null
 }
 
@@ -176,6 +176,12 @@ if grep -q 'check_the_package_ships_what_the_stack_mounts' "$REPO_ROOT/test/inva
         "sed -i.bak '/REPO_ROOT\\/metrics/d' packaging/build-deb.sh"
 fi
 
+if grep -q 'check_every_tool_ships' "$REPO_ROOT/test/invariants.sh"; then
+    discriminates "an operator tool left out of the package" \
+        "tool-not-shipped:ut-report" \
+        "sed -i.bak '/REPO_ROOT\\/ut-report/d' packaging/build-deb.sh"
+fi
+
 discriminates "verbose logs in the template" \
     "verbose-log-level:LOG_LEVEL" \
     "sed -i.bak 's|^LOG_LEVEL=.*|LOG_LEVEL=\"DEBUG\"|' release.env"
@@ -302,6 +308,36 @@ if grep -q 'record_this_install' "$REPO_ROOT/ut-install"; then
     capability_discriminates "a status verdict nobody keeps" \
         "a status verdict is kept beside the installs" \
         "sed -i.bak '/keep_the_verdict \"/d' ut-status"
+fi
+
+if [[ -x "$REPO_ROOT/ut-report" ]]; then
+    capability_discriminates "a report written where nothing was installed" \
+        "a directory with no install gets no report" \
+        "sed -i.bak 's|^    \[\[ -f \"\$INSTALL_DIR/compose.yaml\" \]\].*|    :|' ut-report"
+
+    capability_discriminates "the recorder asked at an address it does not answer" \
+        "the report finds the engine the recorder holds" \
+        "sed -i.bak 's|\"query?query=|\"query=|' ut-report"
+
+    capability_discriminates "a report that names who asked" \
+        "the report holds no key outside its schema" \
+        "sed -i.bak 's|\"install_id\": \"%s\",|\"install_id\": \"%s\", \"user\": \"someone@example.com\",|' ut-report"
+
+    capability_discriminates "requests with nobody behind them, unremarked" \
+        "requests served with no user counted are flagged" \
+        "sed -i.bak '/users-missing:/d' ut-report"
+
+    capability_discriminates "a missing series reported as a quiet hour" \
+        "a series the recorder does not have is flagged" \
+        "sed -i.bak '/series-missing:/d' ut-report"
+
+    capability_discriminates "a stopped recorder reported as an idle machine" \
+        "an engine nobody recorded is flagged" \
+        "sed -i.bak '/recorder-missing:/d' ut-report"
+
+    capability_discriminates "a manifest that vouches for nothing" \
+        "the manifest carries the report's checksum" \
+        "sed -i.bak 's|sha256 \${checksum}|sha256 unknown|' ut-report"
 fi
 
 capability_discriminates "the authority root moved out of the backed-up path" \
