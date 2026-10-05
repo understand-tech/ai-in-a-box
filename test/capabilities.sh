@@ -1249,13 +1249,86 @@ an_install_that_was_never_configured_is_refused() {
     ut_status_refuses "$dir" "was it ever installed"
 }
 
+history_probe() {
+    local probe
+    probe=$(mktemp -d "$WORK_DIR/history.XXXXXX")
+    cp "$REPO_ROOT/compose.yaml" "$probe/"
+    printf 'UT_RELEASE_VERSION="2026.10.1+abc1234"\n' > "$probe/release.env"
+    printf 'DATA_ROOT="%s/data"\nCOMPOSE_PROJECT_NAME="history-probe"\n' "$probe" > "$probe/.env"
+    printf '%s' "$probe"
+}
+
+# Each value of exits is one run of the installer ending with that status, while
+# the step it had announced last was the one given.
+install_history_after() {
+    local probe=$1 exits=$2 step=$3
+    cat > "$probe/run.sh" <<EOF
+set +u
+UT_INSTALL_DIR="$probe" source "$REPO_ROOT/ut-install" >/dev/null 2>&1
+set +eE
+trap - ERR
+for status in $exits; do
+    ( trap record_this_install EXIT; log_step "$step" >/dev/null; exit "\$status" )
+done
+EOF
+    bash "$probe/run.sh" >/dev/null 2>&1
+    cat "$probe/data/install-history.jsonl" 2>/dev/null
+}
+
+the_installer_keeps_every_run_from_its_first_step() {
+    sed -n '/^main() {/,/^}/p' "$REPO_ROOT/ut-install" \
+        | sed -n '/start_logging/,/preflight/p' | grep -q 'trap record_this_install EXIT'
+}
+
+a_failed_install_is_kept_with_the_step_it_stopped_at() {
+    local history
+    history=$(install_history_after "$(history_probe)" 1 "Pulling images")
+    grep -q '"tool":"ut-install","outcome":"failed","step":"Pulling images","release":"2026.10.1+abc1234"' <<< "$history" \
+        && return 0
+    echo "${history:-no history written}"
+    return 1
+}
+
+a_second_install_is_added_after_the_first() {
+    local history
+    history=$(install_history_after "$(history_probe)" "1 0" "Starting the platform")
+    [[ $(grep -c '"tool":"ut-install"' <<< "$history") -eq 2 ]] \
+        && tail -1 <<< "$history" | grep -q '"outcome":"done","step":""' \
+        && return 0
+    echo "${history:-no history written}"
+    return 1
+}
+
+a_status_verdict_is_kept_beside_the_installs() {
+    local probe status expected history
+    probe=$(history_probe)
+    mkdir -p "$probe/data"
+    "$REPO_ROOT/ut-status" --dir "$probe" >/dev/null 2>&1 && status=0 || status=$?
+    expected="not-serving"
+    (( status == 0 )) && expected="serving"
+    history=$(cat "$probe/data/install-history.jsonl" 2>/dev/null)
+    grep -q "\"tool\":\"ut-status\",\"outcome\":\"${expected}\"" <<< "$history" && return 0
+    echo "exit ${status}, history: ${history:-none}"
+    return 1
+}
+
 if [[ -x "$REPO_ROOT/ut-status" ]]; then
     group "Telling whether an install serves"
     capability "a directory with no install is refused, not called healthy" \
         a_directory_with_no_install_is_refused
     capability "an install that was never configured is refused" \
         an_install_that_was_never_configured_is_refused
+    capability "a status verdict is kept beside the installs" \
+        a_status_verdict_is_kept_beside_the_installs
 fi
+
+group "Keeping the history of an install"
+capability "every install run is kept, from its first step" \
+    the_installer_keeps_every_run_from_its_first_step
+capability "a failed install is kept, with the step it stopped at" \
+    a_failed_install_is_kept_with_the_step_it_stopped_at
+capability "a second install is added after the first, never over it" \
+    a_second_install_is_added_after_the_first
 
 printf '\n%s%d verified%s' "$GREEN" "$PASSED" "$NC"
 if (( FAILED )); then

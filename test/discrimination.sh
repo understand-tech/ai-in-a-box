@@ -286,6 +286,24 @@ capability_discriminates "the recorder started where no engine runs" \
     "a machine that runs no engine records nothing" \
     "sed -i.bak 's|^    profiles: \[\"nim\", \"nim-llm\", \"nim-vlm\"\]\$||' compose.yaml"
 
+if grep -q 'record_this_install' "$REPO_ROOT/ut-install"; then
+    capability_discriminates "an install run nobody keeps" \
+        "every install run is kept, from its first step" \
+        "sed -i.bak '/trap record_this_install EXIT/d' ut-install"
+
+    capability_discriminates "a failed install kept as a success" \
+        "a failed install is kept, with the step it stopped at" \
+        "sed -i.bak 's|outcome=\"failed\"|outcome=\"done\"|' ut-install"
+
+    capability_discriminates "the history written over at each install" \
+        "a second install is added after the first, never over it" \
+        "sed -i.bak 's|>> \"\\\$history\"|> \"\\\$history\"|' ut-install"
+
+    capability_discriminates "a status verdict nobody keeps" \
+        "a status verdict is kept beside the installs" \
+        "sed -i.bak '/keep_the_verdict \"/d' ut-status"
+fi
+
 capability_discriminates "the authority root moved out of the backed-up path" \
     "its root sits where the file backup looks" \
     "sed -i.bak 's|\${DATA_ROOT:-/var/lib/understandtech}/ca:/home/step|step-ca-data:/home/step|' compose.yaml"

@@ -79,6 +79,15 @@ inference_is_served_from_elsewhere() {
     [[ "$(env_get "$INSTALL_DIR/.env" COMPOSE_FILE || true)" == *no-gpu* ]]
 }
 
+keep_the_verdict() {
+    local verdict=$1 data_root history
+    data_root=$(env_get "$INSTALL_DIR/.env" DATA_ROOT || true)
+    history="${data_root:-/var/lib/understandtech}/install-history.jsonl"
+    printf '{"at":"%s","tool":"ut-status","outcome":"%s"}\n' \
+        "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$verdict" >> "$history" 2>/dev/null \
+        || log_warn "verdict not kept: ${history} is not writable — run with sudo to keep it"
+}
+
 main() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -142,9 +151,11 @@ main() {
         # buffering, and a conclusion that lands mid-report reads as one more
         # line rather than as the answer.
         printf '%s[fail]%s The install is not serving. See docs/when-it-breaks.md.\n' "$RED" "$NC"
+        keep_the_verdict "not-serving"
         exit 1
     fi
     log_info "The install is serving on https://${domain}"
+    keep_the_verdict "serving"
 }
 
 main "$@"

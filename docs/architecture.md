@@ -105,6 +105,8 @@ browser.
 | Uploaded documents and generated artefacts | `/var/lib/understandtech/app-data` | yes, directly |
 | The App Builder's projects | `/var/lib/understandtech/appbuilder` | yes, directly |
 | The certificate authority's root | `/var/lib/understandtech/ca` | yes, directly |
+| Every install run and every `ut-status` verdict | `/var/lib/understandtech/install-history.jsonl` | yes, directly |
+| The engines' load history | `ut-metrics-data` volume | no — losing it loses that history and nothing else |
 | Model weights and caches | `ut-llm-*`, `ut-vllm-*`, `ut-nim-*-cache` volumes | no — re-downloaded |
 | Your address, ports and secrets | `/etc/understandtech/.env` | no — regenerating it loses the database |
 
