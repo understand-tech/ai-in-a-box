@@ -1050,6 +1050,10 @@ capability "the App Builder overlay renders on top of it" \
     renders_valid_configuration -f compose.yaml -f compose.appbuilder.yaml
 capability "the control-plane role leaves out the inference engines" \
     omits_service nim-llm -f compose.yaml
+capability "a machine that runs an engine records its load" \
+    with_profiles nim lists_service metrics -f compose.yaml
+capability "a machine that runs no engine records nothing" \
+    omits_service metrics -f compose.yaml
 
 group "Machine identity"
 capability "the appliance runs its own certificate authority" \
@@ -1198,6 +1202,8 @@ if [[ -f "$REPO_ROOT/compose.compute.yaml" ]]; then
         with_profiles nim lists_service nim-llm -f compose.yaml -f compose.compute.yaml
     capability "a compute node runs no database" \
         omits_service mongodb -f compose.yaml -f compose.compute.yaml
+    capability "a compute node records the load of what it serves" \
+        with_profiles nim lists_service metrics -f compose.yaml -f compose.compute.yaml
     capability "overriding the prefixes isolates every resource" \
         overrides_isolate_every_resource
 fi

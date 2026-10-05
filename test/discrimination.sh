@@ -29,7 +29,7 @@ fresh_copy() {
     rm -rf "$COPY"
     mkdir -p "$COPY"
     ( cd "$REPO_ROOT" && tar -cf - release.env compose.yaml compose.appbuilder.yaml \
-        compose.compute.yaml compose.no-gpu.yaml Caddyfile caddy backup-files.sh \
+        compose.compute.yaml compose.no-gpu.yaml Caddyfile caddy metrics backup-files.sh \
         setup-autostart.sh ut-logs-archive ut-install ut-certificate ut-verify ut-status appbuilder docs \
         packaging README.md test .github 2>/dev/null ) | tar -xf - -C "$COPY" 2>/dev/null
 }
@@ -156,6 +156,26 @@ discriminates "a port published on every interface" \
     "unlisted-port:redis" \
     "sed -i.bak 's|^    expose:|    ports:\n      - \"6399:6379\"\n    expose:|' compose.yaml"
 
+discriminates "the recorder published on every interface" \
+    "unlisted-port:metrics:9090:9090" \
+    "sed -i.bak '/^  metrics:\$/,/^    expose:/ s|^    expose:|    ports:\n      - \"9090:9090\"\n    expose:|' compose.yaml"
+
+if grep -q 'check_the_recorder_is_bounded' "$REPO_ROOT/test/invariants.sh"; then
+    discriminates "the recorder kept by age alone" \
+        "recorder-unbounded-in-size" \
+        "sed -i.bak '/--storage.tsdb.retention.size=/d' compose.yaml"
+
+    discriminates "the recorder kept by size alone" \
+        "recorder-unbounded-in-time" \
+        "sed -i.bak '/--storage.tsdb.retention.time=/d' compose.yaml"
+fi
+
+if grep -q 'check_the_package_ships_what_the_stack_mounts' "$REPO_ROOT/test/invariants.sh"; then
+    discriminates "a mounted file left out of the package" \
+        "mounted-but-not-shipped:metrics" \
+        "sed -i.bak '/REPO_ROOT\\/metrics/d' packaging/build-deb.sh"
+fi
+
 discriminates "verbose logs in the template" \
     "verbose-log-level:LOG_LEVEL" \
     "sed -i.bak 's|^LOG_LEVEL=.*|LOG_LEVEL=\"DEBUG\"|' release.env"
@@ -257,6 +277,14 @@ fi
 capability_discriminates "the authority removed from the stack" \
     "the appliance runs its own certificate authority" \
     "sed -i.bak 's|^  step-ca:|  step-ca:\n    profiles: [\"never-enabled\"]|' compose.yaml"
+
+capability_discriminates "the recorder left out where an engine runs" \
+    "a machine that runs an engine records its load" \
+    "sed -i.bak 's|profiles: \[\"nim\", \"nim-llm\", \"nim-vlm\"\]|profiles: [\"never-enabled\"]|' compose.yaml"
+
+capability_discriminates "the recorder started where no engine runs" \
+    "a machine that runs no engine records nothing" \
+    "sed -i.bak 's|^    profiles: \[\"nim\", \"nim-llm\", \"nim-vlm\"\]\$||' compose.yaml"
 
 capability_discriminates "the authority root moved out of the backed-up path" \
     "its root sits where the file backup looks" \

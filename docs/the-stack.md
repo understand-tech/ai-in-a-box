@@ -34,6 +34,7 @@ follows `COMPOSE_PROJECT_NAME`.
 | `llm` | `understandtech-llm-*` | — | RAG, embeddings and reranking on GPU, `:8000` internal |
 | `nim-llm` | `understandtech-nim-llm-*` | 127.0.0.1:8001 | NVIDIA NIM serving the chat model (profile `nim`) |
 | `nim-vlm` | `understandtech-nim-vlm-*` | 127.0.0.1:8002 | NVIDIA NIM serving the vision model (profile `nim`) |
+| `metrics` | `ut-metrics` | — | Records how loaded the engines are and how long users wait for them, 35 days or 1 GB, whichever comes first (profile `nim`) |
 | `mongodb` | `ut-mongodb` | — | Document database |
 | `redis` | `ut-redis` | — | Task queue and cache |
 | `mongodb-backup` | `ut-mongodb-backup` | — | Full-server dump of every database |
@@ -41,8 +42,9 @@ follows `COMPOSE_PROJECT_NAME`.
 | `app-builder` | `ut-app-builder` | 8011 (`APP_BUILDER_HOST_PORT`) | Builds and hosts generated apps (add-on) |
 | `app-builder-traefik` | `ut-app-builder-traefik` | — | Per-app routing for generated apps (add-on) |
 
-`nim-llm` and `nim-vlm` sit behind compose profiles, so they only start when
-`COMPOSE_PROFILES` includes `nim` (or `nim-llm` / `nim-vlm` individually).
+`nim-llm`, `nim-vlm` and `metrics` sit behind compose profiles, so they only start when
+`COMPOSE_PROFILES` includes `nim` (or `nim-llm` / `nim-vlm` individually). A
+machine that runs no engine therefore records nothing.
 `release.env` sets `COMPOSE_PROFILES="nim"`.
 
 The worker services scale with `WORKER_REPLICAS` and `WORKER_CUSTOMER_REPLICAS`.
@@ -55,7 +57,7 @@ which means the containers attached only to those have no route off the box.
 | Network | Internal | Who is on it |
 |---|---|---|
 | `ut-frontend-network` | no | `caddy`, `frontend`, `api`, `api-customer`, the workers, `app-llms`, `app-assistants`, `admin-portal`, `llm` |
-| `ut-backend-network` | **yes** | `api`, `api-customer`, the workers, `app-assistants`, `admin-portal`, `llm`, the NIM containers, `redis`, `files-backup` |
+| `ut-backend-network` | **yes** | `api`, `api-customer`, the workers, `app-assistants`, `admin-portal`, `llm`, the NIM containers, `metrics`, `redis`, `files-backup` |
 | `ut-data-network` | **yes** | `mongodb`, `mongodb-backup`, `api`, `api-customer`, the workers, `app-llms`, `app-assistants`, `llm` |
 | `ut-ca-network` | **yes** | `caddy`, `step-ca` |
 
@@ -86,6 +88,7 @@ internet is kept off it.
 | `ut-vllm-llm-cache` | vLLM compilation cache |
 | `ut-nim-llm-cache` | NIM chat-model weights (survives updates — do not prune casually) |
 | `ut-nim-vlm-cache` | NIM vision-model weights (idem) |
+| `ut-metrics-data` | Engine load history. Not backed up: losing it loses that history and nothing else |
 
 Every volume carries an explicit `name:`, so the names are fixed rather than
 prefixed with the compose project. Data therefore survives a project rename or

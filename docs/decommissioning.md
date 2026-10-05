@@ -66,12 +66,13 @@ sudo rm -rf /var/lib/understandtech        # documents, generated apps, the CA r
 docker volume rm ut-mongodb-data ut-mongodb-backup ut-uploads-data \
                  ut-redis-data ut-caddy-data ut-caddy-config
 docker volume rm ut-llm-ollama ut-llm-models ut-vllm-models \
-                 ut-vllm-llm-cache ut-nim-llm-cache ut-nim-vlm-cache
+                 ut-vllm-llm-cache ut-nim-llm-cache ut-nim-vlm-cache \
+                 ut-metrics-data
 ```
 
 The first `docker volume rm` line is the customer's: databases, backup
 archives, uploads, queue state, and the proxy's certificates. The second is
-model weights and caches — no customer data, but tens of gigabytes, so remove
+model weights, caches and the engines' load history — no customer data, but tens of gigabytes, so remove
 them if the machine is being repurposed and keep them if it is being
 reinstalled.
 
