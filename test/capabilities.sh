@@ -1322,7 +1322,7 @@ if [[ -x "$REPO_ROOT/ut-status" ]]; then
         a_status_verdict_is_kept_beside_the_installs
 fi
 
-REPORT_KEYS="schema generated_at install_id window_days release images service image capacity engine hours hour requests running_peak waiting_peak ttft_p95_s users_by_hour users history at tool outcome step warnings"
+REPORT_KEYS="schema generated_at install_id window_days release images service image capacity engine hours hour requests running_peak waiting_peak first_token_within_1s first_token_within_2_5s prompts_le_500 prompts_le_2000 prompts_le_10000 users_by_hour users history at tool outcome step warnings"
 
 ut_report_refuses() {
     local dir=$1 expected=$2 output
@@ -1406,7 +1406,7 @@ requests_served_with_no_user_counted_are_flagged() {
 a_series_the_recorder_does_not_have_is_flagged() {
     local report
     report=$(report_from "$(history_probe)" '1759651200 5\n' '1759651200 3\n' '')
-    grep -q '"series-missing:nim-llm:8000:ttft_p95_s' <<< "$report" && return 0
+    grep -q '"series-missing:nim-llm:8000:first_token_within_2_5s' <<< "$report" && return 0
     echo "${report:-no report written}"
     return 1
 }

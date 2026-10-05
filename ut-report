@@ -150,33 +150,53 @@ running_images() {
     done <<< "$(compose_here ps -q 2>/dev/null)"
 }
 
+ENGINE_FIELDS="requests running_peak waiting_peak first_token_within_1s first_token_within_2_5s prompts_le_500 prompts_le_2000 prompts_le_10000"
+
+# Counted on the histograms' own bounds, never interpolated between them: vLLM has
+# no bound between 1 s and 2.5 s, and a p95 read there gave 2.16 s for 1.40 s
+# measured by the client. The bounds are cumulative, so within_2_5s holds within_1s.
+query_for() {
+    local field=$1 selector=$2
+    case "$field" in
+        requests)                printf 'sum(increase(vllm:request_success_total{%s}[1h]))' "$selector" ;;
+        running_peak)            printf 'max(max_over_time(vllm:num_requests_running{%s}[1h]))' "$selector" ;;
+        waiting_peak)            printf 'max(max_over_time(vllm:num_requests_waiting{%s}[1h]))' "$selector" ;;
+        first_token_within_1s)   printf 'sum(increase(vllm:time_to_first_token_seconds_bucket{%s,le="1.0"}[1h]))' "$selector" ;;
+        first_token_within_2_5s) printf 'sum(increase(vllm:time_to_first_token_seconds_bucket{%s,le="2.5"}[1h]))' "$selector" ;;
+        prompts_le_500)          printf 'sum(increase(vllm:request_prompt_tokens_bucket{%s,le="500.0"}[1h]))' "$selector" ;;
+        prompts_le_2000)         printf 'sum(increase(vllm:request_prompt_tokens_bucket{%s,le="2000.0"}[1h]))' "$selector" ;;
+        prompts_le_10000)        printf 'sum(increase(vllm:request_prompt_tokens_bucket{%s,le="10000.0"}[1h]))' "$selector" ;;
+    esac
+}
+
 # Joined on the hour, since a series with nothing to say for an hour has no
-# point there at all: the four lists are not the same length.
+# point there at all: the lists are not the same length.
 engine_hours() {
-    local engine=$1 dir=$2 field
-    for field in requests running_peak waiting_peak ttft_p95_s; do
+    local engine=$1 dir=$2 field files=()
+    for field in $ENGINE_FIELDS; do
         [[ -s "$dir/$field" ]] || printf 'series-missing:%s:%s\n' "$engine" "$field" >> "$dir/warnings"
+        files+=("$dir/$field")
     done
-    awk '
+    awk -v names="$ENGINE_FIELDS" '
         FNR == 1 { field = FILENAME; sub(".*/", "", field) }
         { hours[$1] = 1; value[$1, field] = $2 }
         END {
-            n = split("requests running_peak waiting_peak ttft_p95_s", fields, " ")
+            n = split(names, fields, " ")
             for (h in hours) {
                 line = "{\"hour\": " h
                 for (i = 1; i <= n; i++) {
                     v = value[h, fields[i]]
-                    if (v == "" || v == "NaN" || v == "+Inf") v = "null"
+                    if (v == "" || v == "NaN" || v == "+Inf") v = "null"; else v = sprintf("%d", v + 0.5)
                     line = line ", \"" fields[i] "\": " v
                 }
                 print line "}"
             }
         }
-    ' "$dir/requests" "$dir/running_peak" "$dir/waiting_peak" "$dir/ttft_p95_s" | sort -t: -k2 -n | paste -sd, -
+    ' "${files[@]}" | sort -t: -k2 -n | paste -sd, -
 }
 
 capacity_section() {
-    local work=$1 engine dir first=true selector engines
+    local work=$1 engine dir first=true selector engines field
     engines=$(engines_recorded || true)
     if [[ -z "$engines" ]] && an_engine_runs_here; then
         printf 'recorder-missing: an engine runs here and nothing recorded it\n' >> "$work/warnings"
@@ -187,10 +207,9 @@ capacity_section() {
         dir="$work/$(printf '%s' "$engine" | tr -c 'a-zA-Z0-9\n' '_')"
         mkdir -p "$dir"
         selector="instance=\"${engine}\""
-        hourly "sum(increase(vllm:request_success_total{${selector}}[1h]))" > "$dir/requests"
-        hourly "max(max_over_time(vllm:num_requests_running{${selector}}[1h]))" > "$dir/running_peak"
-        hourly "max(max_over_time(vllm:num_requests_waiting{${selector}}[1h]))" > "$dir/waiting_peak"
-        hourly "histogram_quantile(0.95, sum by (le) (rate(vllm:time_to_first_token_seconds_bucket{${selector}}[1h])))" > "$dir/ttft_p95_s"
+        for field in $ENGINE_FIELDS; do
+            hourly "$(query_for "$field" "$selector")" > "$dir/$field"
+        done
         awk '{ s += $2 } END { print s + 0 }' "$dir/requests" >> "$work/requests_served"
         $first || printf ', '
         first=false
@@ -240,7 +259,9 @@ Install ${id}, the last ${DAYS} days, written $(date -u '+%Y-%m-%d %H:%M UTC').
 
 What it holds
   - per hour and per inference engine: requests served, the most requests
-    running and waiting at once, and the 95th percentile time to first token
+    running and waiting at once, how many got their first token within 1 s
+    and within 2.5 s, and how many prompts were up to 500, 2,000 and 10,000
+    tokens long
   - per hour: how many distinct people sent a request — a number, never who
   - every run of ut-install and every ut-status verdict on this machine
   - the release, and the image each service runs

@@ -34,7 +34,8 @@ database, through the container that holds it.
 **What the report holds**:
 
 - per hour and per inference engine: requests served, the most requests running
-  and waiting at once, and the 95th percentile time to first token;
+  and waiting at once, how many got their first token within 1 s and within
+  2.5 s, and how many prompts were up to 500, 2,000 and 10,000 tokens long;
 - per hour: how many distinct people sent a request — a number, never who;
 - every run of `ut-install` and every `ut-status` verdict on this machine;
 - the release, and the image each service runs.
@@ -53,6 +54,12 @@ keeps 35 days, or 1 GB, whichever comes first — see [the stack](the-stack.md).
 
 The number of people per hour is counted inside the database container, from the
 platform's records of who sent a request, and only the count leaves it.
+
+Response times are counts against fixed bounds rather than percentiles. The
+engines measure them in steps with nothing between 1 s and 2.5 s, so a
+percentile read in between is a guess; a count is exact. The bounds are
+cumulative: a request within 1 s is also counted within 2.5 s. The same holds for
+prompt sizes.
 
 ## When a figure is missing
 
