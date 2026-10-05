@@ -340,6 +340,20 @@ if [[ -x "$REPO_ROOT/ut-report" ]]; then
         "sed -i.bak 's|sha256 \${checksum}|sha256 unknown|' ut-report"
 fi
 
+if grep -q 'install_status_timer' "$REPO_ROOT/setup-autostart.sh"; then
+    capability_discriminates "the hourly status check never installed" \
+        "the status check runs every hour" \
+        "sed -i.bak '/^    install_status_timer\$/d' setup-autostart.sh"
+
+    capability_discriminates "the status check pointed at a tool the package does not ship" \
+        "installed from the package, the status check runs the packaged tool" \
+        "sed -i.bak 's/command -v ut-status/command -v ut-status-gone/' setup-autostart.sh"
+
+    capability_discriminates "the status check left behind by an uninstall" \
+        "removing the units removes the status check" \
+        "sed -i.bak '/rm -f .*STATUS_TIMER_FILE/d' setup-autostart.sh"
+fi
+
 capability_discriminates "the authority root moved out of the backed-up path" \
     "its root sits where the file backup looks" \
     "sed -i.bak 's|\${DATA_ROOT:-/var/lib/understandtech}/ca:/home/step|step-ca-data:/home/step|' compose.yaml"

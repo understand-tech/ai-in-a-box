@@ -46,9 +46,9 @@ sudo ./setup-autostart.sh --uninstall
 docker compose down
 ```
 
-`--uninstall` removes the boot service and the mDNS publisher. Without it the
-machine republishes its names at the next reboot and answers for an appliance
-that is no longer meant to exist.
+`--uninstall` removes the boot service, the hourly status check and the mDNS
+publisher. Without it the machine republishes its names at the next reboot and
+answers for an appliance that is no longer meant to exist.
 
 `down` stops and removes the containers and the networks. **It does not remove
 the volumes** — that is step 4.

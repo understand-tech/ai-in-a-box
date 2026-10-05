@@ -1,8 +1,10 @@
 #!/bin/bash
 # UnderstandTech Auto-Start Setup Script
 #
-# Installs two systemd units:
+# Installs these systemd units:
 #   understandtech.service  - brings the compose stack up on boot
+#   ut-status.timer         - runs ut-status every hour, so the install history
+#                             says when the box served and when it stopped
 #   ut-mdns-alias.service   - publishes the .local names over mDNS, all of them
 #                             derived from UT_DOMAIN in .env. Installed only
 #                             when UT_DOMAIN ends in .local; on a real domain
@@ -24,6 +26,9 @@ set -euo pipefail
 
 SERVICE_NAME="understandtech"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+STATUS_UNIT_NAME="ut-status"
+STATUS_SERVICE_FILE="/etc/systemd/system/${STATUS_UNIT_NAME}.service"
+STATUS_TIMER_FILE="/etc/systemd/system/${STATUS_UNIT_NAME}.timer"
 MDNS_SERVICE_NAME="ut-mdns-alias"
 MDNS_SERVICE_FILE="/etc/systemd/system/${MDNS_SERVICE_NAME}.service"
 MDNS_HELPER="/usr/local/bin/ut-mdns-alias"
@@ -755,6 +760,61 @@ UNIT_EOF
     systemctl enable "$SERVICE_NAME"
 }
 
+# Beside the release in a checkout; on the PATH once the package has installed it.
+status_command() {
+    if [[ -x "$INSTALL_DIR/ut-status" ]]; then
+        printf '%s' "$INSTALL_DIR/ut-status"
+    else
+        command -v ut-status || true
+    fi
+}
+
+install_status_timer() {
+    local command changed=false
+    command="$(status_command)"
+    if [[ -z "$command" ]]; then
+        log_warn "ut-status not found — the hourly status check is not installed"
+        return 0
+    fi
+
+    log_step "Installing the hourly status check..."
+    if sed -e "s|@COMMAND@|${command}|g" -e "s|@INSTALL_DIR@|${INSTALL_DIR}|g" -e "s|@STACK@|${SERVICE_NAME}|g" << 'UNIT_EOF' | write_file_atomic "$STATUS_SERVICE_FILE" 644
+[Unit]
+Description=UnderstandTech status check, kept in the install history
+After=@STACK@.service
+
+[Service]
+Type=oneshot
+ExecStart=@COMMAND@ --dir @INSTALL_DIR@
+UNIT_EOF
+    then
+        changed=true
+    fi
+    if write_file_atomic "$STATUS_TIMER_FILE" 644 << 'UNIT_EOF'
+[Unit]
+Description=Run the UnderstandTech status check every hour
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT_EOF
+    then
+        changed=true
+    fi
+    if $changed; then
+        systemctl daemon-reload
+    fi
+
+    if systemctl enable --now "${STATUS_UNIT_NAME}.timer" >/dev/null 2>&1; then
+        log_info "ut-status runs every hour; its verdicts go to the install history"
+    else
+        log_warn "Could not enable ${STATUS_UNIT_NAME}.timer — the history then only grows when someone runs ut-status"
+    fi
+}
+
 # compose.appbuilder.yaml declares the 'proxy' network external, because the
 # generated apps join it from their own compose projects — so no single project
 # owns it, and nothing creates it on the way up. Without it `docker compose up`
@@ -785,6 +845,7 @@ do_install() {
     check_root
     check_prerequisites
     install_service
+    install_status_timer
     install_mdns_alias
     install_proxy_network
 
@@ -812,7 +873,7 @@ do_uninstall() {
 
     check_root
 
-    if [[ ! -f "$SERVICE_FILE" && ! -f "$MDNS_SERVICE_FILE" ]]; then
+    if [[ ! -f "$SERVICE_FILE" && ! -f "$MDNS_SERVICE_FILE" && ! -f "$STATUS_TIMER_FILE" ]]; then
         log_warn "Service file not found - nothing to remove"
         exit 0
     fi
@@ -826,6 +887,12 @@ do_uninstall() {
 
         log_step "Removing service file..."
         rm -f "$SERVICE_FILE"
+    fi
+
+    if [[ -f "$STATUS_TIMER_FILE" || -f "$STATUS_SERVICE_FILE" ]]; then
+        log_step "Removing the hourly status check..."
+        systemctl disable --now "${STATUS_UNIT_NAME}.timer" 2>/dev/null || true
+        rm -f "$STATUS_TIMER_FILE" "$STATUS_SERVICE_FILE"
     fi
 
     if [[ -f "$MDNS_SERVICE_FILE" ]]; then
@@ -863,6 +930,12 @@ do_status() {
     systemctl status "$SERVICE_NAME" --no-pager 2>/dev/null || true
     echo ""
 
+    if [[ -f "$STATUS_TIMER_FILE" ]]; then
+        echo -e "${GREEN}Hourly Status Check:${NC}"
+        systemctl status "${STATUS_UNIT_NAME}.timer" "${STATUS_UNIT_NAME}.service" --no-pager 2>/dev/null || true
+        echo ""
+    fi
+
     if [[ -f "$MDNS_SERVICE_FILE" ]]; then
         echo -e "${GREEN}mDNS Alias Service:${NC}"
         systemctl status "$MDNS_SERVICE_NAME" --no-pager 2>/dev/null || true
@@ -896,7 +969,7 @@ show_help() {
     echo "  --install     Install and enable the units (default)"
     echo "  --mdns        Install only the mDNS aliases, on a .local domain only"
     echo "  --check       Check the domain / TLS / proxy settings without changing anything"
-    echo "  --uninstall   Remove both units"
+    echo "  --uninstall   Remove the units"
     echo "  --status      Show unit and container status"
     echo "  --dir PATH    Install directory (default: the directory holding this script)"
     echo "  --help        Show this help message"

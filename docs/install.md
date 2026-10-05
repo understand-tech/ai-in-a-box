@@ -221,8 +221,9 @@ a surface does not answer, so it can be called from cron or a check.
 Every verdict is kept in `install-history.jsonl` under `DATA_ROOT`, beside one
 line for every run of `ut-install`, failed runs included and named by the step
 they stopped at. Read together, they say whether an install served the first
-time, or only after being run again. Without `sudo` the verdict is shown and not
-kept, and `ut-status` says so.
+time, or only after being run again. `ut-install` also schedules `ut-status`
+every hour, so the history does not depend on someone running it. Without
+`sudo` the verdict is shown and not kept, and `ut-status` says so.
 
 ```text
 ==> Services

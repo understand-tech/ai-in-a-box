@@ -1496,6 +1496,78 @@ if [[ -x "$REPO_ROOT/ut-report" ]]; then
         the_manifest_checksum_is_the_reports
 fi
 
+# setup-autostart.sh run for real in a container, with docker and systemctl
+# answering yes. TOOL_BESIDE says whether ut-status sits next to the release, as
+# in a checkout, or only on the PATH, as the package installs it.
+status_timer_report() {
+    local tool_beside=$1
+    cat > "$WORK_DIR/timer-probe.sh" <<'PROBE'
+set -u
+mkdir -p /fix /stub /usr/local/bin
+cp /src/compose.yaml /fix/
+printf 'UT_DOMAIN="box.example.com"\n' > /fix/.env
+printf '#!/bin/sh\nexit 0\n' > /stub/docker
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> /stub/calls\nexit 0\n' > /stub/systemctl
+chmod +x /stub/docker /stub/systemctl
+if [ "$TOOL_BESIDE" = yes ]; then
+    cp /src/ut-status /fix/ut-status
+else
+    cp /src/ut-status /usr/local/bin/ut-status
+fi
+PATH=/stub:$PATH bash /src/setup-autostart.sh --install --dir /fix >/dev/null 2>&1
+printf -- '--- service ---\n'; cat /etc/systemd/system/ut-status.service 2>/dev/null
+printf -- '--- timer ---\n'; cat /etc/systemd/system/ut-status.timer 2>/dev/null
+printf -- '--- systemctl ---\n'; cat /stub/calls
+PATH=/stub:$PATH bash /src/setup-autostart.sh --uninstall --dir /fix >/dev/null 2>&1
+printf -- '--- after uninstall ---\n'
+ls /etc/systemd/system/ut-status.service /etc/systemd/system/ut-status.timer 2>/dev/null
+printf 'END\n'
+PROBE
+    docker run --rm -e TOOL_BESIDE="$tool_beside" \
+        -v "$REPO_ROOT":/src:ro -v "$WORK_DIR/timer-probe.sh":/timer-probe.sh:ro \
+        bash:5 bash /timer-probe.sh 2>&1
+}
+
+the_status_check_runs_every_hour() {
+    local report
+    report=$(status_timer_report yes)
+    grep -q '^OnCalendar=hourly$' <<< "$report" \
+        && grep -q '^ExecStart=/fix/ut-status --dir /fix$' <<< "$report" \
+        && grep -q '^enable --now ut-status.timer$' <<< "$report" \
+        && return 0
+    echo "$report"
+    return 1
+}
+
+the_package_s_status_tool_is_the_one_scheduled() {
+    local report
+    report=$(status_timer_report no)
+    grep -q '^ExecStart=/usr/local/bin/ut-status --dir /fix$' <<< "$report" && return 0
+    echo "$report"
+    return 1
+}
+
+removing_the_units_removes_the_status_check() {
+    local report left
+    report=$(status_timer_report yes)
+    left=${report#*--- after uninstall ---}
+    left=${left%END*}
+    grep -q 'ut-status.timer' <<< "${report%%--- after uninstall ---*}" || { echo "$report"; return 1; }
+    [[ -z "${left//[[:space:]]/}" ]] && return 0
+    echo "still installed:${left}"
+    return 1
+}
+
+if grep -q 'ut-status' "$REPO_ROOT/setup-autostart.sh"; then
+    group "Checking every hour whether the install serves"
+    capability "the status check runs every hour" \
+        the_status_check_runs_every_hour
+    capability "installed from the package, the status check runs the packaged tool" \
+        the_package_s_status_tool_is_the_one_scheduled
+    capability "removing the units removes the status check" \
+        removing_the_units_removes_the_status_check
+fi
+
 group "Keeping the history of an install"
 capability "every install run is kept, from its first step" \
     the_installer_keeps_every_run_from_its_first_step

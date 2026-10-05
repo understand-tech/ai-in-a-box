@@ -169,10 +169,13 @@ upgrade does to your settings.
 
 ## Auto-start on boot
 
-`setup-autostart.sh` installs two systemd units and nothing else:
+`setup-autostart.sh` installs these systemd units and nothing else:
 
 - **`understandtech.service`** — runs `docker compose up -d` in the install
   directory at boot;
+- **`ut-status.timer`** — runs `ut-status` every hour, and at boot when an hour
+  was missed, so the install history says when the box served and when it
+  stopped. A failed check shows in `systemctl status ut-status`;
 - **`ut-mdns-alias.service`** — publishes the apex, satellite and
   generated-app hostnames over mDNS, all derived from `UT_DOMAIN`.
 
@@ -181,13 +184,13 @@ runs it for you; you only need it directly when changing the domain or
 repairing an install.
 
 ```bash
-# Install both, using this directory as the install directory
+# Install them, using this directory as the install directory
 sudo ./setup-autostart.sh
 
 # Publish only the mDNS names
 sudo ./setup-autostart.sh --mdns
 
-# Status of both units plus every compose service
+# Status of the units plus every compose service
 sudo ./setup-autostart.sh --status
 
 # Check domain and TLS settings, install nothing
