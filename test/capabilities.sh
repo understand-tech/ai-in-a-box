@@ -4,12 +4,13 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/images.sh"
 WORK_DIR="$(mktemp -d)"
 
 # The restic and step-ca containers run as root and write into WORK_DIR, so the
 # shell that created it cannot remove what they left.
 cleanup() {
-    docker run --rm -v "$WORK_DIR":/w alpine:3 sh -c 'rm -rf /w/..?* /w/.[!.]* /w/*' >/dev/null 2>&1
+    docker run --rm -v "$WORK_DIR":/w "$ALPINE_IMAGE" sh -c 'rm -rf /w/..?* /w/.[!.]* /w/*' >/dev/null 2>&1
     rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
@@ -434,7 +435,7 @@ package_lifecycle_report() {
             -v "$REPO_ROOT":/src:ro \
             -v "$WORK_DIR/pkg":/out \
             -v "$WORK_DIR/package-probe.sh":/probe.sh:ro \
-            debian:12-slim bash /probe.sh > "$cached" 2>&1
+            "$DEBIAN_IMAGE" bash /probe.sh > "$cached" 2>&1
     fi
     cat "$cached"
 }
@@ -583,7 +584,7 @@ a_package_nobody_signed_is_refused() {
 a_package_verifies_with_no_network_at_all() {
     local work="$WORK_DIR/signing" said
     signature_verdicts >/dev/null
-    said=$(docker run --rm --network none -v "$work":/w:ro --entrypoint sh mongo:8.2 \
+    said=$(docker run --rm --network none -v "$work":/w:ro --entrypoint sh "$MONGODB_IMAGE" \
         -c '/w/ut-verify /w/package.deb' 2>&1)
     grep -q 'is signed by' <<< "$said" && return 0
     echo "with no network at all, ut-verify said: ${said:-nothing}"
@@ -607,7 +608,7 @@ every_workflow_parses() {
     # --entrypoint: this image runs yq, so a bare "sh -c" would arrive as
     # arguments to yq and read nothing at all.
     verdict=$(docker run --rm --entrypoint sh \
-        -v "$REPO_ROOT/.github/workflows":/w:ro mikefarah/yq:4 \
+        -v "$REPO_ROOT/.github/workflows":/w:ro "$YQ_IMAGE" \
         -c 'n=0; for f in /w/*.yml; do [ -f "$f" ] || continue; n=$((n+1));
             yq eval "." "$f" >/dev/null 2>&1 || echo "broken:$f"; done; echo "count:$n"')
 
@@ -628,7 +629,7 @@ every_workflow_parses() {
 the_pinned_actions_have_a_way_to_move() {
     local declared
     declared=$(docker run --rm --entrypoint sh \
-        -v "$REPO_ROOT/.github":/g:ro mikefarah/yq:4 \
+        -v "$REPO_ROOT/.github":/g:ro "$YQ_IMAGE" \
         -c 'yq eval ".updates[].package-ecosystem" /g/dependabot.yml 2>/dev/null')
 
     grep -qx 'github-actions' <<< "$declared" && return 0
@@ -838,7 +839,7 @@ the_machine_surface_is_really_served_by_the_authority() {
 
     docker rm -f "$ca" "$proxy" >/dev/null 2>&1
     docker network rm "$net" >/dev/null 2>&1
-    docker run --rm -v "$work":/w alpine:3 sh -c 'rm -rf /w/ca' >/dev/null 2>&1
+    docker run --rm -v "$work":/w "$ALPINE_IMAGE" sh -c 'rm -rf /w/ca' >/dev/null 2>&1
     return "$verdict"
 }
 
@@ -910,9 +911,8 @@ backups_reach_an_offsite_destination() {
     head -c 2000 /dev/urandom > "$source/ca/certs/root_ca.crt"
 
     docker network create "$net" >/dev/null 2>&1
-    docker run -d --name "$store" --network "$net" \
-        -e MINIO_ROOT_USER="$key" -e MINIO_ROOT_PASSWORD="$secret" \
-        "$OBJECT_STORE_IMAGE" server /data >/dev/null 2>&1
+    docker run -d --name "$store" --network "$net" --tmpfs /data \
+        "$OBJECT_STORE_IMAGE" serve s3 /data --auth-key "$key,$secret" --addr :9000 >/dev/null 2>&1
 
     # Answering on HTTP is the readiness signal, not the container running: the
     # process is up well before it serves. Asking here also bounds the failure —
@@ -920,8 +920,8 @@ backups_reach_an_offsite_destination() {
     # endpoint is what a failure of this check looks like.
     local attempt ready=1
     for attempt in $(seq 1 20); do
-        if docker run --rm --network "$net" "$CURL_IMAGE" \
-            -sf -m 5 "http://${OFFSITE_ENDPOINT:-$store}:9000/minio/health/live" >/dev/null 2>&1; then
+        if [[ "$(docker run --rm --network "$net" "$CURL_IMAGE" -s -m 5 -o /dev/null -w '%{http_code}' \
+            "http://${OFFSITE_ENDPOINT:-$store}:9000/" 2>/dev/null)" =~ ^[1-5][0-9][0-9]$ ]]; then
             ready=0; break
         fi
         sleep 2
@@ -975,14 +975,13 @@ the_database_leaves_the_machine_with_the_files() {
     head -c 50000 /dev/urandom > "$dumps/$archive"
 
     docker network create "$net" >/dev/null 2>&1
-    docker run -d --name "$store" --network "$net" \
-        -e MINIO_ROOT_USER="$key" -e MINIO_ROOT_PASSWORD="$secret" \
-        "$OBJECT_STORE_IMAGE" server /data >/dev/null 2>&1
+    docker run -d --name "$store" --network "$net" --tmpfs /data \
+        "$OBJECT_STORE_IMAGE" serve s3 /data --auth-key "$key,$secret" --addr :9000 >/dev/null 2>&1
 
     local attempt ready=1
     for attempt in $(seq 1 20); do
-        if docker run --rm --network "$net" "$CURL_IMAGE" \
-            -sf -m 5 "http://${OFFSITE_ENDPOINT:-$store}:9000/minio/health/live" >/dev/null 2>&1; then
+        if [[ "$(docker run --rm --network "$net" "$CURL_IMAGE" -s -m 5 -o /dev/null -w '%{http_code}' \
+            "http://${OFFSITE_ENDPOINT:-$store}:9000/" 2>/dev/null)" =~ ^[1-5][0-9][0-9]$ ]]; then
             ready=0; break
         fi
         sleep 2
@@ -1041,13 +1040,6 @@ a_missing_backup_is_visible() {
     docker rm -f ut-capability-hc >/dev/null 2>&1
     [[ "$status" == "healthy" ]]
 }
-
-STEP_CA_IMAGE=$(grep -m1 -oE 'smallstep/step-ca:[0-9.]+' "$REPO_ROOT/compose.yaml" || echo smallstep/step-ca:latest)
-CADDY_IMAGE=$(grep -m1 -oE 'caddy:[0-9a-z.-]+' "$REPO_ROOT/compose.yaml" || echo caddy:2-alpine)
-# quay.io, not docker.io: the minio/minio repository on Docker Hub answers
-# "pull access denied" now.
-OBJECT_STORE_IMAGE=quay.io/minio/minio:latest
-CURL_IMAGE=curlimages/curl:latest
 
 prepare_env
 
@@ -1216,7 +1208,6 @@ if [[ -f "$REPO_ROOT/compose.no-gpu.yaml" ]]; then
 fi
 
 if [[ -f "$REPO_ROOT/backup-files.sh" ]]; then
-    RESTIC_IMAGE=$(grep -m1 -oE 'restic/restic:[0-9.]+' "$REPO_ROOT/compose.yaml" || echo restic/restic:latest)
     group "Backup"
     capability "files are backed up and restore identically" \
         files_are_backed_up_and_restore_identically
