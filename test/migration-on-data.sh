@@ -4,6 +4,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/images.sh"
 FROM_REF=${MIGRATION_FROM:-origin/main}
 ARCHIVE=${MIGRATION_ARCHIVE:-}
 
@@ -27,7 +28,7 @@ cleanup() {
     compose_in after down >/dev/null 2>&1
     compose_in before down >/dev/null 2>&1
     docker volume rm "$RUN-mongodb-data" "$RUN-redis-data" >/dev/null 2>&1
-    docker run --rm -v "$WORK_DIR":/work alpine:3 sh -c 'rm -rf /work/..?* /work/.[!.]* /work/*' >/dev/null 2>&1
+    docker run --rm -v "$WORK_DIR":/work "$ALPINE_IMAGE" sh -c 'rm -rf /work/..?* /work/.[!.]* /work/*' >/dev/null 2>&1
     rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT

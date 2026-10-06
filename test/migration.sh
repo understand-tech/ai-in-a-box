@@ -4,6 +4,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/images.sh"
 FROM_REF=${MIGRATION_FROM:-origin/main}
 
 WORK_DIR="$(mktemp -d)"
@@ -286,7 +287,7 @@ a_renamed_container_keeps_its_volumes() {
 name: $project
 services:
   engine:
-    image: alpine:3
+    image: $ALPINE_IMAGE
     container_name: ${project}-fixed
     command: sleep 120
     volumes:

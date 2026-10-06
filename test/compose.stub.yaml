@@ -14,43 +14,43 @@
 services:
 
   api:
-    image: ${STUB_IMAGE:-caddy:2-alpine}
+    image: ${STUB_IMAGE:-caddy:2-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f}
     volumes:
       - ./test/stub.caddy:/etc/caddy/Caddyfile:ro
 
   api-customer:
-    image: ${STUB_IMAGE:-caddy:2-alpine}
+    image: ${STUB_IMAGE:-caddy:2-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f}
     volumes:
       - ./test/stub.caddy:/etc/caddy/Caddyfile:ro
 
   frontend:
-    image: ${STUB_IMAGE:-caddy:2-alpine}
+    image: ${STUB_IMAGE:-caddy:2-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f}
     volumes:
       - ./test/stub.caddy:/etc/caddy/Caddyfile:ro
 
   app-llms:
-    image: ${STUB_IMAGE:-caddy:2-alpine}
+    image: ${STUB_IMAGE:-caddy:2-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f}
     volumes:
       - ./test/stub.caddy:/etc/caddy/Caddyfile:ro
 
   app-assistants:
-    image: ${STUB_IMAGE:-caddy:2-alpine}
+    image: ${STUB_IMAGE:-caddy:2-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f}
     volumes:
       - ./test/stub.caddy:/etc/caddy/Caddyfile:ro
 
   admin-portal:
-    image: ${STUB_IMAGE:-caddy:2-alpine}
+    image: ${STUB_IMAGE:-caddy:2-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f}
     volumes:
       - ./test/stub.caddy:/etc/caddy/Caddyfile:ro
 
   # The workers carry no healthcheck: they are queue consumers, and what the
   # lifecycle needs from them here is that they stay up without a private image.
   workers:
-    image: ${STUB_IMAGE:-caddy:2-alpine}
+    image: ${STUB_IMAGE:-caddy:2-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f}
     command: ["sleep", "infinity"]
 
   workers-customer:
-    image: ${STUB_IMAGE:-caddy:2-alpine}
+    image: ${STUB_IMAGE:-caddy:2-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f}
     command: ["sleep", "infinity"]
 
   # Its healthcheck looks for an archive younger than two days, which a stub

@@ -25,10 +25,8 @@ CERT_VOLUME=$RUN-certs
 CA_URL=https://$CA_NODE:9000
 CADDYFILE=$(mktemp)
 CA_PASS=machine-identity-test
-STEP_IMAGE=smallstep/step-ca:latest
-CADDY_IMAGE=$(grep -m1 -oE 'caddy:[0-9a-z.-]+' "$(dirname "${BASH_SOURCE[0]}")/../compose.yaml" || echo caddy:2-alpine)
-CURL_IMAGE=curlimages/curl:latest
-RESTIC_IMAGE=$(grep -m1 -oE 'restic/restic:[0-9.]+' "$(dirname "${BASH_SOURCE[0]}")/../compose.yaml" || echo restic/restic:latest)
+source "$(dirname "${BASH_SOURCE[0]}")/images.sh"
+STEP_IMAGE=$STEP_CA_IMAGE
 SPARE_CA=$RUN-spare-ca
 SPARE_CERTS=$RUN-spare-certs
 SPARE_WORK=$(mktemp -d)
@@ -60,7 +58,7 @@ cleanup() {
     docker rm -f "$CA_NODE" "$NODE" "$SPARE_CA" >/dev/null 2>&1
     docker volume rm "$CA_VOLUME" "$CERT_VOLUME" "$SPARE_CERTS" >/dev/null 2>&1
     docker network rm "$NET" >/dev/null 2>&1
-    docker run --rm -v "$SPARE_WORK":/w alpine:3 sh -c 'rm -rf /w/..?* /w/.[!.]* /w/*' >/dev/null 2>&1
+    docker run --rm -v "$SPARE_WORK":/w "$ALPINE_IMAGE" sh -c 'rm -rf /w/..?* /w/.[!.]* /w/*' >/dev/null 2>&1
     rm -rf "$SPARE_WORK"
     rm -f "$CADDYFILE"
 }
@@ -227,7 +225,7 @@ restic_on_spare() {
 # test this replaces called config/ca.json absent on both hosted runners and
 # present on a laptop, on the same commit.
 the_authority_is_on_disk() {
-    docker run --rm -v "$SPARE_WORK":/w alpine:3 sh -c 'test -e /w/ca/config/ca.json'
+    docker run --rm -v "$SPARE_WORK":/w "$ALPINE_IMAGE" sh -c 'test -e /w/ca/config/ca.json'
 }
 
 a_backed_up_root_survives_the_machine() {
@@ -246,14 +244,14 @@ a_backed_up_root_survives_the_machine() {
     spare_node_renews >/dev/null 2>&1 \
         || { echo "the spare node could not renew before anything was backed up"; return 1; }
 
-    before=$(docker run --rm -v "$SPARE_ROOT":/ca:ro alpine:3 cksum /ca/certs/root_ca.crt | cut -d' ' -f1)
+    before=$(docker run --rm -v "$SPARE_ROOT":/ca:ro "$ALPINE_IMAGE" cksum /ca/certs/root_ca.crt | cut -d' ' -f1)
 
     restic_on_spare init >/dev/null 2>&1
     restic_on_spare backup /work/ca --quiet >/dev/null 2>&1 \
         || { echo "restic could not back the authority up"; return 1; }
 
     docker rm -f "$SPARE_CA" >/dev/null 2>&1
-    docker run --rm -v "$SPARE_WORK":/w alpine:3 sh -c 'rm -rf /w/ca' >/dev/null 2>&1
+    docker run --rm -v "$SPARE_WORK":/w "$ALPINE_IMAGE" sh -c 'rm -rf /w/ca' >/dev/null 2>&1
     if the_authority_is_on_disk; then
         echo "the authority was still on disk after being removed, so restoring it would prove nothing"
         return 1
@@ -265,7 +263,7 @@ a_backed_up_root_survives_the_machine() {
         || { echo "restic restored nothing: ca/config/ca.json is absent under ${SPARE_WORK}"; return 1; }
 
     spare_authority_starts
-    after=$(docker run --rm -v "$SPARE_ROOT":/ca:ro alpine:3 cksum /ca/certs/root_ca.crt | cut -d' ' -f1)
+    after=$(docker run --rm -v "$SPARE_ROOT":/ca:ro "$ALPINE_IMAGE" cksum /ca/certs/root_ca.crt | cut -d' ' -f1)
     [[ "$before" == "$after" ]] \
         || { echo "the root came back changed: ${before} before, ${after} after"; return 1; }
 

@@ -4,11 +4,12 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/images.sh"
 WORK_DIR="$(mktemp -d)"
 VERSION="${VERSION:-0.0.0-test}"
 
 cleanup() {
-    docker run --rm -v "$WORK_DIR":/w alpine:3 sh -c 'rm -rf /w/..?* /w/.[!.]* /w/*' >/dev/null 2>&1
+    docker run --rm -v "$WORK_DIR":/w "$ALPINE_IMAGE" sh -c 'rm -rf /w/..?* /w/.[!.]* /w/*' >/dev/null 2>&1
     rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
@@ -41,7 +42,7 @@ property() {
 }
 
 build_the_package() {
-    docker run --rm -v "$REPO_ROOT":/src:ro -v "$WORK_DIR":/out -w /src debian:12-slim \
+    docker run --rm -v "$REPO_ROOT":/src:ro -v "$WORK_DIR":/out -w /src "$DEBIAN_IMAGE" \
         sh -c "OUT_DIR=/out ./packaging/build-deb.sh '$VERSION'" >/dev/null
 }
 
@@ -127,7 +128,7 @@ PROBE
         -e NETWORK_CREATE_EXIT="${NETWORK_CREATE_EXIT:-0}" \
         -e PULL_EXIT="${PULL_EXIT:-9}" \
         -e DISK_AVAIL_BYTES="${DISK_AVAIL_BYTES:-}" \
-        debian:12-slim bash /w/walk-$state.sh >/dev/null 2>&1
+        "$DEBIAN_IMAGE" bash /w/walk-$state.sh >/dev/null 2>&1
 }
 
 state_setup() {

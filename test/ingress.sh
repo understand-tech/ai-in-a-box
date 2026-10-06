@@ -4,11 +4,11 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/images.sh"
 WORK_DIR="$(mktemp -d)"
 DOMAIN="box.example.test"
 NETWORK="ut-ingress-check"
-CADDY_IMAGE="caddy:2-alpine"
-PROBE_IMAGE="alpine:3"
+PROBE_IMAGE=$ALPINE_IMAGE
 
 # Every other suite stops before `docker compose up`, because the application
 # images are private and weigh tens of gigabytes. The front door does not need

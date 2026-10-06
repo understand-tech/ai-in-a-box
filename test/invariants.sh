@@ -398,6 +398,17 @@ check_images_are_pinned() {
     done <<< "$(env_keys)"
 }
 
+check_compose_images_are_pinned() {
+    local reference
+    while read -r reference; do
+        [[ -n "$reference" ]] || continue
+        [[ "$reference" == *@sha256:* ]] && continue
+        [[ "$reference" =~ ^\$\{[A-Z_][A-Z0-9_]*_IMAGE(:-)?\}$ ]] && continue
+        report "unpinned-compose-image:$(basename "${reference%%[:@]*}")" \
+            "image: ${reference} is a tag the registry can repoint — two boxes on the same release can differ"
+    done <<< "$(sed -n 's/^[[:space:]]*image:[[:space:]]*//p' "${COMPOSE_FILES[@]}" | sort -u)"
+}
+
 check_production_defaults() {
     local log_level
     log_level=$(env_raw_value LOG_LEVEL 2>/dev/null || true)
@@ -537,6 +548,7 @@ main() {
     check_published_ports_are_allowed
     check_the_package_stamps_the_commit_it_was_built_from
     check_images_are_pinned
+    check_compose_images_are_pinned
     check_production_defaults
     check_documented_paths_exist
     check_the_stub_overlay_still_matches_the_services

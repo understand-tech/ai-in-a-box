@@ -2,7 +2,8 @@
 
 set -uo pipefail
 
-MONGO_IMAGE=$(grep -m1 -oE 'mongo:[0-9.]+' "$(dirname "${BASH_SOURCE[0]}")/../compose.yaml" || echo mongo:8.2)
+source "$(dirname "${BASH_SOURCE[0]}")/images.sh"
+MONGO_IMAGE=$MONGODB_IMAGE
 # The release decides this image, and it stopped being an upstream name on
 # 2026-09-18 when Docker Hub withdrew every versioned tag of tiredofit/db-backup.
 # Grepping compose for that name then found nothing and this fell back to the tag

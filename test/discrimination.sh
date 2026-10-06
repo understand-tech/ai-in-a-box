@@ -4,10 +4,11 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/images.sh"
 WORK_DIR="$(mktemp -d)"
 
 cleanup() {
-    docker run --rm -v "$WORK_DIR":/w alpine:3 sh -c 'rm -rf /w/..?* /w/.[!.]* /w/*' >/dev/null 2>&1
+    docker run --rm -v "$WORK_DIR":/w "$ALPINE_IMAGE" sh -c 'rm -rf /w/..?* /w/.[!.]* /w/*' >/dev/null 2>&1
     rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
@@ -162,6 +163,10 @@ discriminates "verbose logs in the template" \
 discriminates "an image named by a tag the registry can repoint" \
     "unpinned-image:NIM_IMAGE" \
     "sed -i.bak 's|^NIM_IMAGE=.*|NIM_IMAGE=\"ghcr.io/understand-tech/nim/nvidia/model-free-nim:2.0.9\"|' release.env"
+
+discriminates "a compose image named by a tag the registry can repoint" \
+    "unpinned-compose-image:caddy" \
+    "sed -i.bak 's|\${CADDY_IMAGE:-[^}]*}|caddy:2-alpine|' compose.yaml"
 
 if grep -q 'check_every_setting_reaches_something' "$REPO_ROOT/test/invariants.sh"; then
     discriminates "a setting the stack never reads" \
