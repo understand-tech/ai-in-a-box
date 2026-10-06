@@ -45,7 +45,7 @@ services:
   caddy:
     labels:
       ut.role: "control-plane"
-    image: caddy:2-alpine
+    image: ${CADDY_IMAGE:-caddy:2-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f}
     container_name: ${CONTAINER_PREFIX:-ut}-caddy
     restart: unless-stopped
     ports:
@@ -114,7 +114,7 @@ services:
   step-ca:
     labels:
       ut.role: "control-plane"
-    image: ${STEP_CA_IMAGE:-smallstep/step-ca:0.30.2}
+    image: ${STEP_CA_IMAGE:-smallstep/step-ca:0.30.2@sha256:a2b17872915c193259b75a5474c398326f41bd199f0842093e52cf4182bc8270}
     container_name: ${CONTAINER_PREFIX:-ut}-step-ca
     restart: unless-stopped
     environment:
@@ -147,7 +147,7 @@ services:
   redis:
     labels:
       ut.role: "control-plane"
-    image: redis:7.2-alpine
+    image: ${REDIS_IMAGE:-redis:7.2-alpine@sha256:29e8589c3f9ba699b5f7aa4b3c7733c58852a3626439e619aa0ee78de08c6ca0}
     container_name: ${CONTAINER_PREFIX:-ut}-redis
     restart: unless-stopped
     command: >
@@ -180,7 +180,7 @@ services:
   mongodb:
     labels:
       ut.role: "control-plane"
-    image: mongo:8.2
+    image: ${MONGODB_IMAGE:-mongo:8.2@sha256:e0ce8c35124d4a9f9785532d1f268f39e9728ffa1cb38f46fa482436424c4bd3}
     container_name: ${CONTAINER_PREFIX:-ut}-mongodb
     restart: unless-stopped
     ports:
@@ -264,7 +264,7 @@ services:
   files-backup:
     labels:
       ut.role: "backup"
-    image: restic/restic:0.18.1
+    image: ${FILES_BACKUP_IMAGE:-restic/restic:0.18.1@sha256:39d9072fb5651c80d75c7a811612eb60b4c06b32ffe87c2e9f3c7222e1797e76}
     container_name: ${CONTAINER_PREFIX:-ut}-files-backup
     restart: unless-stopped
     environment:

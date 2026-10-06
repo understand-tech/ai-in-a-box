@@ -163,6 +163,10 @@ discriminates "an image named by a tag the registry can repoint" \
     "unpinned-image:NIM_IMAGE" \
     "sed -i.bak 's|^NIM_IMAGE=.*|NIM_IMAGE=\"ghcr.io/understand-tech/nim/nvidia/model-free-nim:2.0.9\"|' release.env"
 
+discriminates "a compose image named by a tag the registry can repoint" \
+    "unpinned-compose-image:caddy" \
+    "sed -i.bak 's|\${CADDY_IMAGE:-[^}]*}|caddy:2-alpine|' compose.yaml"
+
 if grep -q 'check_every_setting_reaches_something' "$REPO_ROOT/test/invariants.sh"; then
     discriminates "a setting the stack never reads" \
         "setting-reaches-nothing:DEAD_SETTING" \
