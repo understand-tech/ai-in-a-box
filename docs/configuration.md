@@ -115,6 +115,22 @@ refuses to start without it.
 
 So editing `VLLM_LLM_MODEL` on a default install changes nothing.
 
+Images are read by `nim-vlm`, a second, smaller model. When the main model is
+multimodal (`Qwen3.8-27B` on a GB300), it can read them instead, and `nim-vlm`
+only holds GPU memory. To stop it, in `local.env`:
+
+```bash
+COMPOSE_PROFILES="nim-llm"
+VLLM_VLM_MODEL="Qwen/Qwen3.8-27B"
+GATEWAY_VLM_MODEL="Qwen/Qwen3.8-27B"
+VLLM_VLM_BASE_URL="http://nim-llm:8000/v1"
+```
+
+All four go together. `nim-llm` only answers to its own model name: a vision
+name left on `Qwen3-VL-4B-Instruct` fails, in ut-llm for `VLLM_VLM_MODEL`, in
+the gateway for `GATEWAY_VLM_MODEL`. `docker compose up -d` does not remove a
+container that has left the profiles: `docker compose stop nim-vlm` does.
+
 `VLLM_API_KEY="EMPTY"` is vLLM's convention for **no authentication**, not a
 placeholder waiting to be filled. Turning authentication on means setting a real
 key *and* passing `--api-key` through `NIM_LLM_PASSTHROUGH_ARGS`. Until then,
