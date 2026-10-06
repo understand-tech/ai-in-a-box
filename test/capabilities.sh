@@ -133,7 +133,7 @@ installing_mdns_reports() {
         -v "$REPO_ROOT/setup-autostart.sh":/setup-autostart.sh:ro \
         -v "$WORK_DIR/mdns-probe.sh":/mdns-probe.sh:ro \
         -e DOMAIN="$domain" -e ALREADY_ENABLED="$already_enabled" \
-        bash:5 bash /mdns-probe.sh 2>&1
+        "$BASH_IMAGE" bash /mdns-probe.sh 2>&1
 }
 
 a_local_domain_publishes_over_mdns() {
