@@ -71,7 +71,9 @@ install_id() {
     file="$(data_root)/install-id"
     if [[ ! -s "$file" ]]; then
         mkdir -p "$(dirname "$file")"
-        od -An -tx1 -N 16 /dev/urandom | tr -d ' \n' > "$file"
+        od -An -tx1 -N 16 /dev/urandom | tr -d ' \n' > "$file.$$"
+        mv -n "$file.$$" "$file"
+        rm -f "$file.$$"
     fi
     cat "$file"
 }
@@ -122,24 +124,26 @@ the_database_runs_here() {
 
 # The platform keeps two records of who asked what: the gateway's, for the App
 # Builder and the API, and the chat's. Only the number of distinct people per
-# hour leaves the database container; who they are never does.
+# hour leaves the database container; who they are never does. The credentials
+# are read inside mongosh from the container's own environment, so no command
+# line ever carries them.
 users_by_hour() {
-    compose_here exec -T mongodb sh -c '
-        mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" \
-            --authenticationDatabase admin "$MONGO_INITDB_DATABASE" --eval "
-            const since = Date.now() / 1000 - '"$DAYS"' * 86400;
-            const people = {};
-            const seen = (seconds, who) => {
-                if (!who) return;
-                const hour = Math.floor(seconds / 3600) * 3600;
-                (people[hour] = people[hour] || new Set()).add(who);
-            };
-            db.gateway_usage.find({ ts: { \$gte: since } }, { _id: 0, ts: 1, user_email: 1 })
-                .forEach(d => seen(d.ts, d.user_email));
-            db.prompt_response_collector.find({ time: { \$gte: new Date(since * 1000) } }, { _id: 0, time: 1, user: 1 })
-                .forEach(d => seen(d.time.getTime() / 1000, d.user));
-            Object.keys(people).sort().forEach(h => print(h + \" \" + people[h].size));
-        "' 2>/dev/null
+    compose_here exec -T mongodb mongosh --quiet --eval "
+        db.getSiblingDB('admin').auth(process.env.MONGO_INITDB_ROOT_USERNAME, process.env.MONGO_INITDB_ROOT_PASSWORD);
+        const platform = db.getSiblingDB(process.env.MONGO_INITDB_DATABASE);
+        const since = Date.now() / 1000 - ${DAYS} * 86400;
+        const people = {};
+        const seen = (seconds, who) => {
+            if (!who) return;
+            const hour = Math.floor(seconds / 3600) * 3600;
+            (people[hour] = people[hour] || new Set()).add(who);
+        };
+        platform.gateway_usage.find({ ts: { \$gte: since } }, { _id: 0, ts: 1, user_email: 1 })
+            .forEach(d => seen(d.ts, d.user_email));
+        platform.prompt_response_collector.find({ time: { \$gte: new Date(since * 1000) } }, { _id: 0, time: 1, user: 1 })
+            .forEach(d => seen(d.time.getTime() / 1000, d.user));
+        Object.keys(people).sort().forEach(h => print(h + ' ' + people[h].size));
+    " 2>/dev/null
 }
 
 host_memory() {
@@ -280,7 +284,7 @@ memory_section() {
 }
 
 images_section() {
-    running_images | sort -u | awk 'NF == 2 { printf "%s{\"service\": \"%s\", \"image\": \"%s\"}", (n++ ? ", " : ""), $1, $2 }'
+    running_images | sort -u | awk 'NF == 2 { gsub(/["\\]/, "", $2); printf "%s{\"service\": \"%s\", \"image\": \"%s\"}", (n++ ? ", " : ""), $1, $2 }'
 }
 
 history_section() {
@@ -328,6 +332,7 @@ write_report() {
     work=$(mktemp -d)
     id=$(install_id)
     release=$(env_get "$INSTALL_DIR/release.env" UT_RELEASE_VERSION || true)
+    release=${release//[\"\\]/}
     capacity=$(capacity_section "$work")
     users=$(users_section "$work")
     memory=$(memory_section "$work")
