@@ -94,15 +94,14 @@ Everything else is reachable only from inside the Docker networks.
 | Admin Portal | `ut-admin-portal` | — | Tenant and user administration, at `admin.understand.local` |
 | LLM | `ut-llm` | — | RAG, embeddings and reranking on GPU, `:8000` internal |
 | NIM LLM | `nim-llm` | 8001 | NVIDIA NIM serving the chat model (profile `nim`) |
-| NIM VLM | `nim-vlm` | 8002 | NVIDIA NIM serving the vision model (profile `nim`) |
 | MongoDB | `ut-mongodb` | 27018 | Document database (container port 27017) |
 | Redis | `ut-redis` | — | Task queue and cache |
 | MongoDB Backup | `ut-mongodb-backup` | — | Daily full-server dump of every database |
 | App Builder | `ut-app-builder` | 8011 (`APP_BUILDER_HOST_PORT`) | Builds and hosts generated apps (add-on) |
 | App Builder Router | `ut-app-builder-traefik` | — | Per-app routing for generated apps (add-on) |
 
-`nim-llm` and `nim-vlm` sit behind compose profiles, so they only start when
-`COMPOSE_PROFILES` includes `nim` (or `nim-llm` / `nim-vlm` individually).
+`nim-llm` sits behind compose profiles, so it only starts when
+`COMPOSE_PROFILES` includes `nim` (or `nim-llm`).
 `.env.example` sets `COMPOSE_PROFILES="nim"`.
 
 The worker services scale with `WORKER_REPLICAS` and `WORKER_CUSTOMER_REPLICAS`,
@@ -250,7 +249,7 @@ They are independent instances with no shared state, so give each its own
 > **One host, two stacks is not supported.** Running two copies of the stack on
 > the same machine needs more than a second domain: the fixed `container_name`
 > values, the fixed volume `name:` entries, the published host ports (80, 443,
-> 27018, 8001, 8002, 8011), the single external `proxy` network, the
+> 27018, 8001, 8011), the single external `proxy` network, the
 > `/var/lib/understandtech` host paths, `ut-logs-archive`'s `COMPOSE_PROJECT`
 > and the systemd unit names would all collide. Use two boxes.
 
@@ -285,7 +284,6 @@ for the App Builder:
 | `ut-llm-models` | LLM model files |
 | `ut-vllm-models` | Hugging Face cache for the LLM service |
 | `ut-nim-llm-cache` | NIM chat-model weights (survives updates — do not prune casually) |
-| `ut-nim-vlm-cache` | NIM vision-model weights (idem) |
 
 Every volume carries an explicit `name:`, so the names are fixed rather than
 prefixed with the compose project. Data therefore survives a project rename or
@@ -405,6 +403,33 @@ docker compose up -d
 chmod +x ut-logs-archive
 ./ut-logs-archive --install
 ```
+
+## Vision runs on the chat model
+
+`nim-vlm` is no longer part of the stack: `nim-llm` reads images too. `.env` is
+yours, so `git pull` does not change it. Before `docker compose up -d`, set in
+`.env`:
+
+```bash
+VLLM_VLM_MODEL="Qwen/Qwen3.8-27B"
+GATEWAY_VLM_MODEL="Qwen/Qwen3.8-27B"
+VLLM_VLM_BASE_URL="http://nim-llm:8000/v1"
+```
+
+and the `served` name of the `uai-vision` entry in `GATEWAY_MODELS` to
+`Qwen/Qwen3.8-27B`. All of them must match `LLM_MODEL`, the only name `nim-llm`
+answers to. Left on the old values, images are no longer read once the old
+container is gone. `NIM_VLM_PASSTHROUGH_ARGS` and `VLM_MODEL` are no longer read
+and can be deleted.
+
+The old container keeps running, and holding its GPU memory, until:
+
+```bash
+docker compose up -d --remove-orphans
+```
+
+Its weights stay in the `ut-nim-vlm-cache` volume. Once an image has been read
+in the platform, `docker volume rm ut-nim-vlm-cache` frees the disk.
 
 ## Auto-Start on Boot
 

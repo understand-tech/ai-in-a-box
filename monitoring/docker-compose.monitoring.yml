@@ -7,7 +7,7 @@
 #   docker compose -f docker-compose.monitoring.yml up -d
 #   → Grafana: http://<box>:3000  (admin / utmonitor — change it)
 #
-# Prometheus scrapes the NIMs by container DNS (nim-llm / nim-vlm) over the
+# Prometheus scrapes the NIM by container DNS (nim-llm) over the
 # shared network. If your platform networks are named differently, fix the
 # `networks:` block at the bottom.
 # ─────────────────────────────────────────────────────────────────────────────

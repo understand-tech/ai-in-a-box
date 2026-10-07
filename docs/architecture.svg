@@ -6,7 +6,7 @@
 <text x="62" y="158" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="24" fill="#d0610a" font-weight="700" text-anchor="start">Host Machine — DGX Spark (ARM64)</text>
 <rect x="700" y="110" width="500" height="86" rx="8" ry="8" fill="#ffffff" stroke="#ea7317" stroke-width="2" />
 <text x="716" y="132" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#0f172a" font-weight="700" text-anchor="start">Exposed:</text>
-<text x="786" y="132" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" fill="#334155" font-weight="normal" text-anchor="start">80, 443 (Caddy) · 8001, 8002 (NIM) · 8011 · 27018</text>
+<text x="786" y="132" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" fill="#334155" font-weight="normal" text-anchor="start">80, 443 (Caddy) · 8001 (NIM) · 8011 · 27018</text>
 <text x="716" y="156" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#0f172a" font-weight="700" text-anchor="start">mDNS:</text>
 <text x="786" y="156" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" fill="#1d6fa5" font-weight="normal" text-anchor="start">understand.local + llms · assistants · admin ·</text>
 <text x="786" y="176" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" fill="#1d6fa5" font-weight="normal" text-anchor="start">builder · *.apps  —  ut-mdns-alias (systemd)</text>
@@ -117,25 +117,17 @@
 <rect x="350" y="796" width="216" height="106" rx="8" ry="8" fill="#ffffff" stroke="#76b900" stroke-width="2" />
 <path d="M350 806 a10 10 0 0 1 10 -10 h196 a10 10 0 0 1 10 10 v32 h-216 z" fill="#76b900"/>
 <text x="458.0" y="823" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#ffffff" font-weight="700" text-anchor="middle">NIM Chat</text>
-<text x="458.0" y="863" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#334155" font-weight="normal" text-anchor="middle">chat / condense model</text>
+<text x="458.0" y="863" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#334155" font-weight="normal" text-anchor="middle">chat · condense · vision</text>
 <text x="458.0" y="883" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">nim-llm</text>
-<text x="720.0" y="787" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">:8000  →  :8002</text>
-<rect x="612" y="796" width="216" height="106" rx="8" ry="8" fill="#ffffff" stroke="#76b900" stroke-width="2" />
-<path d="M612 806 a10 10 0 0 1 10 -10 h196 a10 10 0 0 1 10 10 v32 h-216 z" fill="#76b900"/>
-<text x="720.0" y="823" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#ffffff" font-weight="700" text-anchor="middle">NIM Vision</text>
-<text x="720.0" y="863" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#334155" font-weight="normal" text-anchor="middle">vision-language model</text>
-<text x="720.0" y="883" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11" fill="#64748b" font-weight="normal" text-anchor="middle">nim-vlm</text>
 <rect x="112" y="910" width="168" height="30" rx="7" ry="7" fill="#76b900" />
 <text x="196.0" y="930" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#ffffff" font-weight="700" text-anchor="middle">NVIDIA GPU</text>
 <rect x="374" y="910" width="168" height="30" rx="7" ry="7" fill="#76b900" />
 <text x="458.0" y="930" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#ffffff" font-weight="700" text-anchor="middle">NVIDIA GPU</text>
-<rect x="636" y="910" width="168" height="30" rx="7" ry="7" fill="#76b900" />
-<text x="720.0" y="930" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#ffffff" font-weight="700" text-anchor="middle">NVIDIA GPU</text>
 <rect x="874" y="796" width="478" height="144" rx="8" ry="8" fill="#ffffff" stroke="#34c38f" stroke-width="2" />
 <text x="898" y="822" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="13" fill="#0f172a" font-weight="700" text-anchor="start">Also attached to the backend network</text>
 <text x="898" y="850" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#475569" font-weight="normal" text-anchor="start">ut-api  ·  ut-api-customer  ·  workers  ·  workers-customer</text>
 <text x="898" y="872" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#475569" font-weight="normal" text-anchor="start">ut-app-assistants  ·  ut-admin-portal  ·  ut-mongodb</text>
-<text x="898" y="894" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#475569" font-weight="normal" text-anchor="start">ut-llm  ·  nim-llm  ·  nim-vlm</text>
+<text x="898" y="894" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#475569" font-weight="normal" text-anchor="start">ut-llm  ·  nim-llm</text>
 <text x="898" y="924" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="11.5" fill="#2f9e6e" font-weight="normal" text-anchor="start">Reached only through Caddy — these containers have no route out.</text>
 <rect x="60" y="990" width="1320" height="200" rx="12" ry="12" fill="#f7f3ff" stroke="#8b5cf6" stroke-width="2" />
 <text x="88" y="1022" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="16" fill="#7c3aed" font-weight="700" text-anchor="start">Persistent Storage</text>
@@ -159,8 +151,6 @@
 <text x="613.2" y="1106" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#6d28d9" font-weight="normal" text-anchor="middle">ut-vllm-models</text>
 <rect x="728.8" y="1084" width="196" height="34" rx="7" ry="7" fill="#f1eaff" stroke="#a78bfa" stroke-width="1.5" />
 <text x="826.8" y="1106" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#6d28d9" font-weight="normal" text-anchor="middle">ut-nim-llm-cache</text>
-<rect x="942.4" y="1084" width="196" height="34" rx="7" ry="7" fill="#f1eaff" stroke="#a78bfa" stroke-width="1.5" />
-<text x="1040.4" y="1106" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#6d28d9" font-weight="normal" text-anchor="middle">ut-nim-vlm-cache</text>
 <rect x="1156.0" y="1084" width="196" height="34" rx="7" ry="7" fill="#f1eaff" stroke="#a78bfa" stroke-width="1.5" />
 <text x="1254.0" y="1106" font-family="'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#6d28d9" font-weight="normal" text-anchor="middle">ut-vllm-llm-cache</text>
 <rect x="88" y="1128" width="410" height="34" rx="7" ry="7" fill="#ffffff" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="5 4" />

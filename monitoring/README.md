@@ -39,7 +39,7 @@ creating them, so the main `compose.yaml` stays untouched.
 
 | Job | Target | Needs |
 |---|---|---|
-| `vllm` | nim-llm:8000, nim-vlm:8000 | nothing (built into NIM) |
+| `vllm` | nim-llm:8000 | nothing (built into NIM) |
 | `dcgm` | dcgm-exporter:9400 | NVIDIA Container Toolkit |
 | `gateway` | ut-api:8501, ut-api-customer:8501 | a ut-api image with `llm_gateway/prom.py` (staging_aws ≥ 2026-09-15) |
 | `node` | node-exporter:9100 | nothing |
@@ -51,9 +51,8 @@ creating them, so the main `compose.yaml` stays untouched.
 - The platform stack is already up (`docker compose up -d` at the repository
   root), so the external networks `ut-backend-network` and `ut-frontend-network`
   exist.
-- `COMPOSE_PROFILES` includes `nim`, so `nim-llm` and `nim-vlm` are running and
-  resolvable by DNS on the backend network. Without them the `vllm` targets stay
-  `DOWN` and the dashboard is empty; adjust the targets in `prometheus.yml` if the
+- `COMPOSE_PROFILES` includes `nim`, so `nim-llm` is running and resolvable
+  by DNS on the backend network. Without it the `vllm` target stays `DOWN` and the dashboard is empty; adjust the targets in `prometheus.yml` if the
   box serves other engines.
 - NVIDIA Container Toolkit installed, for the DCGM exporter's GPU access.
 
