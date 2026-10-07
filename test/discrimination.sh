@@ -211,6 +211,26 @@ install_walk_discriminates() {
     fi
 }
 
+migration_discriminates() {
+    local description=$1 expected=$2 mutation=$3
+    fresh_copy
+    ( cd "$COPY" && eval "$mutation" ) >/dev/null 2>&1
+    find "$COPY" -name '*.bak' -delete 2>/dev/null
+
+    local output
+    output=$( cd "$COPY" && MIGRATION_HISTORY="$REPO_ROOT" ./test/migration.sh 2>&1 )
+
+    if grep '✘' <<< "$output" | grep -qF "$expected"; then
+        printf '  %s✔%s %s\n' "$GREEN" "$NC" "$description"
+        PASSED=$((PASSED + 1))
+    else
+        printf '  %s✘%s %s\n' "$RED" "$NC" "$description"
+        printf '%s      "%s" was expected to fail and did not%s\n' "$DIM" "$expected" "$NC"
+        FAILED=$((FAILED + 1))
+        FAILURES+=("$description")
+    fi
+}
+
 ingress_discriminates() {
     local description=$1 expected=$2 mutation=$3
     fresh_copy
@@ -594,6 +614,12 @@ if [[ -x "$REPO_ROOT/test/ingress.sh" ]]; then
         "the documented OIDC redirect URI reaches the platform API" \
         "sed -i.bak 's|/api/openid/callback|/en/login/openid-auth|' docs/first-run-configuration.md"
 fi
+
+printf '\n%sMigration, seen failing%s\n\n' "$BOLD" "$NC"
+
+migration_discriminates "a volume renamed beside the one retired on purpose" \
+    "every volume and network keeps its name" \
+    "sed -i.bak 's|-mongodb-data$|-mongodb-data-renamed|' compose.yaml"
 
 printf '\n%s%d discriminate%s' "$GREEN" "$PASSED" "$NC"
 if (( FAILED )); then

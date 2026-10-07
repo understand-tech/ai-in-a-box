@@ -19,8 +19,8 @@ name: ${COMPOSE_PROJECT_NAME:-understandtech}
 # host — and naming it "dev" would invite someone to add development-only
 # settings to it later.
 #
-# nim-llm and nim-vlm need no entry here: they already sit behind the "nim"
-# profile, so leaving COMPOSE_PROFILES empty keeps them out.
+# nim-llm needs no entry here: it already sits behind the "nim" profile, so
+# leaving COMPOSE_PROFILES empty keeps it out.
 
 services:
   llm:

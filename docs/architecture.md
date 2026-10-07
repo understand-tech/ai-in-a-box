@@ -22,7 +22,7 @@ flowchart TB
         CADDY["caddy - the only container publishing 80 and 443"]
         SURFACES["frontend, app-llms, app-assistants, admin-portal"]
         APPS["api, api-customer, workers, workers-customer"]
-        INFER["llm, nim-llm, nim-vlm - GPU inference"]
+        INFER["llm, nim-llm - GPU inference"]
         REDIS["redis - queue and cache"]
         MONGO["mongodb"]
     end
@@ -86,7 +86,7 @@ Builder's generated apps is not shown. Not verified: not seen rendered.
 | Network | `internal` | Who is on it |
 |---|---|---|
 | `ut-frontend-network` | no | `caddy`, `frontend`, `api`, `api-customer`, the workers, `app-llms`, `app-assistants`, `admin-portal`, `llm` |
-| `ut-backend-network` | **yes** | `api`, `api-customer`, the workers, `app-assistants`, `admin-portal`, `llm`, `nim-llm`, `nim-vlm`, `redis`, `files-backup` |
+| `ut-backend-network` | **yes** | `api`, `api-customer`, the workers, `app-assistants`, `admin-portal`, `llm`, `nim-llm`, `redis`, `files-backup` |
 | `ut-data-network` | **yes** | `mongodb`, `mongodb-backup`, `api`, `api-customer`, the workers, `app-llms`, `app-assistants`, `llm` |
 | `ut-ca-network` | **yes** | `caddy`, `step-ca` |
 
