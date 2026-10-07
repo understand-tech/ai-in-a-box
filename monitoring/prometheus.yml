@@ -13,8 +13,6 @@ scrape_configs:
     static_configs:
       - targets: ["nim-llm:8000"]
         labels: { service: nim-llm }
-      - targets: ["nim-vlm:8000"]
-        labels: { service: nim-vlm }
 
   - job_name: dcgm
     scrape_interval: 5s
