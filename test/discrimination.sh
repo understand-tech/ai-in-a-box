@@ -182,6 +182,12 @@ if grep -q 'check_every_tool_ships' "$REPO_ROOT/test/invariants.sh"; then
         "sed -i.bak '/REPO_ROOT\\/ut-report/d' packaging/build-deb.sh"
 fi
 
+if grep -q 'check_the_install_starts_the_stack_as_boot_does' "$REPO_ROOT/test/invariants.sh"; then
+    discriminates "an install that leaves a retired service running" \
+        "install-keeps-retired-containers" \
+        "sed -i.bak 's|compose_in_dir up -d --remove-orphans|compose_in_dir up -d|' ut-install"
+fi
+
 discriminates "verbose logs in the template" \
     "verbose-log-level:LOG_LEVEL" \
     "sed -i.bak 's|^LOG_LEVEL=.*|LOG_LEVEL=\"DEBUG\"|' release.env"

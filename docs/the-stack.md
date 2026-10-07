@@ -9,9 +9,8 @@ For the shape of the request path and what each network can reach, see
 
 ## Services
 
-Only `caddy` publishes ports on every interface. The two NIM containers are
-bound to loopback, so they are reachable from the machine itself and from
-nowhere else; a compute node that has to serve another machine overrides
+Only `caddy` publishes ports on every interface. `nim-llm` is bound to
+loopback, so it is reachable from the machine itself and from nowhere else; a compute node that has to serve another machine overrides
 `NIM_LLM_BIND_ADDRESS`. **Everything else is reachable only from inside the
 Docker networks** — the database has no host port at all.
 
@@ -141,7 +140,7 @@ reinstallable in a minute. What the backup services do with it is in
 Run these from the release directory, `/usr/share/understandtech`. Compose
 reads `.env` from there for both interpolation and its own settings —
 `COMPOSE_FILE` (which overlays the App Builder) and `COMPOSE_PROFILES` (which
-enables the NIM containers) are set there.
+enables `nim-llm`) are set there.
 
 ```bash
 # What is running, and is it healthy
@@ -295,6 +294,6 @@ They are independent instances with no shared state, so give each its own
 > **One host, two stacks is not supported.** Running two copies of the stack on
 > the same machine needs more than a second domain: the fixed container names,
 > the fixed volume `name:` entries, the published host ports (80, 443, 8001,
-> 8002, 8011), the single external `proxy` network, the
+> 8011), the single external `proxy` network, the
 > `/var/lib/understandtech` host paths, `ut-logs-archive`'s `COMPOSE_PROJECT`
 > and the systemd unit names would all collide. Use two boxes.

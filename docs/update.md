@@ -133,14 +133,21 @@ installer reports one of them as differing in `local.env`, remove that line from
 `local.env`: it wins over the release and names a container that no longer
 exists.
 
-The old container keeps running, and holding its GPU memory, until:
-
-```bash
-docker compose up -d --remove-orphans
-```
-
 Its weights stay in the `ut-nim-vlm-cache` volume. Once an image has been read
 in the platform, `docker volume rm ut-nim-vlm-cache` frees the disk.
+
+**The chat model takes the memory vision gave back.** `NIM_LLM_PASSTHROUGH_ARGS`
+now starts `nim-llm` with `--gpu-memory-utilization 0.75` instead of 0.55. On a
+GB10 its context cache grows from about 210 000 to 720 000 tokens, which is what
+keeps returning conversations from being read again. If the installer reports
+that line as differing in `local.env`, the old value stays in force until you
+remove it there.
+
+**`ut-install` now removes the containers the release no longer declares**, as
+the boot service always did at every restart. That is what takes the old
+`nim-vlm` down before `nim-llm` asks for its memory. A service you started from
+a compose file of your own is removed too, unless that file is listed in
+`COMPOSE_FILE` in `local.env`.
 
 **Three containers lost their fixed names.** `ut-llm`, `nim-llm` and `nim-vlm`
 are now named after the Compose project — `understandtech-llm-1` and so on. A
