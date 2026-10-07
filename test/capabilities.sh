@@ -1475,7 +1475,7 @@ EOF
 name: ${project}
 services:
   nim-llm:
-    image: python:3.12-alpine
+    image: ${PYTHON_IMAGE}
     command: ["python", "/p/serve.py"]
     volumes: ["./:/p:ro"]
   metrics:
@@ -1548,9 +1548,8 @@ printf -- '--- after uninstall ---\n'
 ls /etc/systemd/system/ut-status.service /etc/systemd/system/ut-status.timer 2>/dev/null
 printf 'END\n'
 PROBE
-    docker run --rm -e TOOL_BESIDE="$tool_beside" \
-        -v "$REPO_ROOT":/src:ro -v "$WORK_DIR/timer-probe.sh":/timer-probe.sh:ro \
-        bash:5 bash /timer-probe.sh 2>&1
+    docker run --rm -i -e TOOL_BESIDE="$tool_beside" -v "$REPO_ROOT":/src:ro \
+        "$BASH_IMAGE" bash -s < "$WORK_DIR/timer-probe.sh" 2>&1
 }
 
 the_status_check_runs_every_hour() {
