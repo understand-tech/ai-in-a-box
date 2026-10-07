@@ -1030,9 +1030,11 @@ step_pull() {
     log_info "Images present locally"
 }
 
+# As the boot service does: a service the release stopped declaring is removed,
+# rather than left holding the GPU memory its replacement now asks for.
 step_start() {
     log_step "Starting services"
-    compose_in_dir up -d
+    compose_in_dir up -d --remove-orphans
     log_info "Containers created"
 }
 

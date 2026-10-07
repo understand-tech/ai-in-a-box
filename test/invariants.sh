@@ -448,6 +448,18 @@ check_the_recorder_is_bounded() {
     done
 }
 
+# The boot service starts the stack with --remove-orphans. An install that does not
+# leaves a retired service running beside the one that replaced it, still holding
+# the memory its replacement was given.
+check_the_install_starts_the_stack_as_boot_does() {
+    local installer="$REPO_ROOT/ut-install" autostart="$REPO_ROOT/setup-autostart.sh"
+    [[ -f "$installer" && -f "$autostart" ]] || return 0
+    grep -q 'compose up -d .*--remove-orphans' "$autostart" || return 0
+    sed -n '/^step_start() {/,/^}/p' "$installer" | grep -q 'up -d.*--remove-orphans' && return 0
+    report "install-keeps-retired-containers" \
+        "ut-install starts the stack without --remove-orphans while the boot service uses it — after an upgrade, a retired service keeps running, and its memory, until the next reboot"
+}
+
 check_production_defaults() {
     local log_level
     log_level=$(env_raw_value LOG_LEVEL 2>/dev/null || true)
@@ -591,6 +603,7 @@ main() {
     check_images_are_pinned
     check_compose_images_are_pinned
     check_the_recorder_is_bounded
+    check_the_install_starts_the_stack_as_boot_does
     check_production_defaults
     check_documented_paths_exist
     check_the_stub_overlay_still_matches_the_services
