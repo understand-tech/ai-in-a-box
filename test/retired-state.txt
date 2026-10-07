@@ -1,0 +1,12 @@
+# Volumes and networks a release removes on purpose.
+#
+# test/migration.sh fails when an upgrade stops declaring a volume or network
+# the previous version declared, because that is how a customer loses data.
+# A name listed here is removed deliberately: the upgrade notes say what
+# happens to it on disk. Anything else that disappears still fails.
+#
+# One name per line. Keep the reason next to it.
+
+# Vision runs on nim-llm; the weights stay on disk until the operator removes
+# them (docs/update.md).
+ut-nim-vlm-cache

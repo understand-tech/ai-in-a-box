@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$SCRIPT_DIR/images.sh"
 FROM_REF=${MIGRATION_FROM:-origin/main}
+HISTORY_ROOT=${MIGRATION_HISTORY:-$REPO_ROOT}
+RETIRED_FILE="$SCRIPT_DIR/retired-state.txt"
 
 WORK_DIR="$(mktemp -d)"
 BEFORE="$WORK_DIR/before"
@@ -38,9 +40,9 @@ property() {
 }
 
 resolve_starting_point() {
-    git -C "$REPO_ROOT" rev-parse --verify --quiet "$FROM_REF" >/dev/null && return 0
-    git -C "$REPO_ROOT" fetch --quiet --depth=1 origin "${FROM_REF#origin/}" 2>/dev/null \
-        && git -C "$REPO_ROOT" rev-parse --verify --quiet FETCH_HEAD >/dev/null \
+    git -C "$HISTORY_ROOT" rev-parse --verify --quiet "$FROM_REF" >/dev/null && return 0
+    git -C "$HISTORY_ROOT" fetch --quiet --depth=1 origin "${FROM_REF#origin/}" 2>/dev/null \
+        && git -C "$HISTORY_ROOT" rev-parse --verify --quiet FETCH_HEAD >/dev/null \
         && FROM_REF=FETCH_HEAD
 }
 
@@ -48,7 +50,7 @@ lay_out_both_versions() {
     mkdir -p "$BEFORE" "$AFTER"
     local file
     for file in compose.yaml compose.appbuilder.yaml .env.example; do
-        git -C "$REPO_ROOT" show "$FROM_REF:$file" > "$BEFORE/$file" 2>/dev/null
+        git -C "$HISTORY_ROOT" show "$FROM_REF:$file" > "$BEFORE/$file" 2>/dev/null
     done
     cp "$REPO_ROOT"/compose*.yaml "$AFTER/"
     cp "$REPO_ROOT/release.env" "$AFTER/"
@@ -171,12 +173,16 @@ the_installer_recognises_an_existing_database() {
     return "$verdict"
 }
 
+retired_state_names() {
+    grep -vE '^[[:space:]]*(#|$)' "$RETIRED_FILE" 2>/dev/null | sort -u
+}
+
 the_state_keeps_its_names() {
     local before lost
     before=$(state_names_in "$BEFORE")
     (( $(grep -c . <<< "$before") >= 10 )) \
         || { echo "only $(grep -c . <<< "$before") names found before the change, too few to be reading them all"; return 1; }
-    lost=$(comm -23 <(printf '%s\n' "$before") <(state_names_in "$AFTER"))
+    lost=$(comm -23 <(printf '%s\n' "$before") <(state_names_in "$AFTER") | comm -23 - <(retired_state_names))
     [[ -z "$lost" ]] || { echo "no longer mounted: $(tr '\n' ' ' <<< "$lost")"; return 1; }
 }
 
@@ -314,7 +320,7 @@ lay_out_both_versions
 load_installer
 
 printf '%sMigrating an existing install%s %sfrom %s%s\n' \
-    "$BOLD" "$NC" "$DIM" "$(git -C "$REPO_ROOT" rev-parse --short "$FROM_REF")" "$NC"
+    "$BOLD" "$NC" "$DIM" "$(git -C "$HISTORY_ROOT" rev-parse --short "$FROM_REF")" "$NC"
 echo
 
 property "an untouched environment file is refused, and says which variable" \
