@@ -727,6 +727,38 @@ services:
     networks:
       - ut-backend-network
 
+  metrics:
+    labels:
+      ut.role: "metrics"
+    profiles: ["nim", "nim-llm"]
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.13.4@sha256:87861b8cf91579109319ebc300f3f1060e6da9c05d6ae8ad15a20c879e84e32e}
+    container_name: ${CONTAINER_PREFIX:-ut}-metrics
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=35d
+      - --storage.tsdb.retention.size=1GB
+    expose:
+      - "9090"
+    volumes:
+      - ./metrics/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - metrics-data:/prometheus
+    networks:
+      - ut-backend-network
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/ready"]
+      <<: *healthcheck-defaults
+      start_period: 30s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 128M
+
   llm:
     labels:
       ut.role: "inference"
@@ -835,3 +867,5 @@ volumes:
     name: ${RESOURCE_PREFIX:-ut}-nim-llm-cache
   vllm-llm-cache:
     name: ${RESOURCE_PREFIX:-ut}-vllm-llm-cache
+  metrics-data:
+    name: ${RESOURCE_PREFIX:-ut}-metrics-data

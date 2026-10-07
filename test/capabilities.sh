@@ -1050,6 +1050,10 @@ capability "the App Builder overlay renders on top of it" \
     renders_valid_configuration -f compose.yaml -f compose.appbuilder.yaml
 capability "the control-plane role leaves out the inference engines" \
     omits_service nim-llm -f compose.yaml
+capability "a machine that runs an engine records its load" \
+    with_profiles nim lists_service metrics -f compose.yaml
+capability "a machine that runs no engine records nothing" \
+    omits_service metrics -f compose.yaml
 
 group "Machine identity"
 capability "the appliance runs its own certificate authority" \
@@ -1198,6 +1202,8 @@ if [[ -f "$REPO_ROOT/compose.compute.yaml" ]]; then
         with_profiles nim lists_service nim-llm -f compose.yaml -f compose.compute.yaml
     capability "a compute node runs no database" \
         omits_service mongodb -f compose.yaml -f compose.compute.yaml
+    capability "a compute node records the load of what it serves" \
+        with_profiles nim lists_service metrics -f compose.yaml -f compose.compute.yaml
     capability "overriding the prefixes isolates every resource" \
         overrides_isolate_every_resource
 fi
@@ -1243,13 +1249,356 @@ an_install_that_was_never_configured_is_refused() {
     ut_status_refuses "$dir" "was it ever installed"
 }
 
+history_probe() {
+    local probe
+    probe=$(mktemp -d "$WORK_DIR/history.XXXXXX")
+    cp "$REPO_ROOT/compose.yaml" "$probe/"
+    printf 'UT_RELEASE_VERSION="2026.10.1+abc1234"\n' > "$probe/release.env"
+    printf 'DATA_ROOT="%s/data"\nCOMPOSE_PROJECT_NAME="history-probe"\n' "$probe" > "$probe/.env"
+    printf '%s' "$probe"
+}
+
+# Each value of exits is one run of the installer ending with that status, while
+# the step it had announced last was the one given.
+install_history_after() {
+    local probe=$1 exits=$2 step=$3
+    cat > "$probe/run.sh" <<EOF
+set +u
+UT_INSTALL_DIR="$probe" source "$REPO_ROOT/ut-install" >/dev/null 2>&1
+set +eE
+trap - ERR
+for status in $exits; do
+    ( trap record_this_install EXIT; log_step "$step" >/dev/null; exit "\$status" )
+done
+EOF
+    bash "$probe/run.sh" >/dev/null 2>&1
+    cat "$probe/data/install-history.jsonl" 2>/dev/null
+}
+
+the_installer_keeps_every_run_from_its_first_step() {
+    sed -n '/^main() {/,/^}/p' "$REPO_ROOT/ut-install" \
+        | sed -n '/start_logging/,/preflight/p' | grep -q 'trap record_this_install EXIT'
+}
+
+a_failed_install_is_kept_with_the_step_it_stopped_at() {
+    local history
+    history=$(install_history_after "$(history_probe)" 1 "Pulling images")
+    grep -q '"tool":"ut-install","outcome":"failed","step":"Pulling images","release":"2026.10.1+abc1234"' <<< "$history" \
+        && return 0
+    echo "${history:-no history written}"
+    return 1
+}
+
+a_second_install_is_added_after_the_first() {
+    local history
+    history=$(install_history_after "$(history_probe)" "1 0" "Starting the platform")
+    [[ $(grep -c '"tool":"ut-install"' <<< "$history") -eq 2 ]] \
+        && tail -1 <<< "$history" | grep -q '"outcome":"done","step":""' \
+        && return 0
+    echo "${history:-no history written}"
+    return 1
+}
+
+a_status_verdict_is_kept_beside_the_installs() {
+    local probe status expected history
+    probe=$(history_probe)
+    mkdir -p "$probe/data"
+    "$REPO_ROOT/ut-status" --dir "$probe" >/dev/null 2>&1 && status=0 || status=$?
+    expected="not-serving"
+    (( status == 0 )) && expected="serving"
+    history=$(cat "$probe/data/install-history.jsonl" 2>/dev/null)
+    grep -qE "\"tool\":\"ut-status\",\"outcome\":\"${expected}\",\"available_bytes\":([0-9]+|null)}" <<< "$history" && return 0
+    echo "exit ${status}, history: ${history:-none}"
+    return 1
+}
+
 if [[ -x "$REPO_ROOT/ut-status" ]]; then
     group "Telling whether an install serves"
     capability "a directory with no install is refused, not called healthy" \
         a_directory_with_no_install_is_refused
     capability "an install that was never configured is refused" \
         an_install_that_was_never_configured_is_refused
+    capability "a status verdict is kept beside the installs" \
+        a_status_verdict_is_kept_beside_the_installs
 fi
+
+REPORT_KEYS="schema generated_at install_id window_days release images service image capacity engine hours hour requests running_peak waiting_peak first_token_within_1s first_token_within_2_5s prompts_le_500 prompts_le_2000 prompts_le_10000 users_by_hour users history at tool outcome step warnings memory host total_bytes available_bytes services current_bytes peak_bytes limit_bytes started_at"
+
+ut_report_refuses() {
+    local dir=$1 expected=$2 output
+    output=$( "$REPO_ROOT/ut-report" --dir "$dir" --out "$dir" 2>&1 ) && return 1
+    [[ ! -e "$dir/report.json" ]] || { echo "a report was written anyway"; return 1; }
+    grep -q "$expected" <<< "$output" && return 0
+    echo "$output"
+    return 1
+}
+
+a_directory_with_no_install_gets_no_report() {
+    ut_report_refuses "$(mktemp -d)" "No install in"
+}
+
+an_install_never_configured_gets_no_report() {
+    local dir
+    dir=$(mktemp -d)
+    cp "$REPO_ROOT/compose.yaml" "$dir/"
+    ut_report_refuses "$dir" "was it ever installed"
+}
+
+# What ut-report gathers is replaced here: the format is under test, not the
+# stack it reads. Each argument is what one source answers, as "hour value" lines.
+report_from() {
+    local probe=$1 requests=$2 users=$3 ttft=$4
+    cat > "$probe/run.sh" <<EOF
+set +u
+UT_INSTALL_DIR="$probe" source "$REPO_ROOT/ut-report" >/dev/null 2>&1
+set +eE
+trap - ERR
+engines_recorded() { printf '${ENGINES-nim-llm:8000\\n}'; }
+an_engine_runs_here() { return 0; }
+hourly() {
+    case "\$1" in
+        *request_success*)    printf '$requests' ;;
+        *time_to_first_token*) printf '$ttft' ;;
+        *)                    printf '1759651200 2\n' ;;
+    esac
+}
+users_by_hour() { printf '$users'; }
+the_database_runs_here() { return 0; }
+running_images() { printf 'api ghcr.io/understand-tech/ut-api-customer:2.1-arm64@sha256:0000\n'; }
+host_memory() { printf '128000000000 23000000000\n'; }
+service_memory() { printf '${SERVICE_MEMORY-api 537022464 596684800 4294967296 2026-10-06T09:45:26Z\\nnim-llm 7500000000 92000000000 max 2026-10-06T09:45:26Z\\n}'; }
+write_report "$probe/out"
+EOF
+    bash "$probe/run.sh" >/dev/null 2>&1
+    cat "$probe/out/report.json" 2>/dev/null
+}
+
+a_served_hour() { report_from "$(history_probe)" '1759651200 5\n' '1759651200 3\n' '1759651200 0.8\n'; }
+
+the_report_holds_no_key_outside_its_schema() {
+    local report key unknown=""
+    report=$(a_served_hour)
+    [[ -n "$report" ]] || { echo "no report written"; return 1; }
+    for key in $(grep -oE '"[a-z_0-9]+":' <<< "$report" | tr -d '":' | sort -u); do
+        grep -qw "$key" <<< "$REPORT_KEYS" || unknown+=" $key"
+    done
+    [[ -z "$unknown" ]] && return 0
+    echo "keys outside the schema:${unknown}"
+    return 1
+}
+
+the_report_names_no_user() {
+    local report
+    report=$(a_served_hour)
+    [[ -n "$report" ]] || { echo "no report written"; return 1; }
+    local address='[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
+    grep -qE "$address" <<< "$report" || return 0
+    grep -oE "$address" <<< "$report"
+    return 1
+}
+
+requests_served_with_no_user_counted_are_flagged() {
+    local report
+    report=$(report_from "$(history_probe)" '1759651200 5\n' '' '1759651200 0.8\n')
+    grep -q '"users-missing' <<< "$report" && return 0
+    echo "${report:-no report written}"
+    return 1
+}
+
+a_series_the_recorder_does_not_have_is_flagged() {
+    local report
+    report=$(report_from "$(history_probe)" '1759651200 5\n' '1759651200 3\n' '')
+    grep -q '"series-missing:nim-llm:8000:first_token_within_2_5s' <<< "$report" && return 0
+    echo "${report:-no report written}"
+    return 1
+}
+
+an_engine_nobody_recorded_is_flagged() {
+    local report
+    report=$(ENGINES="" report_from "$(history_probe)" '' '' '')
+    grep -q '"recorder-missing' <<< "$report" && return 0
+    echo "${report:-no report written}"
+    return 1
+}
+
+the_report_gives_each_service_its_memory_peak_and_limit() {
+    local report
+    report=$(a_served_hour)
+    grep -q '"service": "api", "current_bytes": 537022464, "peak_bytes": 596684800, "limit_bytes": 4294967296' <<< "$report" \
+        && grep -q '"service": "nim-llm", "current_bytes": 7500000000, "peak_bytes": 92000000000, "limit_bytes": null' <<< "$report" \
+        && grep -q '"host": {"total_bytes": 128000000000, "available_bytes": 23000000000}' <<< "$report" \
+        && return 0
+    echo "${report:-no report written}"
+    return 1
+}
+
+a_memory_peak_nobody_can_read_is_flagged() {
+    local report
+    report=$(SERVICE_MEMORY='api 537022464 - 4294967296 2026-10-06T09:45:26Z\\n' report_from "$(history_probe)" '1759651200 5\n' '1759651200 3\n' '1759651200 0.8\n')
+    grep -q '"peak_bytes": null' <<< "$report" && grep -q '"memory-peak-unknown:api' <<< "$report" && return 0
+    echo "${report:-no report written}"
+    return 1
+}
+
+the_manifest_checksum_is_the_reports() {
+    local probe expected listed
+    probe=$(history_probe)
+    report_from "$probe" '1759651200 5\n' '1759651200 3\n' '1759651200 0.8\n' >/dev/null
+    expected=$(openssl dgst -sha256 -r "$probe/out/report.json" 2>/dev/null | cut -d' ' -f1)
+    listed=$(grep 'report.json' "$probe/out/SHA256SUMS" 2>/dev/null | cut -d' ' -f1)
+    [[ -n "$expected" && "$expected" == "$listed" ]] && grep -q "$expected" "$probe/out/MANIFEST.txt" && return 0
+    echo "report ${expected:-missing}, listed ${listed:-nothing}"
+    return 1
+}
+
+# The one path report_from replaces: the real recorder, asked the way ut-report
+# asks it, about an engine that answers with what NIM answers.
+the_report_finds_the_engine_the_recorder_holds() {
+    local probe project found="" tries
+    probe=$(history_probe)
+    project="report-probe-$$"
+    mkdir -p "$probe/metrics"
+    cp "$REPO_ROOT/metrics/prometheus.yml" "$probe/metrics/"
+    printf '# TYPE vllm:num_requests_running gauge\nvllm:num_requests_running{model_name="m"} 0\n' > "$probe/engine-metrics"
+    cat > "$probe/serve.py" <<'EOF'
+import http.server
+body = open("/p/engine-metrics", "rb").read()
+class Engine(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; version=1.0.0; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(body)
+http.server.HTTPServer(("", 8000), Engine).serve_forever()
+EOF
+    cat > "$probe/compose.yaml" <<EOF
+name: ${project}
+services:
+  nim-llm:
+    image: ${PYTHON_IMAGE}
+    command: ["python", "/p/serve.py"]
+    volumes: ["./:/p:ro"]
+  metrics:
+    image: $(grep -m1 '^PROMETHEUS_IMAGE=' "$REPO_ROOT/release.env" | cut -d'"' -f2)
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus"]
+    volumes: ["./metrics/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+EOF
+    ( cd "$probe" && docker compose up -d >/dev/null 2>&1 )
+    for tries in 1 2 3 4 5 6 7 8; do
+        sleep 5
+        found=$(UT_INSTALL_DIR="$probe" bash -c 'set +u; source "$1" >/dev/null 2>&1; set +eE; trap - ERR; engines_recorded' _ "$REPO_ROOT/ut-report")
+        [[ -n "$found" ]] && break
+    done
+    ( cd "$probe" && docker compose down -v >/dev/null 2>&1 )
+    [[ "$found" == "nim-llm:8000" ]] && return 0
+    echo "engines found: ${found:-none}"
+    return 1
+}
+
+if [[ -x "$REPO_ROOT/ut-report" ]]; then
+    group "Reporting what decides the size of a box"
+    capability "the report finds the engine the recorder holds" \
+        the_report_finds_the_engine_the_recorder_holds
+    capability "a directory with no install gets no report" \
+        a_directory_with_no_install_gets_no_report
+    capability "an install never configured gets no report" \
+        an_install_never_configured_gets_no_report
+    capability "the report holds no key outside its schema" \
+        the_report_holds_no_key_outside_its_schema
+    capability "the report names no user" \
+        the_report_names_no_user
+    capability "requests served with no user counted are flagged" \
+        requests_served_with_no_user_counted_are_flagged
+    capability "a series the recorder does not have is flagged" \
+        a_series_the_recorder_does_not_have_is_flagged
+    capability "an engine nobody recorded is flagged" \
+        an_engine_nobody_recorded_is_flagged
+    capability "the report gives each service its memory peak and limit" \
+        the_report_gives_each_service_its_memory_peak_and_limit
+    capability "a memory peak nobody can read is flagged" \
+        a_memory_peak_nobody_can_read_is_flagged
+    capability "the manifest carries the report's checksum" \
+        the_manifest_checksum_is_the_reports
+fi
+
+# setup-autostart.sh run for real in a container, with docker and systemctl
+# answering yes. TOOL_BESIDE says whether ut-status sits next to the release, as
+# in a checkout, or only on the PATH, as the package installs it.
+status_timer_report() {
+    local tool_beside=$1
+    cat > "$WORK_DIR/timer-probe.sh" <<'PROBE'
+set -u
+mkdir -p /fix /stub /usr/local/bin
+cp /src/compose.yaml /fix/
+printf 'UT_DOMAIN="box.example.com"\n' > /fix/.env
+printf '#!/bin/sh\nexit 0\n' > /stub/docker
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> /stub/calls\nexit 0\n' > /stub/systemctl
+chmod +x /stub/docker /stub/systemctl
+if [ "$TOOL_BESIDE" = yes ]; then
+    cp /src/ut-status /fix/ut-status
+else
+    cp /src/ut-status /usr/local/bin/ut-status
+fi
+PATH=/stub:$PATH bash /src/setup-autostart.sh --install --dir /fix >/dev/null 2>&1
+printf -- '--- service ---\n'; cat /etc/systemd/system/ut-status.service 2>/dev/null
+printf -- '--- timer ---\n'; cat /etc/systemd/system/ut-status.timer 2>/dev/null
+printf -- '--- systemctl ---\n'; cat /stub/calls
+PATH=/stub:$PATH bash /src/setup-autostart.sh --uninstall --dir /fix >/dev/null 2>&1
+printf -- '--- after uninstall ---\n'
+ls /etc/systemd/system/ut-status.service /etc/systemd/system/ut-status.timer 2>/dev/null
+printf 'END\n'
+PROBE
+    docker run --rm -i -e TOOL_BESIDE="$tool_beside" -v "$REPO_ROOT":/src:ro \
+        "$BASH_IMAGE" bash -s < "$WORK_DIR/timer-probe.sh" 2>&1
+}
+
+the_status_check_runs_every_hour() {
+    local report
+    report=$(status_timer_report yes)
+    grep -q '^OnCalendar=hourly$' <<< "$report" \
+        && grep -q '^ExecStart=/fix/ut-status --dir /fix$' <<< "$report" \
+        && grep -q '^enable --now ut-status.timer$' <<< "$report" \
+        && return 0
+    echo "$report"
+    return 1
+}
+
+the_package_s_status_tool_is_the_one_scheduled() {
+    local report
+    report=$(status_timer_report no)
+    grep -q '^ExecStart=/usr/local/bin/ut-status --dir /fix$' <<< "$report" && return 0
+    echo "$report"
+    return 1
+}
+
+removing_the_units_removes_the_status_check() {
+    local report left
+    report=$(status_timer_report yes)
+    left=${report#*--- after uninstall ---}
+    left=${left%END*}
+    grep -q 'ut-status.timer' <<< "${report%%--- after uninstall ---*}" || { echo "$report"; return 1; }
+    [[ -z "${left//[[:space:]]/}" ]] && return 0
+    echo "still installed:${left}"
+    return 1
+}
+
+if grep -q 'ut-status' "$REPO_ROOT/setup-autostart.sh"; then
+    group "Checking every hour whether the install serves"
+    capability "the status check runs every hour" \
+        the_status_check_runs_every_hour
+    capability "installed from the package, the status check runs the packaged tool" \
+        the_package_s_status_tool_is_the_one_scheduled
+    capability "removing the units removes the status check" \
+        removing_the_units_removes_the_status_check
+fi
+
+group "Keeping the history of an install"
+capability "every install run is kept, from its first step" \
+    the_installer_keeps_every_run_from_its_first_step
+capability "a failed install is kept, with the step it stopped at" \
+    a_failed_install_is_kept_with_the_step_it_stopped_at
+capability "a second install is added after the first, never over it" \
+    a_second_install_is_added_after_the_first
 
 printf '\n%s%d verified%s' "$GREEN" "$PASSED" "$NC"
 if (( FAILED )); then

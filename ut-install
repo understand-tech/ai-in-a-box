@@ -39,6 +39,7 @@ NO_GPU=false
 TOKEN_FILE=""
 REGISTRY_TOKEN="${UT_REGISTRY_TOKEN:-}"
 HEALTH_TIMEOUT="${UT_HEALTH_TIMEOUT:-3600}"
+CURRENT_STEP=""
 
 SHIPPED_PLACEHOLDERS=(
     "" "12345678" "password" "SECRET" "SJKFVK" "FVVE" "SJBVSJB" "ut"
@@ -59,7 +60,7 @@ log()       { printf '%s\n' "$*"; }
 log_info()  { printf '%s[ ok ]%s %s\n' "$GREEN" "$NC" "$*"; }
 log_warn()  { printf '%s[warn]%s %s\n' "$YELLOW" "$NC" "$*"; }
 log_error() { printf '%s[fail]%s %s\n' "$RED" "$NC" "$*" >&2; }
-log_step()  { printf '\n%s==>%s %s%s%s\n' "$CYAN" "$NC" "$BOLD" "$*" "$NC"; }
+log_step()  { CURRENT_STEP=$*; printf '\n%s==>%s %s%s%s\n' "$CYAN" "$NC" "$BOLD" "$*" "$NC"; }
 
 die() { log_error "$*"; exit 1; }
 
@@ -1178,6 +1179,28 @@ print_secrets_out_of_band() {
     printf '\n  (shown here only — stored in %s, never in the install log)\n\n' "$env_file" > /dev/tty
 }
 
+install_history() {
+    local data_root
+    data_root=$(env_get "$INSTALL_DIR/.env" DATA_ROOT 2>/dev/null || true)
+    printf '%s/install-history.jsonl' "${data_root:-$DATA_DIR}"
+}
+
+# Failed runs are kept too: an install re-run until it works must not read as
+# one that served the first time.
+record_this_install() {
+    local status=$? outcome="done" step="" release history
+    if (( status != 0 )); then
+        outcome="failed"
+        step=${CURRENT_STEP//\"/}
+    fi
+    release=$(env_get "$INSTALL_DIR/release.env" UT_RELEASE_VERSION 2>/dev/null || true)
+    history=$(install_history)
+    mkdir -p "$(dirname "$history")" 2>/dev/null || return 0
+    printf '{"at":"%s","tool":"ut-install","outcome":"%s","step":"%s","release":"%s"}\n' \
+        "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$outcome" "$step" "${release:-unstamped}" \
+        >> "$history" 2>/dev/null || true
+}
+
 print_summary() {
     local env_file="$INSTALL_DIR/.env"
 
@@ -1250,6 +1273,7 @@ main() {
     [[ $EUID -eq 0 ]] || die "Run with sudo: sudo $0"
 
     start_logging
+    trap record_this_install EXIT
     preflight
     read_domain
     read_token

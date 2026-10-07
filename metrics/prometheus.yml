@@ -1,0 +1,14 @@
+# The engine exposes about 480 series; only those saying how loaded it is and how
+# long a user waits are kept.
+
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: inference
+    static_configs:
+      - targets: ["nim-llm:8000"]
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: "vllm:(num_requests_running|num_requests_waiting|kv_cache_usage_perc|num_preemptions_total|prompt_tokens_total|prefix_cache_queries_total|prefix_cache_hits_total|generation_tokens_total|request_success_total|(time_to_first_token|inter_token_latency|request_queue_time|request_prefill_time|request_decode_time|e2e_request_latency)_seconds_(bucket|sum|count)|request_(prompt|generation)_tokens_(bucket|sum|count))"
+        action: keep

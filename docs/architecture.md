@@ -86,12 +86,12 @@ Builder's generated apps is not shown. Not verified: not seen rendered.
 | Network | `internal` | Who is on it |
 |---|---|---|
 | `ut-frontend-network` | no | `caddy`, `frontend`, `api`, `api-customer`, the workers, `app-llms`, `app-assistants`, `admin-portal`, `llm` |
-| `ut-backend-network` | **yes** | `api`, `api-customer`, the workers, `app-assistants`, `admin-portal`, `llm`, `nim-llm`, `redis`, `files-backup` |
+| `ut-backend-network` | **yes** | `api`, `api-customer`, the workers, `app-assistants`, `admin-portal`, `llm`, `nim-llm`, `metrics`, `redis`, `files-backup` |
 | `ut-data-network` | **yes** | `mongodb`, `mongodb-backup`, `api`, `api-customer`, the workers, `app-llms`, `app-assistants`, `llm` |
 | `ut-ca-network` | **yes** | `caddy`, `step-ca` |
 
 Read that table the other way round and it says what matters: `mongodb` is on
-`ut-data-network` alone, `redis` and the two NIM containers on
+`ut-data-network` alone, `redis`, `nim-llm` and `metrics` on
 `ut-backend-network` alone, `step-ca` on `ut-ca-network` alone. **None of the
 four can reach the internet, and none of them publishes a host port.** The only
 containers that straddle the boundary are the ones that have to answer a
@@ -105,6 +105,8 @@ browser.
 | Uploaded documents and generated artefacts | `/var/lib/understandtech/app-data` | yes, directly |
 | The App Builder's projects | `/var/lib/understandtech/appbuilder` | yes, directly |
 | The certificate authority's root | `/var/lib/understandtech/ca` | yes, directly |
+| Every install run and every `ut-status` verdict | `/var/lib/understandtech/install-history.jsonl` | yes, directly |
+| The engines' load history | `ut-metrics-data` volume | no — losing it loses that history and nothing else |
 | Model weights and caches | `ut-llm-*`, `ut-vllm-*`, `ut-nim-*-cache` volumes | no — re-downloaded |
 | Your address, ports and secrets | `/etc/understandtech/.env` | no — regenerating it loses the database |
 

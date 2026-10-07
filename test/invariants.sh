@@ -171,7 +171,7 @@ check_no_service_starts_slower_than_the_installer_waits() {
     done < "$REPO_ROOT/compose.yaml"
 }
 
-SERVICE_ROLES="control-plane backup inference"
+SERVICE_ROLES="control-plane backup inference metrics"
 
 judge_one_service_role() {
     local service=$1 role=$2
@@ -386,6 +386,33 @@ check_the_package_stamps_the_commit_it_was_built_from() {
         "build-deb.sh writes UT_RELEASE_VERSION without the commit it was built from — a package that regresses cannot be traced back to its source"
 }
 
+# The package copies the release file by file. A path the stack mounts from its
+# own directory and missing from that list becomes, on an installed machine, an
+# empty directory Docker creates in its place.
+check_the_package_ships_what_the_stack_mounts() {
+    local builder="$REPO_ROOT/packaging/build-deb.sh" staged top
+    [[ -f "$builder" ]] || return 0
+    staged=$(sed -n '/^stage_release_files()/,/^}/p' "$builder")
+    for top in $(grep -ohE '^[[:space:]]+- "?\./[^:"/]+' "$REPO_ROOT"/compose*.yaml | sed 's|.*\./||' | sort -u); do
+        grep -qF "\$REPO_ROOT/${top}\"" <<< "$staged" && continue
+        report "mounted-but-not-shipped:${top}" \
+            "the stack mounts ./${top} from the release, and build-deb.sh does not put it in the package — an installed machine starts with an empty directory there"
+    done
+}
+
+check_every_tool_ships() {
+    local builder="$REPO_ROOT/packaging/build-deb.sh" staged tool name
+    [[ -f "$builder" ]] || return 0
+    staged=$(sed -n '/^stage_commands()/,/^}/p' "$builder")
+    for tool in "$REPO_ROOT"/ut-*; do
+        [[ -f "$tool" && -x "$tool" ]] || continue
+        name=${tool##*/}
+        grep -qF "\$REPO_ROOT/${name}\"" <<< "$staged" && continue
+        report "tool-not-shipped:${name}" \
+            "${name} sits beside the other operator tools and build-deb.sh does not install it — a machine installed from the package does not have it"
+    done
+}
+
 check_images_are_pinned() {
     local key value
     while read -r key; do
@@ -407,6 +434,18 @@ check_compose_images_are_pinned() {
         report "unpinned-compose-image:$(basename "${reference%%[:@]*}")" \
             "image: ${reference} is a tag the registry can repoint — two boxes on the same release can differ"
     done <<< "$(sed -n 's/^[[:space:]]*image:[[:space:]]*//p' "${COMPOSE_FILES[@]}" | sort -u)"
+}
+
+# Prometheus keeps its series by age alone unless told otherwise, and once a size
+# is given it drops its 15-day default: both bounds have to be written down.
+check_the_recorder_is_bounded() {
+    local compose="$REPO_ROOT/compose.yaml" bound
+    grep -q -- '--storage.tsdb.path' "$compose" || return 0
+    for bound in time size; do
+        grep -q -- "--storage.tsdb.retention.${bound}=" "$compose" && continue
+        report "recorder-unbounded-in-${bound}" \
+            "the metrics recorder sets no retention ${bound} — its series grow on the disk the platform shares with it until something else stops working"
+    done
 }
 
 check_production_defaults() {
@@ -547,8 +586,11 @@ main() {
     check_variables_without_default_are_declared
     check_published_ports_are_allowed
     check_the_package_stamps_the_commit_it_was_built_from
+    check_the_package_ships_what_the_stack_mounts
+    check_every_tool_ships
     check_images_are_pinned
     check_compose_images_are_pinned
+    check_the_recorder_is_bounded
     check_production_defaults
     check_documented_paths_exist
     check_the_stub_overlay_still_matches_the_services

@@ -33,6 +33,7 @@ follows `COMPOSE_PROJECT_NAME`.
 | `admin-portal` | `ut-admin-portal` | — | Tenant and user administration, at `admin.<UT_DOMAIN>` |
 | `llm` | `understandtech-llm-*` | — | RAG, embeddings and reranking on GPU, `:8000` internal |
 | `nim-llm` | `understandtech-nim-llm-*` | 127.0.0.1:8001 | NVIDIA NIM serving the chat model (profile `nim`) |
+| `metrics` | `ut-metrics` | — | Records how loaded the engine is and how long users wait for it, 35 days or 1 GB, whichever comes first (profile `nim`) |
 | `mongodb` | `ut-mongodb` | — | Document database |
 | `redis` | `ut-redis` | — | Task queue and cache |
 | `mongodb-backup` | `ut-mongodb-backup` | — | Full-server dump of every database |
@@ -40,8 +41,9 @@ follows `COMPOSE_PROJECT_NAME`.
 | `app-builder` | `ut-app-builder` | 8011 (`APP_BUILDER_HOST_PORT`) | Builds and hosts generated apps (add-on) |
 | `app-builder-traefik` | `ut-app-builder-traefik` | — | Per-app routing for generated apps (add-on) |
 
-`nim-llm` sits behind compose profiles, so it only starts when
-`COMPOSE_PROFILES` includes `nim` (or `nim-llm`).
+`nim-llm` and `metrics` sit behind compose profiles, so they only start when
+`COMPOSE_PROFILES` includes `nim` (or `nim-llm`). A machine that runs no engine
+therefore records nothing.
 `release.env` sets `COMPOSE_PROFILES="nim"`.
 
 The worker services scale with `WORKER_REPLICAS` and `WORKER_CUSTOMER_REPLICAS`.
@@ -54,7 +56,7 @@ which means the containers attached only to those have no route off the box.
 | Network | Internal | Who is on it |
 |---|---|---|
 | `ut-frontend-network` | no | `caddy`, `frontend`, `api`, `api-customer`, the workers, `app-llms`, `app-assistants`, `admin-portal`, `llm` |
-| `ut-backend-network` | **yes** | `api`, `api-customer`, the workers, `app-assistants`, `admin-portal`, `llm`, the NIM containers, `redis`, `files-backup` |
+| `ut-backend-network` | **yes** | `api`, `api-customer`, the workers, `app-assistants`, `admin-portal`, `llm`, `nim-llm`, `metrics`, `redis`, `files-backup` |
 | `ut-data-network` | **yes** | `mongodb`, `mongodb-backup`, `api`, `api-customer`, the workers, `app-llms`, `app-assistants`, `llm` |
 | `ut-ca-network` | **yes** | `caddy`, `step-ca` |
 
@@ -84,6 +86,7 @@ internet is kept off it.
 | `ut-vllm-models` | Hugging Face cache for the LLM service |
 | `ut-vllm-llm-cache` | vLLM compilation cache |
 | `ut-nim-llm-cache` | NIM chat-model weights (survives updates — do not prune casually) |
+| `ut-metrics-data` | Engine load history. Not backed up: losing it loses that history and nothing else |
 
 Every volume carries an explicit `name:`, so the names are fixed rather than
 prefixed with the compose project. Data therefore survives a project rename or
@@ -164,10 +167,13 @@ upgrade does to your settings.
 
 ## Auto-start on boot
 
-`setup-autostart.sh` installs two systemd units and nothing else:
+`setup-autostart.sh` installs these systemd units and nothing else:
 
 - **`understandtech.service`** — runs `docker compose up -d` in the install
   directory at boot;
+- **`ut-status.timer`** — runs `ut-status` every hour, and at boot when an hour
+  was missed, so the install history says when the box served and when it
+  stopped. A failed check shows in `systemctl status ut-status`;
 - **`ut-mdns-alias.service`** — publishes the apex, satellite and
   generated-app hostnames over mDNS, all derived from `UT_DOMAIN`.
 
@@ -176,13 +182,13 @@ runs it for you; you only need it directly when changing the domain or
 repairing an install.
 
 ```bash
-# Install both, using this directory as the install directory
+# Install them, using this directory as the install directory
 sudo ./setup-autostart.sh
 
 # Publish only the mDNS names
 sudo ./setup-autostart.sh --mdns
 
-# Status of both units plus every compose service
+# Status of the units plus every compose service
 sudo ./setup-autostart.sh --status
 
 # Check domain and TLS settings, install nothing

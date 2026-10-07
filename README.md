@@ -82,6 +82,8 @@ appliance. Change it and all six follow.
 | `ut-logs-archive` | Automated daily log archival with compression and retention |
 | `ut-certificate` | Obtains and renews a publicly trusted certificate by DNS-01, so nothing has to be installed on user machines |
 | `ut-verify` | Checks a package's signature offline, for a machine with no network — `dpkg` verifies nothing on its own |
+| `ut-report` | Writes how loaded the engines were and how many people they served, hour by hour, for the operator to pass on. Sends nothing |
+| `metrics/prometheus.yml` | What the `metrics` service keeps of the engines' counters |
 | `packaging/build-deb.sh` | Builds the Debian package: release in `/usr/share`, settings in `/etc`, data in `/var/lib` |
 | `packaging/pin-images.sh` | Rewrites every image in `release.env` as `name:tag@sha256:…`, so a version names one exact image and not whatever the tag points at today. `--check` reports without changing anything |
 | `packaging/release-bom.sh` | Writes what a release is made of, as CycloneDX: one component per image, named by digest. Reads `release.env` and nothing else — no registry, no pull |
@@ -104,6 +106,7 @@ appliance. Change it and all six follow.
 | [Restoring](docs/restore.md) | The database, the customer's files, or the certificate authority — separately. |
 | [When it breaks](docs/when-it-breaks.md) | A symptom, and which layer it belongs to. Start here when something is wrong. |
 | [Decommissioning](docs/decommissioning.md) | Taking a machine out of service. What removing the package does **not** remove. |
+| [The usage report](docs/usage-report.md) | We ask for one. What it holds, what it never holds, and how to write it. |
 
 **For the people who use the platform**:
 [using the platform](docs/using-the-platform.md).

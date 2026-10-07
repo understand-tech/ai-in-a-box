@@ -29,8 +29,8 @@ fresh_copy() {
     rm -rf "$COPY"
     mkdir -p "$COPY"
     ( cd "$REPO_ROOT" && tar -cf - release.env compose.yaml compose.appbuilder.yaml \
-        compose.compute.yaml compose.no-gpu.yaml Caddyfile caddy backup-files.sh \
-        setup-autostart.sh ut-logs-archive ut-install ut-certificate ut-verify ut-status appbuilder docs \
+        compose.compute.yaml compose.no-gpu.yaml Caddyfile caddy metrics backup-files.sh \
+        setup-autostart.sh ut-logs-archive ut-install ut-certificate ut-verify ut-status ut-report appbuilder docs \
         packaging README.md test .github 2>/dev/null ) | tar -xf - -C "$COPY" 2>/dev/null
 }
 
@@ -156,6 +156,32 @@ discriminates "a port published on every interface" \
     "unlisted-port:redis" \
     "sed -i.bak 's|^    expose:|    ports:\n      - \"6399:6379\"\n    expose:|' compose.yaml"
 
+discriminates "the recorder published on every interface" \
+    "unlisted-port:metrics:9090:9090" \
+    "sed -i.bak '/^  metrics:\$/,/^    expose:/ s|^    expose:|    ports:\n      - \"9090:9090\"\n    expose:|' compose.yaml"
+
+if grep -q 'check_the_recorder_is_bounded' "$REPO_ROOT/test/invariants.sh"; then
+    discriminates "the recorder kept by age alone" \
+        "recorder-unbounded-in-size" \
+        "sed -i.bak '/--storage.tsdb.retention.size=/d' compose.yaml"
+
+    discriminates "the recorder kept by size alone" \
+        "recorder-unbounded-in-time" \
+        "sed -i.bak '/--storage.tsdb.retention.time=/d' compose.yaml"
+fi
+
+if grep -q 'check_the_package_ships_what_the_stack_mounts' "$REPO_ROOT/test/invariants.sh"; then
+    discriminates "a mounted file left out of the package" \
+        "mounted-but-not-shipped:metrics" \
+        "sed -i.bak '/REPO_ROOT\\/metrics/d' packaging/build-deb.sh"
+fi
+
+if grep -q 'check_every_tool_ships' "$REPO_ROOT/test/invariants.sh"; then
+    discriminates "an operator tool left out of the package" \
+        "tool-not-shipped:ut-report" \
+        "sed -i.bak '/REPO_ROOT\\/ut-report/d' packaging/build-deb.sh"
+fi
+
 discriminates "verbose logs in the template" \
     "verbose-log-level:LOG_LEVEL" \
     "sed -i.bak 's|^LOG_LEVEL=.*|LOG_LEVEL=\"DEBUG\"|' release.env"
@@ -277,6 +303,88 @@ fi
 capability_discriminates "the authority removed from the stack" \
     "the appliance runs its own certificate authority" \
     "sed -i.bak 's|^  step-ca:|  step-ca:\n    profiles: [\"never-enabled\"]|' compose.yaml"
+
+capability_discriminates "the recorder left out where an engine runs" \
+    "a machine that runs an engine records its load" \
+    "sed -i.bak 's|profiles: \[\"nim\", \"nim-llm\"\]\$|profiles: [\"never-enabled\"]|' compose.yaml"
+
+capability_discriminates "the recorder started where no engine runs" \
+    "a machine that runs no engine records nothing" \
+    "sed -i.bak '/^  metrics:\$/,/^    image:/ s|^    profiles: \[\"nim\", \"nim-llm\"\]\$||' compose.yaml"
+
+if grep -q 'record_this_install' "$REPO_ROOT/ut-install"; then
+    capability_discriminates "an install run nobody keeps" \
+        "every install run is kept, from its first step" \
+        "sed -i.bak '/trap record_this_install EXIT/d' ut-install"
+
+    capability_discriminates "a failed install kept as a success" \
+        "a failed install is kept, with the step it stopped at" \
+        "sed -i.bak 's|outcome=\"failed\"|outcome=\"done\"|' ut-install"
+
+    capability_discriminates "the history written over at each install" \
+        "a second install is added after the first, never over it" \
+        "sed -i.bak 's|>> \"\\\$history\"|> \"\\\$history\"|' ut-install"
+
+    capability_discriminates "a verdict kept without the memory left" \
+        "a status verdict is kept beside the installs" \
+        "sed -i.bak 's/,\"available_bytes\":%s//' ut-status"
+
+    capability_discriminates "a status verdict nobody keeps" \
+        "a status verdict is kept beside the installs" \
+        "sed -i.bak '/keep_the_verdict \"/d' ut-status"
+fi
+
+if [[ -x "$REPO_ROOT/ut-report" ]]; then
+    capability_discriminates "a report written where nothing was installed" \
+        "a directory with no install gets no report" \
+        "sed -i.bak 's|^    \[\[ -f \"\$INSTALL_DIR/compose.yaml\" \]\].*|    :|' ut-report"
+
+    capability_discriminates "the recorder asked at an address it does not answer" \
+        "the report finds the engine the recorder holds" \
+        "sed -i.bak 's|\"query?query=|\"query=|' ut-report"
+
+    capability_discriminates "a report that names who asked" \
+        "the report holds no key outside its schema" \
+        "sed -i.bak 's|\"install_id\": \"%s\",|\"install_id\": \"%s\", \"user\": \"someone@example.com\",|' ut-report"
+
+    capability_discriminates "requests with nobody behind them, unremarked" \
+        "requests served with no user counted are flagged" \
+        "sed -i.bak '/users-missing:/d' ut-report"
+
+    capability_discriminates "a missing series reported as a quiet hour" \
+        "a series the recorder does not have is flagged" \
+        "sed -i.bak '/series-missing:/d' ut-report"
+
+    capability_discriminates "a stopped recorder reported as an idle machine" \
+        "an engine nobody recorded is flagged" \
+        "sed -i.bak '/recorder-missing:/d' ut-report"
+
+    capability_discriminates "a report silent about memory" \
+        "the report gives each service its memory peak and limit" \
+        "sed -i.bak '/\"memory\": %s/d' ut-report"
+
+    capability_discriminates "an unreadable memory peak reported as nothing" \
+        "a memory peak nobody can read is flagged" \
+        "sed -i.bak '/memory-peak-unknown:/d' ut-report"
+
+    capability_discriminates "a manifest that vouches for nothing" \
+        "the manifest carries the report's checksum" \
+        "sed -i.bak 's|sha256 \${checksum}|sha256 unknown|' ut-report"
+fi
+
+if grep -q 'install_status_timer' "$REPO_ROOT/setup-autostart.sh"; then
+    capability_discriminates "the hourly status check never installed" \
+        "the status check runs every hour" \
+        "sed -i.bak '/^    install_status_timer\$/d' setup-autostart.sh"
+
+    capability_discriminates "the status check pointed at a tool the package does not ship" \
+        "installed from the package, the status check runs the packaged tool" \
+        "sed -i.bak 's/command -v ut-status/command -v ut-status-gone/' setup-autostart.sh"
+
+    capability_discriminates "the status check left behind by an uninstall" \
+        "removing the units removes the status check" \
+        "sed -i.bak '/rm -f .*STATUS_TIMER_FILE/d' setup-autostart.sh"
+fi
 
 capability_discriminates "the authority root moved out of the backed-up path" \
     "its root sits where the file backup looks" \
