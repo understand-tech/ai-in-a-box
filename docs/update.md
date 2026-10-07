@@ -126,6 +126,22 @@ Every service `healthy`. Then check one document you know, in the platform.
 
 ## What changes that you will notice
 
+**`nim-vlm` is gone.** The chat model, `Qwen3.8-27B` on `nim-llm`, now reads
+images too. The release points `VLLM_VLM_MODEL`, `VLLM_VLM_BASE_URL`,
+`GATEWAY_VLM_MODEL` and the `uai-vision` entry of `GATEWAY_MODELS` at it. If the
+installer reports one of them as differing in `local.env`, remove that line from
+`local.env`: it wins over the release and names a container that no longer
+exists.
+
+The old container keeps running, and holding its GPU memory, until:
+
+```bash
+docker compose up -d --remove-orphans
+```
+
+Its weights stay in the `ut-nim-vlm-cache` volume. Once an image has been read
+in the platform, `docker volume rm ut-nim-vlm-cache` frees the disk.
+
 **Three containers lost their fixed names.** `ut-llm`, `nim-llm` and `nim-vlm`
 are now named after the Compose project — `understandtech-llm-1` and so on. A
 fixed name and `--scale` are mutually exclusive, and scaling those three is the

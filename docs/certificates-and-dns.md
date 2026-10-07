@@ -345,11 +345,10 @@ machine runs no database and no application:
 COMPOSE_FILE="compose.yaml:compose.compute.yaml"
 COMPOSE_PROFILES="nim"
 NIM_LLM_BIND_ADDRESS=<address the control plane reaches>
-NIM_VLM_BIND_ADDRESS=<same>
 ```
 
-**Those two addresses are required on a compute node and nowhere else.** Left
-at their default the engines listen on loopback, so the node starts, passes its
+**That address is required on a compute node and nowhere else.** Left at
+its default the engine listens on loopback, so the node starts, passes its
 healthcheck, and serves nobody — a failure that reads as a model problem rather
 than a binding one.
 

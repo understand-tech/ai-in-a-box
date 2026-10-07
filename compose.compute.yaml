@@ -7,7 +7,6 @@ name: ${COMPOSE_PROJECT_NAME:-understandtech}
 #   COMPOSE_FILE="compose.yaml:compose.compute.yaml"
 #   COMPOSE_PROFILES="nim"
 #   NIM_LLM_BIND_ADDRESS=<address of the interface the control plane reaches>
-#   NIM_VLM_BIND_ADDRESS=<same>
 #
 # Services are switched off by giving them a profile that is never enabled,
 # rather than by listing the survivors in a separate file. compose.yaml stays

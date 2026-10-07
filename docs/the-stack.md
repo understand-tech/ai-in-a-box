@@ -33,7 +33,6 @@ follows `COMPOSE_PROJECT_NAME`.
 | `admin-portal` | `ut-admin-portal` | — | Tenant and user administration, at `admin.<UT_DOMAIN>` |
 | `llm` | `understandtech-llm-*` | — | RAG, embeddings and reranking on GPU, `:8000` internal |
 | `nim-llm` | `understandtech-nim-llm-*` | 127.0.0.1:8001 | NVIDIA NIM serving the chat model (profile `nim`) |
-| `nim-vlm` | `understandtech-nim-vlm-*` | 127.0.0.1:8002 | NVIDIA NIM serving the vision model (profile `nim`) |
 | `mongodb` | `ut-mongodb` | — | Document database |
 | `redis` | `ut-redis` | — | Task queue and cache |
 | `mongodb-backup` | `ut-mongodb-backup` | — | Full-server dump of every database |
@@ -41,8 +40,8 @@ follows `COMPOSE_PROJECT_NAME`.
 | `app-builder` | `ut-app-builder` | 8011 (`APP_BUILDER_HOST_PORT`) | Builds and hosts generated apps (add-on) |
 | `app-builder-traefik` | `ut-app-builder-traefik` | — | Per-app routing for generated apps (add-on) |
 
-`nim-llm` and `nim-vlm` sit behind compose profiles, so they only start when
-`COMPOSE_PROFILES` includes `nim` (or `nim-llm` / `nim-vlm` individually).
+`nim-llm` sits behind compose profiles, so it only starts when
+`COMPOSE_PROFILES` includes `nim` (or `nim-llm`).
 `release.env` sets `COMPOSE_PROFILES="nim"`.
 
 The worker services scale with `WORKER_REPLICAS` and `WORKER_CUSTOMER_REPLICAS`.
@@ -85,7 +84,6 @@ internet is kept off it.
 | `ut-vllm-models` | Hugging Face cache for the LLM service |
 | `ut-vllm-llm-cache` | vLLM compilation cache |
 | `ut-nim-llm-cache` | NIM chat-model weights (survives updates — do not prune casually) |
-| `ut-nim-vlm-cache` | NIM vision-model weights (idem) |
 
 Every volume carries an explicit `name:`, so the names are fixed rather than
 prefixed with the compose project. Data therefore survives a project rename or
