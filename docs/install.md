@@ -218,10 +218,11 @@ It reports every service, asks each public surface on this machine, and says
 where the inference comes from. It exits non-zero when a service is unhealthy or
 a surface does not answer, so it can be called from cron or a check.
 
-Every verdict is kept in `install-history.jsonl` under `DATA_ROOT`, beside one
-line for every run of `ut-install`, failed runs included and named by the step
-they stopped at. Read together, they say whether an install served the first
-time, or only after being run again. `ut-install` also schedules `ut-status`
+Every verdict is kept in `install-history.jsonl` under `DATA_ROOT`, with the
+machine's available memory at that moment, beside one line for every run of
+`ut-install`, failed runs included and named by the step they stopped at. Read
+together, they say whether an install served the first time, or only after being
+run again. `ut-install` also schedules `ut-status`
 every hour, so the history does not depend on someone running it. Without
 `sudo` the verdict is shown and not kept, and `ut-status` says so.
 

@@ -37,6 +37,12 @@ database, through the container that holds it.
   and waiting at once, how many got their first token within 1 s and within
   2.5 s, and how many prompts were up to 500, 2,000 and 10,000 tokens long;
 - per hour: how many distinct people sent a request — a number, never who;
+- for each service: the memory it uses, the most it has used since it started,
+  and its limit, if it has one; and the machine's total and available memory.
+  What an engine holds on the GPU is counted in no service — on a machine whose
+  GPU shares the system's memory, only the machine's available memory includes
+  it. `ut-status` notes that figure with each hourly verdict, so the history
+  shows how close the box came to running out;
 - every run of `ut-install` and every `ut-status` verdict on this machine;
 - the release, and the image each service runs.
 
@@ -70,6 +76,7 @@ A report never fills a gap with zero. What it could not find is listed under
 |---|---|
 | `recorder-missing` | An engine runs on this machine and the `metrics` service recorded nothing: it is stopped, or was never started. `sudo ut-status` names it. |
 | `series-missing:<engine>:<figure>` | The recorder has nothing for that figure over the window: it was not running, or the engine names it differently since an update. |
+| `memory-peak-unknown:<service>` | The kernel does not keep a memory peak for that service (cgroup v1, or a kernel older than 5.19). Its current use is still given. |
 | `users-missing` | The engines served requests and no person was counted. The platform's records were not readable, or have changed shape. |
 
 A machine that serves no inference — a control plane whose engines run

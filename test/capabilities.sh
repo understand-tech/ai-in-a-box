@@ -1307,7 +1307,7 @@ a_status_verdict_is_kept_beside_the_installs() {
     expected="not-serving"
     (( status == 0 )) && expected="serving"
     history=$(cat "$probe/data/install-history.jsonl" 2>/dev/null)
-    grep -q "\"tool\":\"ut-status\",\"outcome\":\"${expected}\"" <<< "$history" && return 0
+    grep -qE "\"tool\":\"ut-status\",\"outcome\":\"${expected}\",\"available_bytes\":([0-9]+|null)}" <<< "$history" && return 0
     echo "exit ${status}, history: ${history:-none}"
     return 1
 }
@@ -1322,7 +1322,7 @@ if [[ -x "$REPO_ROOT/ut-status" ]]; then
         a_status_verdict_is_kept_beside_the_installs
 fi
 
-REPORT_KEYS="schema generated_at install_id window_days release images service image capacity engine hours hour requests running_peak waiting_peak first_token_within_1s first_token_within_2_5s prompts_le_500 prompts_le_2000 prompts_le_10000 users_by_hour users history at tool outcome step warnings"
+REPORT_KEYS="schema generated_at install_id window_days release images service image capacity engine hours hour requests running_peak waiting_peak first_token_within_1s first_token_within_2_5s prompts_le_500 prompts_le_2000 prompts_le_10000 users_by_hour users history at tool outcome step warnings memory host total_bytes available_bytes services current_bytes peak_bytes limit_bytes started_at"
 
 ut_report_refuses() {
     local dir=$1 expected=$2 output
@@ -1365,6 +1365,8 @@ hourly() {
 users_by_hour() { printf '$users'; }
 the_database_runs_here() { return 0; }
 running_images() { printf 'api ghcr.io/understand-tech/ut-api-customer:2.1-arm64@sha256:0000\n'; }
+host_memory() { printf '128000000000 23000000000\n'; }
+service_memory() { printf '${SERVICE_MEMORY-api 537022464 596684800 4294967296 2026-10-06T09:45:26Z\\nnim-llm 7500000000 92000000000 max 2026-10-06T09:45:26Z\\n}'; }
 write_report "$probe/out"
 EOF
     bash "$probe/run.sh" >/dev/null 2>&1
@@ -1415,6 +1417,25 @@ an_engine_nobody_recorded_is_flagged() {
     local report
     report=$(ENGINES="" report_from "$(history_probe)" '' '' '')
     grep -q '"recorder-missing' <<< "$report" && return 0
+    echo "${report:-no report written}"
+    return 1
+}
+
+the_report_gives_each_service_its_memory_peak_and_limit() {
+    local report
+    report=$(a_served_hour)
+    grep -q '"service": "api", "current_bytes": 537022464, "peak_bytes": 596684800, "limit_bytes": 4294967296' <<< "$report" \
+        && grep -q '"service": "nim-llm", "current_bytes": 7500000000, "peak_bytes": 92000000000, "limit_bytes": null' <<< "$report" \
+        && grep -q '"host": {"total_bytes": 128000000000, "available_bytes": 23000000000}' <<< "$report" \
+        && return 0
+    echo "${report:-no report written}"
+    return 1
+}
+
+a_memory_peak_nobody_can_read_is_flagged() {
+    local report
+    report=$(SERVICE_MEMORY='api 537022464 - 4294967296 2026-10-06T09:45:26Z\\n' report_from "$(history_probe)" '1759651200 5\n' '1759651200 3\n' '1759651200 0.8\n')
+    grep -q '"peak_bytes": null' <<< "$report" && grep -q '"memory-peak-unknown:api' <<< "$report" && return 0
     echo "${report:-no report written}"
     return 1
 }
@@ -1492,6 +1513,10 @@ if [[ -x "$REPO_ROOT/ut-report" ]]; then
         a_series_the_recorder_does_not_have_is_flagged
     capability "an engine nobody recorded is flagged" \
         an_engine_nobody_recorded_is_flagged
+    capability "the report gives each service its memory peak and limit" \
+        the_report_gives_each_service_its_memory_peak_and_limit
+    capability "a memory peak nobody can read is flagged" \
+        a_memory_peak_nobody_can_read_is_flagged
     capability "the manifest carries the report's checksum" \
         the_manifest_checksum_is_the_reports
 fi

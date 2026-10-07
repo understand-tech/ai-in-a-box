@@ -79,12 +79,18 @@ inference_is_served_from_elsewhere() {
     [[ "$(env_get "$INSTALL_DIR/.env" COMPOSE_FILE || true)" == *no-gpu* ]]
 }
 
+# Kept with each verdict because the engines' memory on a unified-memory GPU is counted in
+# no container: only the machine's available memory says how close the box came to the edge.
+available_memory() {
+    awk '/^MemAvailable:/ { printf "%d", $2 * 1024; found = 1 } END { if (!found) printf "null" }' /proc/meminfo 2>/dev/null || printf 'null'
+}
+
 keep_the_verdict() {
     local verdict=$1 data_root history
     data_root=$(env_get "$INSTALL_DIR/.env" DATA_ROOT || true)
     history="${data_root:-/var/lib/understandtech}/install-history.jsonl"
-    printf '{"at":"%s","tool":"ut-status","outcome":"%s"}\n' \
-        "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$verdict" >> "$history" 2>/dev/null \
+    printf '{"at":"%s","tool":"ut-status","outcome":"%s","available_bytes":%s}\n' \
+        "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$verdict" "$(available_memory)" >> "$history" 2>/dev/null \
         || log_warn "verdict not kept: ${history} is not writable — run with sudo to keep it"
 }
 

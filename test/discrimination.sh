@@ -305,6 +305,10 @@ if grep -q 'record_this_install' "$REPO_ROOT/ut-install"; then
         "a second install is added after the first, never over it" \
         "sed -i.bak 's|>> \"\\\$history\"|> \"\\\$history\"|' ut-install"
 
+    capability_discriminates "a verdict kept without the memory left" \
+        "a status verdict is kept beside the installs" \
+        "sed -i.bak 's/,\"available_bytes\":%s//' ut-status"
+
     capability_discriminates "a status verdict nobody keeps" \
         "a status verdict is kept beside the installs" \
         "sed -i.bak '/keep_the_verdict \"/d' ut-status"
@@ -334,6 +338,14 @@ if [[ -x "$REPO_ROOT/ut-report" ]]; then
     capability_discriminates "a stopped recorder reported as an idle machine" \
         "an engine nobody recorded is flagged" \
         "sed -i.bak '/recorder-missing:/d' ut-report"
+
+    capability_discriminates "a report silent about memory" \
+        "the report gives each service its memory peak and limit" \
+        "sed -i.bak '/\"memory\": %s/d' ut-report"
+
+    capability_discriminates "an unreadable memory peak reported as nothing" \
+        "a memory peak nobody can read is flagged" \
+        "sed -i.bak '/memory-peak-unknown:/d' ut-report"
 
     capability_discriminates "a manifest that vouches for nothing" \
         "the manifest carries the report's checksum" \

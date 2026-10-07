@@ -142,6 +142,39 @@ users_by_hour() {
         "' 2>/dev/null
 }
 
+host_memory() {
+    awk '/^MemTotal:/ { t = $2 } /^MemAvailable:/ { a = $2 } END { printf "%d %d\n", t * 1024, a * 1024 }' /proc/meminfo
+}
+
+# cgroup v2 keeps each container's peak since it started: what the platform really took,
+# which an instant reading cannot say. The systemd driver puts it under system.slice.
+cgroup_dir() {
+    local id=$1 dir
+    for dir in "/sys/fs/cgroup/system.slice/docker-${id}.scope" "/sys/fs/cgroup/docker/${id}"; do
+        [[ -d "$dir" ]] && { printf '%s' "$dir"; return 0; }
+    done
+    return 1
+}
+
+read_or_dash() { if [[ -r "$1" ]]; then cat "$1"; else printf -- '-'; fi; }
+
+# One line per service: name, current, peak, limit, started at. "-" for what cannot be
+# read, "max" for no limit.
+service_memory() {
+    local id service started dir
+    while read -r id; do
+        [[ -n "$id" ]] || continue
+        read -r id service started <<< "$(docker inspect -f '{{.Id}} {{index .Config.Labels "com.docker.compose.service"}} {{.State.StartedAt}}' "$id" 2>/dev/null)"
+        started=${started%Z}; started="${started%%.*}Z"
+        if dir=$(cgroup_dir "$id"); then
+            printf '%s %s %s %s %s\n' "$service" "$(read_or_dash "$dir/memory.current")" \
+                "$(read_or_dash "$dir/memory.peak")" "$(read_or_dash "$dir/memory.max")" "$started"
+        else
+            printf '%s - - - %s\n' "$service" "$started"
+        fi
+    done <<< "$(compose_here ps -q 2>/dev/null)"
+}
+
 running_images() {
     local id
     while read -r id; do
@@ -234,6 +267,18 @@ users_section() {
     printf ']'
 }
 
+memory_section() {
+    local work=$1 total available services
+    read -r total available <<< "$(host_memory)"
+    services=$(service_memory | sort | awk -v warnings="$work/warnings" '
+        function value(v) { return (v == "-" || v == "max") ? "null" : v }
+        NF == 5 {
+            if ($3 == "-") print "memory-peak-unknown:" $1 >> warnings
+            printf "%s{\"service\": \"%s\", \"current_bytes\": %s, \"peak_bytes\": %s, \"limit_bytes\": %s, \"started_at\": \"%s\"}", (n++ ? ", " : ""), $1, value($2), value($3), value($4), $5
+        }')
+    printf '{"host": {"total_bytes": %s, "available_bytes": %s}, "services": [%s]}' "${total:-null}" "${available:-null}" "$services"
+}
+
 images_section() {
     running_images | sort -u | awk 'NF == 2 { printf "%s{\"service\": \"%s\", \"image\": \"%s\"}", (n++ ? ", " : ""), $1, $2 }'
 }
@@ -265,6 +310,8 @@ What it holds
   - per hour: how many distinct people sent a request — a number, never who
   - every run of ut-install and every ut-status verdict on this machine
   - the release, and the image each service runs
+  - the memory each service uses, its peak since it started and its limit,
+    and the machine's total and available memory
 
 What it never holds
   - no document, conversation, prompt, answer or extract of one
@@ -277,12 +324,13 @@ EOF
 }
 
 write_report() {
-    local out=$1 work id release capacity users checksum
+    local out=$1 work id release capacity users memory checksum
     work=$(mktemp -d)
     id=$(install_id)
     release=$(env_get "$INSTALL_DIR/release.env" UT_RELEASE_VERSION || true)
     capacity=$(capacity_section "$work")
     users=$(users_section "$work")
+    memory=$(memory_section "$work")
     mkdir -p "$out"
     {
         printf '{\n'
@@ -294,6 +342,7 @@ write_report() {
         printf '  "images": [%s],\n' "$(images_section)"
         printf '  "capacity": %s,\n' "$capacity"
         printf '  "users_by_hour": %s,\n' "$users"
+        printf '  "memory": %s,\n' "$memory"
         printf '  "history": [%s],\n' "$(history_section)"
         printf '  "warnings": [%s]\n' "$(warnings_section "$work")"
         printf '}\n'
