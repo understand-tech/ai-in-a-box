@@ -115,6 +115,11 @@ refuses to start without it.
 
 So editing `VLLM_LLM_MODEL` on a default install changes nothing.
 
+The same model reads images: `VLLM_VLM_MODEL`, `GATEWAY_VLM_MODEL` and the
+`uai-vision` entry of `GATEWAY_MODELS` carry its name, and `VLLM_VLM_BASE_URL`
+points at `nim-llm`. Changing the model means changing all of them, since
+`nim-llm` only answers to the name it serves.
+
 `VLLM_API_KEY="EMPTY"` is vLLM's convention for **no authentication**, not a
 placeholder waiting to be filled. Turning authentication on means setting a real
 key *and* passing `--api-key` through `NIM_LLM_PASSTHROUGH_ARGS`. Until then,
@@ -275,9 +280,8 @@ DATA_ROOT="/var/lib/understandtech-staging"
 MONGODB_HOST_PORT="27118"
 ```
 
-`COMPOSE_PROJECT_NAME` is not redundant. Five services carry no fixed container
-name — `workers`, `workers-customer`, `llm`, `nim-llm` and `nim-vlm`, because a
-fixed name and `--scale` are mutually exclusive. Compose names those after the
+`COMPOSE_PROJECT_NAME` is not redundant. Four services carry no fixed container
+name — `workers`, `workers-customer`, `llm` and `nim-llm`, because a fixed name and `--scale` are mutually exclusive. Compose names those after the
 project, so setting only the prefixes leaves them colliding with the other
 stack.
 
@@ -286,14 +290,13 @@ Add `UT_HTTP_PORT` and `UT_HTTPS_PORT` if the first stack already holds 80 and
 
 ## Opening inference to another machine
 
-The inference engines listen on `127.0.0.1` only. They have **no
+The inference engine listens on `127.0.0.1` only. It has **no
 authentication** — `VLLM_API_KEY="EMPTY"` is vLLM's convention for "none", not a
 field waiting to be filled — so opening them is a deliberate act, named by an
 interface:
 
 ```bash
 NIM_LLM_BIND_ADDRESS="10.42.0.7"
-NIM_VLM_BIND_ADDRESS="10.42.0.7"
 ```
 
 Required on a compute node, which exists to serve another machine and would

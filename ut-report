@@ -108,14 +108,8 @@ hourly() {
         | grep -oE '\[[0-9.]+,"[^"]*"\]' | tr -d '[]"' | tr ',' ' ' | awk '{ printf "%d %s\n", $1, $2 }'
 }
 
-# One service at a time: compose refuses the whole list when one name in it is
-# not declared, and an empty answer would then read as no engine at all.
 an_engine_runs_here() {
-    local engine
-    for engine in nim-llm nim-vlm; do
-        [[ -n "$(compose_here ps -q "$engine" 2>/dev/null)" ]] && return 0
-    done
-    return 1
+    [[ -n "$(compose_here ps -q nim-llm 2>/dev/null)" ]]
 }
 
 the_database_runs_here() {

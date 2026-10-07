@@ -15,6 +15,7 @@
 | `database-restore.sh` | Proves a backup archive restores, end to end. Nightly. |
 | `known-issues.txt` | Problems that already exist and are accepted for now, with the reason next to each. |
 | `allowed-ports.txt` | Ports intentionally published on every interface. |
+| `retired-state.txt` | Volumes and networks a release removes on purpose. `migration.sh` fails on any other that disappears. |
 | `answer-a-prompt.py` | Drives an interactive prompt from a pseudo-terminal, so the install questions are exercised rather than assumed. |
 | `../packaging/build-deb.sh` | Builds the Debian package the checks below install, upgrade and remove. |
 | `../ut-verify` | Checks a package's signature offline. Its own key is checked against `packaging/release.pub`. |
@@ -370,6 +371,10 @@ something it must not do.
 It answers one question: what happens to a customer who already runs this
 appliance when the next version lands. The starting point is `origin/main` by
 default, overridable with `MIGRATION_FROM`.
+
+A volume or network the new version no longer declares fails the check, since
+that is how a customer loses data. One removed on purpose is listed in
+`retired-state.txt`, with what happens to it on disk.
 
 ```
   ✔ an untouched environment file is refused, and says which variable
