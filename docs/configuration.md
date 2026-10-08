@@ -120,6 +120,13 @@ The same model reads images: `VLLM_VLM_MODEL`, `GATEWAY_VLM_MODEL` and the
 points at `nim-llm`. Changing the model means changing all of them, since
 `nim-llm` only answers to the name it serves.
 
+`LLM_FILE_TOKEN_BUDGET` caps the text of files attached to a chat — a PDF, a
+spreadsheet — at 16000 tokens by default. Past it, the upload is refused with
+the count and the limit. Raising it lets longer documents through, at the cost
+of slower answers: keep it under `--max-model-len` minus 40% of
+`LLM_MAX_CONTEXT_LEN`, which is held for the answer, minus about 10000 for the
+prompt. With this release's values, 56000.
+
 `VLLM_API_KEY="EMPTY"` is vLLM's convention for **no authentication**, not a
 placeholder waiting to be filled. Turning authentication on means setting a real
 key *and* passing `--api-key` through `NIM_LLM_PASSTHROUGH_ARGS`. Until then,
