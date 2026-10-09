@@ -15,6 +15,7 @@ SENSITIVE_KEYS=(
     OPENID_SECRET_KEY OA_KEY SENDGRID_API_KEY GROQ_API_KEY HF_TOKEN
     VLLM_API_KEY GPU_VM_API_TOKEN APP_BUILDER_ANTHROPIC_API_KEY
     APP_BUILDER_GATEWAY_API_KEY NGC_API_KEY CLAUDE_API_KEY
+    GATEWAY_TRUSTED_PROXY_KEYS
 )
 
 NOT_SECRETS_DESPITE_THE_NAME=(
@@ -226,6 +227,60 @@ check_every_service_declares_its_role() {
     done < "$REPO_ROOT/compose.yaml"
     if $in_services; then
         judge_one_service_role "$service" "$role"
+    fi
+}
+
+judge_one_gateway() {
+    local service=$1 hosts_the_gateway=$2 trusts_the_builder=$3
+    [[ -n "$service" ]] || return 0
+    $hosts_the_gateway || return 0
+    $trusts_the_builder && return 0
+    report "gateway-does-not-trust-the-app-builder:${service}" \
+        "${service} serves the LLM gateway without GATEWAY_TRUSTED_PROXY_KEYS falling back to the app builder's key — all builder users share one rate limit, and the builder's calls are counted as plain API use"
+}
+
+# The app builder calls the gateway with one key for all its users. Only a key the
+# gateway trusts may name the person behind a call, which is what gives each of
+# them a rate limit of their own.
+check_the_gateway_trusts_the_app_builder_key() {
+    local line entry in_services=false service="" hosts=false trusts=false
+    while IFS= read -r line; do
+        entry=${line%"${line##*[![:space:]]}"}
+        case "$entry" in
+            "services:")
+                in_services=true
+                continue
+                ;;
+            [a-z]*:*)
+                if $in_services; then
+                    judge_one_gateway "$service" "$hosts" "$trusts"
+                fi
+                in_services=false
+                service=""
+                hosts=false
+                trusts=false
+                continue
+                ;;
+        esac
+        $in_services || continue
+        case "$entry" in
+            "  "[a-z]*":")
+                judge_one_gateway "$service" "$hosts" "$trusts"
+                service=${entry#  }
+                service=${service%:}
+                hosts=false
+                trusts=false
+                ;;
+            *"GATEWAY_RPM_PER_KEY:"*)
+                hosts=true
+                ;;
+            *'GATEWAY_TRUSTED_PROXY_KEYS: ${GATEWAY_TRUSTED_PROXY_KEYS:-${APP_BUILDER_GATEWAY_API_KEY:-}}')
+                trusts=true
+                ;;
+        esac
+    done < "$REPO_ROOT/compose.yaml"
+    if $in_services; then
+        judge_one_gateway "$service" "$hosts" "$trusts"
     fi
 }
 
@@ -592,6 +647,7 @@ main() {
     check_every_service_declares_its_role
     check_the_first_backup_is_not_deferred_to_a_clock_time
     check_every_setting_reaches_something
+    check_the_gateway_trusts_the_app_builder_key
     check_defaults_do_not_diverge
     check_required_variables_appear_in_the_template
     check_required_variables_have_a_value_or_are_generated
