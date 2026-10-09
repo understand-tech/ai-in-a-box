@@ -206,6 +206,12 @@ if grep -q 'check_every_setting_reaches_something' "$REPO_ROOT/test/invariants.s
         "printf 'DEAD_SETTING=\"nothing reads this\"\n' >> release.env"
 fi
 
+if grep -q 'check_the_gateway_trusts_the_app_builder_key' "$REPO_ROOT/test/invariants.sh"; then
+    discriminates "a gateway that stopped trusting the app builder's key" \
+        "gateway-does-not-trust-the-app-builder:api-customer" \
+        "sed -i.bak '/^  api-customer:\$/,/^  [a-z]/ s|^      GATEWAY_TRUSTED_PROXY_KEYS:.*\$||' compose.yaml"
+fi
+
 discriminates "a documented path that does not exist" \
     "missing-documented-path:nowhere.yaml" \
     "printf '\nSee \`nowhere.yaml\` for details.\n' >> README.md"

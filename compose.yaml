@@ -346,6 +346,9 @@ services:
       GATEWAY_VLM_MODEL: ${GATEWAY_VLM_MODEL:-}
       GATEWAY_PUBLIC_URL: *url-gateway-public
       GATEWAY_RPM_PER_KEY: ${GATEWAY_RPM_PER_KEY:-}
+      # The app builder's key may name the person behind each call, so each
+      # of its users gets a rate limit of their own.
+      GATEWAY_TRUSTED_PROXY_KEYS: ${GATEWAY_TRUSTED_PROXY_KEYS:-${APP_BUILDER_GATEWAY_API_KEY:-}}
       API_KEY_HASH_NEW_KEYS: ${API_KEY_HASH_NEW_KEYS:-}
       API_KEY_HASH_LAZY_MIGRATION: ${API_KEY_HASH_LAZY_MIGRATION:-}
       GATEWAY_MODELS: ${GATEWAY_MODELS:-}
@@ -504,6 +507,9 @@ services:
       GATEWAY_VLM_MODEL: ${GATEWAY_VLM_MODEL:-}
       GATEWAY_PUBLIC_URL: *url-gateway-public
       GATEWAY_RPM_PER_KEY: ${GATEWAY_RPM_PER_KEY:-}
+      # The app builder's key may name the person behind each call, so each
+      # of its users gets a rate limit of their own.
+      GATEWAY_TRUSTED_PROXY_KEYS: ${GATEWAY_TRUSTED_PROXY_KEYS:-${APP_BUILDER_GATEWAY_API_KEY:-}}
       API_KEY_HASH_NEW_KEYS: ${API_KEY_HASH_NEW_KEYS:-}
       API_KEY_HASH_LAZY_MIGRATION: ${API_KEY_HASH_LAZY_MIGRATION:-}
       GATEWAY_MODELS: ${GATEWAY_MODELS:-}
