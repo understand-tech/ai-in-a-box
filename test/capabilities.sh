@@ -895,11 +895,9 @@ files_are_backed_up_and_restore_identically() {
     [[ ! -e "$out/data/appbuilder/workspaces/an-app/mongo-data" ]]
 }
 
-# The default repository sits in the same volume as the database archives, so it
-# protects against a mistake and not against losing the machine. This exercises
-# the other half — a backup leaving for an S3 destination, and coming back from
-# it alone.
-backups_reach_an_offsite_destination() {
+# Restic and the script against an S3 endpoint, on a network this check creates
+# itself: it says nothing about whether the deployed service can reach one.
+the_backup_round_trips_through_an_s3_endpoint() {
     local run=cap-offsite-$$ net store bucket=appliance-backups
     local key=capability-key secret=capability-secret-value
     local work="$WORK_DIR/offsite" source="$WORK_DIR/offsite/data" restored="$WORK_DIR/offsite/out"
@@ -1019,6 +1017,22 @@ the_database_leaves_the_machine_with_the_files() {
     docker rm -f "$store" >/dev/null 2>&1
     docker network rm "$net" >/dev/null 2>&1
     return "$verdict"
+}
+
+# A network declared internal has no gateway: a container that sits only on
+# such networks reaches nothing beyond the machine.
+the_backup_has_no_way_off_the_machine() {
+    command -v jq >/dev/null || { echo "jq absent"; return 1; }
+    local config mode open
+    config=$( cd "$WORK_DIR" && docker compose "$@" config --format json 2>/dev/null )
+    [[ -n "$config" ]] || { echo "the stack does not render"; return 1; }
+    mode=$(jq -r '.services["files-backup"].network_mode // empty' <<< "$config")
+    [[ -z "$mode" ]] || { echo "files-backup runs with network_mode $mode"; return 1; }
+    open=$(jq -r '.networks as $declared
+        | .services["files-backup"].networks // {"default": null}
+        | keys[]
+        | select($declared[.].internal != true)' <<< "$config")
+    [[ -z "$open" ]] || { echo "files-backup sits on a network with a way out: $(tr '\n' ' ' <<< "$open")"; return 1; }
 }
 
 a_missing_backup_is_visible() {
@@ -1219,8 +1233,10 @@ if [[ -f "$REPO_ROOT/backup-files.sh" ]]; then
         files_are_backed_up_and_restore_identically
     capability "a missing backup is visible, and recovers when one appears" \
         a_missing_backup_is_visible
-    capability "backups can leave the machine, and come back from where they went" \
-        backups_reach_an_offsite_destination
+    capability "the backup has no way off the machine" \
+        the_backup_has_no_way_off_the_machine -f compose.yaml
+    capability "the backup round-trips through an S3 endpoint, and comes back from it alone" \
+        the_backup_round_trips_through_an_s3_endpoint
     capability "the database leaves with them, not only the files" \
         the_database_leaves_the_machine_with_the_files
 fi

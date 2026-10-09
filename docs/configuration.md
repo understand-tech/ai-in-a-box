@@ -213,7 +213,7 @@ the repository, so a remote copy is worth nothing without it — and a remote co
 is exactly what you reach for when the machine is gone.
 
 What this covers, verified end to end on every push by
-`backups_reach_an_offsite_destination`: the documents, and the certificate
+`the_backup_round_trips_through_an_s3_endpoint`: the documents, and the certificate
 authority's root, backed up to an S3 endpoint and restored from that endpoint
 alone, path by path and checksum by checksum.
 

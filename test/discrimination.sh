@@ -584,8 +584,12 @@ fi
 # meet.
 OFFSITE_ENDPOINT=nowhere-at-all \
 capability_discriminates "a backup destination that does not answer" \
-    "backups can leave the machine" \
+    "round-trips through an S3 endpoint" \
     "true"
+
+capability_discriminates "the backup given a network with a way out" \
+    "the backup has no way off the machine" \
+    "sed -i.bak '/^  files-backup:/,/^  [a-z]/ s/- ut-backend-network/- ut-frontend-network/' compose.yaml"
 
 capability_discriminates "the dumps looked for where they are not" \
     "the database leaves with them" \

@@ -133,9 +133,10 @@ Multi-machine roles
 Backup
   ✔ files are backed up and restore identically
   ✔ a missing backup is visible, and recovers when one appears
-  ✔ backups can leave the machine, and come back from where they went
+  ✔ the backup has no way off the machine
+  ✔ the backup round-trips through an S3 endpoint, and comes back from it alone
 
-38 verified
+39 verified
 ```
 
 The list grows with the branch, not with the file: each block is guarded by the
