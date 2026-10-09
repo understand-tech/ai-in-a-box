@@ -1,0 +1,21 @@
+name: ${COMPOSE_PROJECT_NAME:-understandtech}
+
+# Overlay for a backup that leaves the machine on a disk the host mounts — a
+# share of the customer's NAS, or a USB disk.
+#
+#   BACKUP_FILES_DESTINATION=/mnt/backup
+#
+# ut-install adds it to COMPOSE_FILE when BACKUP_FILES_DESTINATION is set, and
+# writes the marker once it has checked the directory is not on this machine's
+# own disk. The service gains a directory, never a network.
+#
+# The variable carries no ${...:?} guard on purpose: the test suites read every
+# such guard as a setting all installs require, and this one only exists here.
+
+services:
+  files-backup:
+    environment:
+      RESTIC_REPOSITORY: /destination/restic
+      BACKUP_DESTINATION_MARKER: /destination/.understandtech-backup-destination
+    volumes:
+      - ${BACKUP_FILES_DESTINATION}:/destination

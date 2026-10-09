@@ -806,6 +806,65 @@ write_the_settings_a_machine_without_an_accelerator_needs() {
     fi
 }
 
+BACKUP_DESTINATION_MARKER=".understandtech-backup-destination"
+
+filesystem_of_the_nearest_existing() {
+    local path=$1
+    while [[ ! -e "$path" && "$path" != "/" ]]; do path=$(dirname "$path"); done
+    stat -c %d "$path"
+}
+
+the_backup_destination_is_off_this_machine() {
+    local filesystem
+    filesystem=$(stat -c %d "$1")
+    [[ "$filesystem" != "$(stat -c %d /)" && "$filesystem" != "$(filesystem_of_the_nearest_existing "$DATA_DIR")" ]]
+}
+
+die_on_a_backup_destination_that_is_not_one() {
+    local destination=$1 reason=$2
+    log_error "BACKUP_FILES_DESTINATION is ${destination}, and ${reason}."
+    log_error ""
+    log_error "Either mount the share or the disk there, or empty BACKUP_FILES_DESTINATION"
+    log_error "to keep the backup on this machine:"
+    log_error ""
+    log_error "  sudoedit $(settings_directory "$INSTALL_DIR/.env")/local.env"
+    exit 1
+}
+
+# A destination on the root disk, or on the one holding DATA_ROOT, is either a
+# mount point with nothing mounted yet or no destination at all: the backup
+# would die with the machine. The marker is what files-backup looks for before
+# each run, so it is only written once that has been ruled out.
+write_the_settings_a_backup_destination_needs() {
+    local local_file=$1 destination compose_files
+
+    destination=$(env_get "$local_file" BACKUP_FILES_DESTINATION 2>/dev/null || true)
+    compose_files=$(env_get "$local_file" COMPOSE_FILE 2>/dev/null || true)
+    [[ -n "$compose_files" ]] || compose_files=$(release_declares COMPOSE_FILE || echo "compose.yaml")
+
+    if [[ -z "$destination" ]]; then
+        case "$compose_files" in
+            *:compose.backup-mount.yaml*)
+                env_set "$local_file" COMPOSE_FILE "${compose_files//:compose.backup-mount.yaml/}"
+                log_info "Backups kept on this machine again" ;;
+        esac
+        return 0
+    fi
+
+    [[ "$destination" == /* && -d "$destination" ]] \
+        || die_on_a_backup_destination_that_is_not_one "$destination" "it is not an existing directory given by its full path"
+    the_backup_destination_is_off_this_machine "$destination" \
+        || die_on_a_backup_destination_that_is_not_one "$destination" "it sits on this machine's own disk: nothing is mounted there"
+    touch "$destination/$BACKUP_DESTINATION_MARKER" 2>/dev/null \
+        || die_on_a_backup_destination_that_is_not_one "$destination" "it cannot be written to"
+
+    case "$compose_files" in
+        *compose.backup-mount.yaml*) ;;
+        *) env_set "$local_file" COMPOSE_FILE "${compose_files}:compose.backup-mount.yaml" ;;
+    esac
+    log_info "Backups go to ${destination}, off this machine's disk"
+}
+
 INTERNAL_INFERENCE_HOST=""
 
 # The release points VLLM_LLM_BASE_URL at nim-llm, a service on this machine's
@@ -880,6 +939,7 @@ step_configure() {
     fi
 
     $NO_GPU && write_the_settings_a_machine_without_an_accelerator_needs "$local_file"
+    write_the_settings_a_backup_destination_needs "$local_file"
 
     render_settings "$env_file" "$local_file"
     generate_database_credentials "$env_file" "$local_file"

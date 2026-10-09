@@ -29,7 +29,7 @@ fresh_copy() {
     rm -rf "$COPY"
     mkdir -p "$COPY"
     ( cd "$REPO_ROOT" && tar -cf - release.env compose.yaml compose.appbuilder.yaml \
-        compose.compute.yaml compose.no-gpu.yaml Caddyfile caddy metrics backup-files.sh \
+        compose.compute.yaml compose.no-gpu.yaml compose.backup-mount.yaml Caddyfile caddy metrics backup-files.sh \
         setup-autostart.sh ut-logs-archive ut-install ut-certificate ut-verify ut-status ut-report appbuilder docs \
         packaging README.md test .github 2>/dev/null ) | tar -xf - -C "$COPY" 2>/dev/null
 }
@@ -591,6 +591,14 @@ capability_discriminates "the backup given a network with a way out" \
     "the backup has no way off the machine" \
     "sed -i.bak '/^  files-backup:/,/^  [a-z]/ s/- ut-backend-network/- ut-frontend-network/' compose.yaml"
 
+capability_discriminates "the repository left on the machine's own disk" \
+    "lands on the destination the host mounts" \
+    "sed -i.bak 's|RESTIC_REPOSITORY: /destination/restic|RESTIC_REPOSITORY: /backup/restic|' compose.backup-mount.yaml"
+
+capability_discriminates "a backup written where nothing is mounted" \
+    "not mounted is refused" \
+    "sed -i.bak '/BACKUP_DESTINATION_MARKER:-/,/^fi\$/d' backup-files.sh"
+
 capability_discriminates "the dumps looked for where they are not" \
     "the database leaves with them" \
     "sed -i.bak 's|BACKUP_DUMPS:-/backup|BACKUP_DUMPS:-/nowhere|' backup-files.sh"
@@ -713,6 +721,10 @@ fi
     install_walk_discriminates "an inference address left pointing at a service nothing starts" \
         "it says the inference address still points at nothing" \
         "sed -i.bak 's|^    if the_inference_url_names_a_service_this_machine_will_not_run; then|    if false; then|' ut-install"
+
+    install_walk_discriminates "a backup destination on the machine's own disk taken for a mounted one" \
+        "one on the machine's own disk stops the install" \
+        "sed -i.bak 's|^    \[\[ \"\$filesystem\" != .*|    true|' ut-install"
 fi
 
 if [[ -x "$REPO_ROOT/test/ingress.sh" ]]; then

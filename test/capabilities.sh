@@ -86,6 +86,10 @@ with_profiles() {
     PROFILES="$profiles" "$@"
 }
 
+with_a_backup_destination() {
+    BACKUP_FILES_DESTINATION="$WORK_DIR/mounted" "$@"
+}
+
 omits_service() {
     local service=$1; shift
     ! compose_services "$@" | grep -qx "$service"
@@ -1035,6 +1039,62 @@ the_backup_has_no_way_off_the_machine() {
     [[ -z "$open" ]] || { echo "files-backup sits on a network with a way out: $(tr '\n' ' ' <<< "$open")"; return 1; }
 }
 
+rendered_backup_destination() {
+    local destination=$1
+    ( cd "$WORK_DIR" && BACKUP_FILES_DESTINATION="$destination" \
+        docker compose -f compose.yaml -f compose.backup-mount.yaml config --format json 2>/dev/null )
+}
+
+backup_into() {
+    local source=$1 destination=$2 target=$3 repository=$4 marker=$5
+    docker run --rm -v "$source":/data:ro -v "$destination":"$target" \
+        -v "$REPO_ROOT/backup-files.sh":/usr/local/bin/backup-files:ro \
+        -e RESTIC_REPOSITORY="$repository" -e RESTIC_PASSWORD=capability-test \
+        -e BACKUP_DESTINATION_MARKER="$marker" \
+        --entrypoint /usr/local/bin/backup-files "$RESTIC_IMAGE" 2>&1
+}
+
+the_backup_lands_on_the_mounted_destination() {
+    command -v jq >/dev/null || { echo "jq absent"; return 1; }
+    local destination="$WORK_DIR/mounted" source="$WORK_DIR/mounted-source" config target repository marker
+    mkdir -p "$destination" "$source/app-data"
+    echo "customer notes" > "$source/app-data/notes.txt"
+    config=$(rendered_backup_destination "$destination")
+    [[ -n "$config" ]] || { echo "the stack does not render with a destination"; return 1; }
+    target=$(jq -r --arg d "$destination" '.services["files-backup"].volumes[]? | select(.source == $d) | .target' <<< "$config")
+    repository=$(jq -r '.services["files-backup"].environment.RESTIC_REPOSITORY' <<< "$config")
+    marker=$(jq -r '.services["files-backup"].environment.BACKUP_DESTINATION_MARKER // empty' <<< "$config")
+    [[ -n "$target" && "$repository" == "$target"/* ]] || { echo "the repository ${repository} is not on the destination"; return 1; }
+    [[ -n "$marker" ]] && touch "$destination/${marker#"$target"/}"
+
+    backup_into "$source" "$destination" "$target" "$repository" "$marker" >/dev/null || { echo "the backup failed"; return 1; }
+
+    docker run --rm -v "$destination":/only-the-destination:ro \
+        -e RESTIC_REPOSITORY="/only-the-destination/${repository#"$target"/}" -e RESTIC_PASSWORD=capability-test \
+        "$RESTIC_IMAGE" snapshots --no-lock --json 2>/dev/null | grep -q '"time"' \
+        || { echo "nothing readable on the destination alone"; return 1; }
+}
+
+# An unmounted destination is an empty directory on the local disk: a backup
+# written there dies with the machine it was meant to outlive.
+the_backup_refuses_a_destination_that_is_not_mounted() {
+    command -v jq >/dev/null || { echo "jq absent"; return 1; }
+    local destination="$WORK_DIR/unmounted" source="$WORK_DIR/unmounted-source" config target repository marker output
+    mkdir -p "$destination" "$source/app-data"
+    echo "customer notes" > "$source/app-data/notes.txt"
+    config=$(rendered_backup_destination "$destination")
+    [[ -n "$config" ]] || { echo "the stack does not render with a destination"; return 1; }
+    target=$(jq -r --arg d "$destination" '.services["files-backup"].volumes[]? | select(.source == $d) | .target' <<< "$config")
+    repository=$(jq -r '.services["files-backup"].environment.RESTIC_REPOSITORY' <<< "$config")
+    marker=$(jq -r '.services["files-backup"].environment.BACKUP_DESTINATION_MARKER // empty' <<< "$config")
+    [[ -n "$target" && -n "$marker" ]] || { echo "the destination carries no marker to check"; return 1; }
+
+    output=$(backup_into "$source" "$destination" "$target" "$repository" "$marker") \
+        && { echo "the backup went ahead"; return 1; }
+    [[ -z "$(ls -A "$destination")" ]] || { echo "written anyway: $(ls -A "$destination" | tr '\n' ' ')"; return 1; }
+    grep -q 'not mounted' <<< "$output" || { echo "$output"; return 1; }
+}
+
 a_missing_backup_is_visible() {
     local dir="$WORK_DIR/hc" status
     mkdir -p "$dir"
@@ -1237,6 +1297,12 @@ if [[ -f "$REPO_ROOT/backup-files.sh" ]]; then
         the_backup_has_no_way_off_the_machine -f compose.yaml
     capability "the backup round-trips through an S3 endpoint, and comes back from it alone" \
         the_backup_round_trips_through_an_s3_endpoint
+    capability "a backup lands on the destination the host mounts, and reads back from it alone" \
+        the_backup_lands_on_the_mounted_destination
+    capability "a destination that is not mounted is refused, and nothing is written" \
+        the_backup_refuses_a_destination_that_is_not_mounted
+    capability "the backup has no way off the machine, with a mounted destination too" \
+        with_a_backup_destination the_backup_has_no_way_off_the_machine -f compose.yaml -f compose.backup-mount.yaml
     capability "the database leaves with them, not only the files" \
         the_database_leaves_the_machine_with_the_files
 fi

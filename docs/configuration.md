@@ -184,6 +184,41 @@ BACKUP_FILES_KEEP_MONTHLY="6"
 repository sits in the same volume as the database archives. Against a disk
 failure, a theft or a fire, that is no protection at all.
 
+#### To a disk the host mounts
+
+A share of your NAS, or a USB disk. The backup service gains a directory, never
+a network: whatever carries the bytes off the machine is the host's business.
+
+Mount it the way your systems usually are — an `/etc/fstab` line or a systemd
+mount unit — so that it comes back after a reboot. Then name it and run the
+installer again:
+
+```bash
+echo 'BACKUP_FILES_DESTINATION="/mnt/appliance-backup"' | sudo tee -a /etc/understandtech/local.env
+sudo ut-install
+```
+
+The installer refuses a directory on this machine's own disk, the root one or
+the one holding `DATA_ROOT`: that is a mount point with nothing mounted yet, and
+a backup written there dies with the machine. Once it has checked, it writes
+`.understandtech-backup-destination` into the directory.
+
+**Before every run, the backup looks for that file.** When the share is not
+mounted, it writes nothing, says so in its log, and its health check turns red:
+
+```bash
+docker compose logs files-backup | grep 'not mounted'
+```
+
+The first run creates the repository on the destination and copies everything;
+later runs copy only what changed. The database archives stay on the machine as
+well, where they always were.
+
+To keep the backup on the machine again, empty `BACKUP_FILES_DESTINATION` and
+run `sudo ut-install` once more.
+
+#### To S3 or SFTP
+
 Three settings change it:
 
 ```bash

@@ -166,6 +166,12 @@ state_setup() {
             echo 'install -d /opt/understandtech && printf '"'"'UT_DOMAIN="carried.example"\nJWT_SECRET="keptfromthecheckout0123456789abcdef0123456789ab"\nLOG_LEVEL="WARNING"\n'"'"' > /opt/understandtech/.env' ;;
         checkout_without_domain)
             echo 'install -d /opt/understandtech && printf '"'"'PUBLIC_BASE_URL="https://named.by.the.urls"\nBACKEND_URL="https://named.by.the.urls/api"\nJWT_SECRET="keptfromthecheckout0123456789abcdef0123456789ab"\n'"'"' > /opt/understandtech/.env' ;;
+        # /w is bind-mounted from the host, so a directory under it sits on another
+        # filesystem than the container's own disk — what a mounted NAS share is.
+        backup_destination_mounted)
+            echo 'install -d /w/backup_destination_mounted/nas && install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_DESTINATION="/w/backup_destination_mounted/nas"\n'"'"' > /etc/understandtech/local.env' ;;
+        backup_destination_not_mounted)
+            echo 'install -d /mnt/nas && install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_DESTINATION="/mnt/nas"\n'"'"' > /etc/understandtech/local.env' ;;
         *)             echo ': ' ;;
     esac
 }
@@ -306,6 +312,28 @@ the_preflight_stops_on_a_clock_before_the_release() {
     output=$(output_of clock_before_the_release)
     grep -q 'before this release was built' <<< "$output" \
         && ! grep -q 'Writing the configuration' <<< "$output" && return 0
+    echo "$output"
+    return 1
+}
+
+a_mounted_backup_destination_is_used_and_marked() {
+    local settings output
+    settings=$(settings_of backup_destination_mounted)
+    output=$(output_of backup_destination_mounted)
+    grep -qE '^COMPOSE_FILE=.*compose\.backup-mount\.yaml' <<< "$settings" \
+        && [[ -e "$WORK_DIR/backup_destination_mounted/nas/.understandtech-backup-destination" ]] \
+        && grep -q 'Downloading images' <<< "$output" && return 0
+    grep -E '^COMPOSE_FILE' <<< "$settings"
+    echo "$output"
+    return 1
+}
+
+a_destination_on_the_machine_s_own_disk_stops_the_install() {
+    local output
+    output=$(output_of backup_destination_not_mounted)
+    grep -q "this machine's own disk" <<< "$output" \
+        && grep -q 'empty BACKUP_FILES_DESTINATION' <<< "$output" \
+        && ! grep -q 'Downloading images' <<< "$output" && return 0
     echo "$output"
     return 1
 }
@@ -510,6 +538,8 @@ DISK_AVAIL_BYTES=$((91 * 1000 * 1000 * 1000)) \
     run_install_from_state no_accelerator_on_a_smaller_disk
 INSTALL_COMMAND="ut-install --no-gpu" run_install_from_state no_accelerator_by_flag
 INSTALL_COMMAND="ut-install --no-gpu" run_install_from_state no_accelerator_pointed_at_a_real_machine
+run_install_from_state backup_destination_mounted
+run_install_from_state backup_destination_not_mounted
 
 printf '%sA machine with nothing on it%s\n' "$BOLD" "$NC"
 property "the install reaches the point where it pulls images" \
@@ -597,6 +627,12 @@ property "the install stops, and says which volume and what to do" \
     an_orphan_volume_stops_the_install
 property "it offers the way back before the way out" \
     the_way_back_comes_before_the_way_out
+
+printf '\n%sA backup sent to a directory the host mounts%s\n' "$BOLD" "$NC"
+property "a destination on a disk of its own is used, and marked as mounted" \
+    a_mounted_backup_destination_is_used_and_marked
+property "one on the machine's own disk stops the install, and says how to get out" \
+    a_destination_on_the_machine_s_own_disk_stops_the_install
 
 printf '\n%sA database whose password happens to look shipped%s\n' "$BOLD" "$NC"
 property "the install carries on, because that password is the right one" \

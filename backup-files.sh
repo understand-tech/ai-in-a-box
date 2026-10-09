@@ -10,6 +10,13 @@ KEEP_MONTHLY="${BACKUP_FILES_KEEP_MONTHLY:-6}"
 
 log() { echo "$(date -u '+%Y-%m-%d %H:%M:%S') [files-backup] $*"; }
 
+# An unmounted destination is an empty directory on the local disk: a backup
+# written there dies with the machine it was meant to outlive.
+if [ -n "${BACKUP_DESTINATION_MARKER:-}" ] && [ ! -e "$BACKUP_DESTINATION_MARKER" ]; then
+    log "the destination is not mounted: ${BACKUP_DESTINATION_MARKER} is missing, nothing written"
+    exit 1
+fi
+
 restic snapshots >/dev/null 2>&1 || {
     log "initialising repository at ${RESTIC_REPOSITORY}"
     restic init
