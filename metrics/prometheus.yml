@@ -12,3 +12,26 @@ scrape_configs:
       - source_labels: [__name__]
         regex: "vllm:(num_requests_running|num_requests_waiting|kv_cache_usage_perc|num_preemptions_total|prompt_tokens_total|prefix_cache_queries_total|prefix_cache_hits_total|generation_tokens_total|request_success_total|(time_to_first_token|inter_token_latency|request_queue_time|request_prefill_time|request_decode_time|e2e_request_latency)_seconds_(bucket|sum|count)|request_(prompt|generation)_tokens_(bucket|sum|count))"
         action: keep
+
+  # What each request costs and how fast it is answered, by tool and prompt size:
+  # the gateway's and ut-llm's ut_inference_* families. Both answer /metrics only
+  # to the bearer of GATEWAY_METRICS_TOKEN.
+  - job_name: gateway
+    authorization:
+      credentials_file: /run/secrets/gateway_metrics_token
+    static_configs:
+      - targets: ["api:8501", "api-customer:8501"]
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: "ut_inference_.*"
+        action: keep
+
+  - job_name: llm
+    authorization:
+      credentials_file: /run/secrets/gateway_metrics_token
+    static_configs:
+      - targets: ["llm:8000"]
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: "ut_inference_.*"
+        action: keep
