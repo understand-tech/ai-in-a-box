@@ -349,6 +349,7 @@ services:
       # The app builder's key may name the person behind each call, so each
       # of its users gets a rate limit of their own.
       GATEWAY_TRUSTED_PROXY_KEYS: ${GATEWAY_TRUSTED_PROXY_KEYS:-${APP_BUILDER_GATEWAY_API_KEY:-}}
+      GATEWAY_METRICS_TOKEN: ${GATEWAY_METRICS_TOKEN:-}
       API_KEY_HASH_NEW_KEYS: ${API_KEY_HASH_NEW_KEYS:-}
       API_KEY_HASH_LAZY_MIGRATION: ${API_KEY_HASH_LAZY_MIGRATION:-}
       GATEWAY_MODELS: ${GATEWAY_MODELS:-}
@@ -510,6 +511,7 @@ services:
       # The app builder's key may name the person behind each call, so each
       # of its users gets a rate limit of their own.
       GATEWAY_TRUSTED_PROXY_KEYS: ${GATEWAY_TRUSTED_PROXY_KEYS:-${APP_BUILDER_GATEWAY_API_KEY:-}}
+      GATEWAY_METRICS_TOKEN: ${GATEWAY_METRICS_TOKEN:-}
       API_KEY_HASH_NEW_KEYS: ${API_KEY_HASH_NEW_KEYS:-}
       API_KEY_HASH_LAZY_MIGRATION: ${API_KEY_HASH_LAZY_MIGRATION:-}
       GATEWAY_MODELS: ${GATEWAY_MODELS:-}
@@ -752,6 +754,8 @@ services:
     volumes:
       - ./metrics/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - metrics-data:/prometheus
+    secrets:
+      - gateway_metrics_token
     networks:
       - ut-backend-network
     healthcheck:
@@ -807,6 +811,7 @@ services:
       VLLM_VLM_EXTRA_ARGS: ${VLLM_VLM_EXTRA_ARGS:-}
       VLLM_API_KEY: ${VLLM_API_KEY:-}
       LLM_BACKEND: ${LLM_BACKEND:-}
+      GATEWAY_METRICS_TOKEN: ${GATEWAY_METRICS_TOKEN:-}
       DOWNLOAD_ONNX_EMBED: ${DOWNLOAD_ONNX_EMBED:-}
       ONNX_EMBED_HF_REPO: ${ONNX_EMBED_HF_REPO:-}
       EMBED_MODEL_BACKEND: ${EMBED_MODEL_BACKEND:-}
@@ -852,6 +857,11 @@ networks:
     name: ${RESOURCE_PREFIX:-ut}-ca-network
     driver: bridge
     internal: true
+
+# ut-install generates GATEWAY_METRICS_TOKEN; the recorder reads it as a file.
+secrets:
+  gateway_metrics_token:
+    environment: GATEWAY_METRICS_TOKEN
 
 volumes:
   caddy-data:

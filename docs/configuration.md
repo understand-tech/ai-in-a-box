@@ -33,7 +33,7 @@ Knowing which kind you are editing matters more than knowing the variable.
 
 **Generated at install, never edited.** `JWT_SECRET`, `STATE_SECRET`,
 `OPENID_SECRET_KEY`, `ADMIN_SETUP_PASSWORD`, `BACKUP_FILES_PASSWORD`,
-`CA_PASSWORD`, `GPU_VM_API_TOKEN`, and the MongoDB credentials. Changing one
+`CA_PASSWORD`, `GPU_VM_API_TOKEN`, `GATEWAY_METRICS_TOKEN`, and the MongoDB credentials. Changing one
 after the fact breaks something: rotating `MONGODB_PASSWORD` on a database that
 already exists locks every service out, because the image only reads it when it
 creates the data directory.
@@ -64,7 +64,7 @@ once:
 ```bash
 for k in MONGODB_USERNAME MONGODB_PASSWORD JWT_SECRET \
          STATE_SECRET OPENID_SECRET_KEY ADMIN_SETUP_PASSWORD \
-         GPU_VM_API_TOKEN BACKUP_FILES_PASSWORD CA_PASSWORD; do
+         GPU_VM_API_TOKEN BACKUP_FILES_PASSWORD CA_PASSWORD GATEWAY_METRICS_TOKEN; do
     sed -i "s|^${k}=.*|${k}=\"$(openssl rand -hex 24)\"|" /etc/understandtech/local.env
 done
 ```

@@ -83,7 +83,7 @@ appliance. Change it and all six follow.
 | `ut-certificate` | Obtains and renews a publicly trusted certificate by DNS-01, so nothing has to be installed on user machines |
 | `ut-verify` | Checks a package's signature offline, for a machine with no network — `dpkg` verifies nothing on its own |
 | `ut-report` | Writes how loaded the engines were and how many people they served, hour by hour, for the operator to pass on. Sends nothing |
-| `metrics/prometheus.yml` | What the `metrics` service keeps of the engines' counters |
+| `metrics/prometheus.yml` | What the `metrics` service keeps of the engines' counters, and of the gateway's and the LLM service's per-request measures |
 | `packaging/build-deb.sh` | Builds the Debian package: release in `/usr/share`, settings in `/etc`, data in `/var/lib` |
 | `packaging/pin-images.sh` | Rewrites every image in `release.env` as `name:tag@sha256:…`, so a version names one exact image and not whatever the tag points at today. `--check` reports without changing anything |
 | `packaging/release-bom.sh` | Writes what a release is made of, as CycloneDX: one component per image, named by digest. Reads `release.env` and nothing else — no registry, no pull |
