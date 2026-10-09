@@ -14,7 +14,7 @@ scrape_configs:
         action: keep
 
   # What each request costs and how fast it is answered, by tool and prompt size:
-  # the gateway's and ut-llm's ut_inference_* families. Both answer /metrics only
+  # the gateway's and the LLM service's ut_inference_* families. Both answer /metrics only
   # to the bearer of GATEWAY_METRICS_TOKEN.
   - job_name: gateway
     authorization:
