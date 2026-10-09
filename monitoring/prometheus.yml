@@ -22,6 +22,8 @@ scrape_configs:
   # LLM gateway metrics (cap rejections, rate limits, per-key volume).
   # Requires a ut-api image containing app/routers/llm_gateway/prom.py.
   - job_name: gateway
+    authorization:
+      credentials_file: /run/secrets/gateway_metrics_token
     static_configs:
       - targets: ["ut-api:8501"]
         labels: { service: ut-api }

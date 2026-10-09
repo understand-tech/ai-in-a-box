@@ -41,7 +41,7 @@ creating them, so the main `compose.yaml` stays untouched.
 |---|---|---|
 | `vllm` | nim-llm:8000 | nothing (built into NIM) |
 | `dcgm` | dcgm-exporter:9400 | NVIDIA Container Toolkit |
-| `gateway` | ut-api:8501, ut-api-customer:8501 | a ut-api image with `llm_gateway/prom.py` (staging_aws ≥ 2026-09-15) |
+| `gateway` | ut-api:8501, ut-api-customer:8501 | a ut-api image with `llm_gateway/prom.py` (staging_aws ≥ 2026-09-15), and `GATEWAY_METRICS_TOKEN` set in the platform's `.env` |
 | `node` | node-exporter:9100 | nothing |
 | `cadvisor` | cadvisor:8080 | nothing |
 | `caddy` | ut-caddy:2019 | `servers { metrics }` in the Caddyfile global options — **shows DOWN until enabled, by design** |
@@ -55,12 +55,16 @@ creating them, so the main `compose.yaml` stays untouched.
   by DNS on the backend network. Without it the `vllm` target stays `DOWN` and the dashboard is empty; adjust the targets in `prometheus.yml` if the
   box serves other engines.
 - NVIDIA Container Toolkit installed, for the DCGM exporter's GPU access.
+- `GATEWAY_METRICS_TOKEN` set in the platform's `.env` (`openssl rand -hex 32`),
+  and the platform restarted with `docker compose up -d` so both api containers
+  read it. Prometheus sends it as a bearer token to `/metrics`, which is why the
+  stack starts with `--env-file ../.env`.
 
 ## Quick start
 
 ```bash
 cd monitoring
-docker compose -f docker-compose.monitoring.yml up -d
+docker compose --env-file ../.env -f docker-compose.monitoring.yml up -d
 ```
 
 Then open:
@@ -149,7 +153,7 @@ identical and the config reviewable.
   to compare against load tests from further back.
 - **Scrape interval** on the engines is 5s, deliberately tighter than the 15s global
   default, so the onset of saturation is sharp rather than smeared.
-- **After changing configs**: `docker compose -f docker-compose.monitoring.yml up -d`
+- **After changing configs**: `docker compose --env-file ../.env -f docker-compose.monitoring.yml up -d`
   for new/changed services, `docker restart ut-grafana` for dashboard JSON. For
   `prometheus.yml`/`alerts.yml`, `docker exec ut-prometheus kill -HUP 1` reloads —
   **but only if the file was edited in place**. Replacing it (scp, `mv`) swaps the
@@ -163,6 +167,9 @@ identical and the config reviewable.
 | vLLM targets `DOWN` | Container DNS names in `prometheus.yml`; is the monitoring project on the same network as the NIMs? |
 | DCGM target `DOWN` | NVIDIA Container Toolkit installed; `SYS_ADMIN` capability granted; GPUs visible to Docker; `dcgm-counters.csv` present next to the compose file (a missing file becomes an empty **directory** at container start and crash-loops the exporter) |
 | `gateway` targets `DOWN` | The api containers must run an image containing `app/routers/llm_gateway/prom.py` (`docker exec ut-api ls app/routers/llm_gateway/ \| grep prom`) |
+| `gateway` targets `DOWN`, `401 Unauthorized` | The api containers started with another `GATEWAY_METRICS_TOKEN`: run `docker compose up -d` at the repository root, then `up -d --force-recreate prometheus` here |
+| `gateway` targets `DOWN`, `unable to read file /run/secrets/gateway_metrics_token` | `GATEWAY_METRICS_TOKEN` is empty in `.env`; set it, restart the platform, then recreate prometheus |
+| `environment variable "GATEWAY_METRICS_TOKEN" required by secret` on `up` | The stack was started without `--env-file ../.env` |
 | `caddy` target `DOWN` | Expected until the Caddyfile enables `servers { metrics }` |
 | GPU bandwidth / SM / VRAM panels empty | The GB10 iGPU exposes neither DCGM profiling (PROF) nor framebuffer fields — those panels are for discrete-class GPUs (GB300); on the GB10 the Host memory panel *is* the GPU memory (unified) |
 | Queue wait p95 flat at exactly 285ms | Histogram floor, not a measurement: the smallest bucket is 0.3s, so "everything under it" interpolates to 0.95 × 300ms. It means **no queueing**; the `avg` series shows the true value |

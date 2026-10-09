@@ -569,7 +569,7 @@ independently.
 ```bash
 # The platform must already be up, with COMPOSE_PROFILES including nim
 cd monitoring
-docker compose -f docker-compose.monitoring.yml up -d
+docker compose --env-file ../.env -f docker-compose.monitoring.yml up -d
 ```
 
 | Service | Container | Host port | Description |
