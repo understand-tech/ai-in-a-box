@@ -130,6 +130,12 @@ if grep -q 'check_every_service_declares_its_role' "$REPO_ROOT/test/invariants.s
         "sed -i.bak '/^  nim-llm:\$/,/^      ut.role:/ s|ut.role: \"inference\"|ut.role: \"inferences\"|' compose.yaml"
 fi
 
+if grep -q 'check_every_service_declares_a_healthcheck' "$REPO_ROOT/test/invariants.sh"; then
+    discriminates "a service whose healthcheck was dropped" \
+        "service-without-a-healthcheck:workers" \
+        "sed -i.bak '/^  workers:\$/,/^    logging:/ s|^    healthcheck:\$|    healthcheck_dropped:|' compose.yaml"
+fi
+
 if grep -q 'check_the_first_backup_is_not_deferred_to_a_clock_time' "$REPO_ROOT/test/invariants.sh"; then
     discriminates "the first backup put back on a clock time" \
         "first-backup-deferred:1520" \
