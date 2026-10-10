@@ -1095,6 +1095,53 @@ the_backup_refuses_a_destination_that_is_not_mounted() {
     grep -q 'not mounted' <<< "$output" || { echo "$output"; return 1; }
 }
 
+# The image starts mongod once to create the root account, stops it, and starts
+# it again: a ping answered during the first start is answered by a server
+# about to go away.
+mongo_ready() {
+    local node=$1 user=$2 password=$3 attempt
+    for attempt in $(seq 1 60); do
+        docker logs "$node" 2>&1 | grep -q 'init process complete' \
+            && docker exec "$node" mongosh --quiet -u "$user" -p "$password" --authenticationDatabase admin \
+                --eval 'db.runCommand({ping:1}).ok' 2>/dev/null | grep -qx 1 && return 0
+        sleep 1
+    done
+    echo "$node never came up"
+    return 1
+}
+
+# A whole-server dump carries the admin database. Restored whole on a machine
+# installed afresh, it brings back the accounts of the machine it came from, and
+# every service of this one is locked out. The flags are the guide's own.
+the_guide_s_restore_keeps_this_machine_s_accounts() {
+    local run=cap-elsewhere-$$ net source target count exclusion=()
+    net=$run-net; source=$run-source; target=$run-target
+    grep -qF -- "--nsExclude 'admin.*'" "$REPO_ROOT/docs/restore.md" && exclusion=(--nsExclude 'admin.*')
+
+    docker network create "$net" >/dev/null 2>&1
+    docker run -d --name "$source" --network "$net" -e MONGO_INITDB_ROOT_USERNAME=elsewhere \
+        -e MONGO_INITDB_ROOT_PASSWORD=elsewhere-password "$MONGODB_IMAGE" >/dev/null 2>&1
+    docker run -d --name "$target" --network "$net" -e MONGO_INITDB_ROOT_USERNAME=here \
+        -e MONGO_INITDB_ROOT_PASSWORD=here-password "$MONGODB_IMAGE" >/dev/null 2>&1
+
+    if mongo_ready "$source" elsewhere elsewhere-password && mongo_ready "$target" here here-password; then
+        docker exec "$source" mongosh --quiet -u elsewhere -p elsewhere-password --authenticationDatabase admin \
+            --eval 'db.getSiblingDB("ut-db").documents.insertMany([{n: 1}, {n: 2}, {n: 3}])' >/dev/null 2>&1
+        docker exec "$source" mongodump --quiet --gzip --archive=/tmp/elsewhere.gz \
+            -u elsewhere -p elsewhere-password --authenticationDatabase admin >/dev/null 2>&1
+        docker cp "$source:/tmp/elsewhere.gz" "$WORK_DIR/elsewhere.gz" >/dev/null 2>&1
+        docker cp "$WORK_DIR/elsewhere.gz" "$target:/tmp/elsewhere.gz" >/dev/null 2>&1
+        docker exec "$target" mongorestore --quiet --gzip --archive=/tmp/elsewhere.gz --drop \
+            ${exclusion[@]+"${exclusion[@]}"} -u here -p here-password --authenticationDatabase admin >/dev/null 2>&1
+        count=$(docker exec "$target" mongosh --quiet -u here -p here-password --authenticationDatabase admin \
+            --eval 'db.getSiblingDB("ut-db").documents.countDocuments()' 2>&1 | tail -1)
+    fi
+
+    docker rm -f "$source" "$target" >/dev/null 2>&1
+    docker network rm "$net" >/dev/null 2>&1
+    [[ "${count:-}" == 3 ]] || { echo "this machine's account after the restore: ${count:-nothing}"; return 1; }
+}
+
 a_missing_backup_is_visible() {
     local dir="$WORK_DIR/hc" status
     mkdir -p "$dir"
@@ -1303,6 +1350,8 @@ if [[ -f "$REPO_ROOT/backup-files.sh" ]]; then
         the_backup_refuses_a_destination_that_is_not_mounted
     capability "the backup has no way off the machine, with a mounted destination too" \
         with_a_backup_destination the_backup_has_no_way_off_the_machine -f compose.yaml -f compose.backup-mount.yaml
+    capability "a database restored on another machine, as the guide says, keeps that machine's accounts" \
+        the_guide_s_restore_keeps_this_machine_s_accounts
     capability "the database leaves with them, not only the files" \
         the_database_leaves_the_machine_with_the_files
 fi

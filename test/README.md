@@ -138,8 +138,9 @@ Backup
   ✔ a backup lands on the destination the host mounts, and reads back from it alone
   ✔ a destination that is not mounted is refused, and nothing is written
   ✔ the backup has no way off the machine, with a mounted destination too
+  ✔ a database restored on another machine, as the guide says, keeps that machine's accounts
 
-42 verified
+43 verified
 ```
 
 The list grows with the branch, not with the file: each block is guarded by the

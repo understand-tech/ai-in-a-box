@@ -599,6 +599,10 @@ capability_discriminates "a backup written where nothing is mounted" \
     "not mounted is refused" \
     "sed -i.bak '/BACKUP_DESTINATION_MARKER:-/,/^fi\$/d' backup-files.sh"
 
+capability_discriminates "a guide that restores a foreign database whole" \
+    "restored on another machine, as the guide says" \
+    "sed -i.bak \"s| --nsExclude 'admin.\\*'||\" docs/restore.md"
+
 capability_discriminates "the dumps looked for where they are not" \
     "the database leaves with them" \
     "sed -i.bak 's|BACKUP_DUMPS:-/backup|BACKUP_DUMPS:-/nowhere|' backup-files.sh"

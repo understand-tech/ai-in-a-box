@@ -10,8 +10,8 @@ that is what it actually printed.
 
 <!-- Scope: what the two backup services produce, and what a restore reads.
      Not the retention rules. -->
-<!-- Source of truth: compose.yaml:205-288 -->
-<!-- Date: 2026-09-18 -->
+<!-- Source of truth: compose.yaml:213-298, compose.backup-mount.yaml -->
+<!-- Date: 2026-10-10 -->
 <!-- Target: github — status of "flowchart": rendered -->
 
 ```mermaid
@@ -21,12 +21,13 @@ flowchart LR
     DUMPS["ut-mongodb-backup volume"]
     DATAROOT["DATA_ROOT - documents, App Builder projects, the authority root"]
     FILESBACKUP["files-backup - restic, encrypted"]
-    REPO["restic repository"]
-    OFFSITE["S3 bucket - only when credentials are set"]
+    REPO["restic repository - in that volume by default"]
+    MOUNTED["or on a disk the host mounts - BACKUP_FILES_DESTINATION"]
     MONGO --> DBBACKUP --> DUMPS
     DATAROOT --> FILESBACKUP
     DUMPS --> FILESBACKUP
-    FILESBACKUP --> REPO --> OFFSITE
+    FILESBACKUP --> REPO
+    FILESBACKUP -.-> MOUNTED
 ```
 
 **Description** — Two services, in a chain. `mongodb-backup` takes a full-server
@@ -34,9 +35,11 @@ dump of every database, compressed with gzip, and writes it into the
 `ut-mongodb-backup` volume. `files-backup` then reads two things — that volume,
 and `DATA_ROOT` on the host, which holds uploaded documents, the App Builder's
 projects and the certificate authority's root — and writes them into a `restic`
-repository, encrypted with `BACKUP_FILES_PASSWORD`. When S3 credentials are
-set, that repository is also pushed off the machine. So the database leaves the
-site inside the file backup, not on its own.
+repository, encrypted with `BACKUP_FILES_PASSWORD`. By default the repository
+sits in the same volume as the archives. With `BACKUP_FILES_DESTINATION` set, it
+sits instead on a disk the host mounts — a NAS share or a USB disk, the dotted
+line — and leaves the machine with it. So the database leaves the site inside
+the file backup, not on its own.
 
 **Gaps** — The diagram does not show schedules or retention: the dump runs on
 `BACKUP_BEGIN` / `BACKUP_INTERVAL`, the file snapshot on `BACKUP_FILES_AT`, and
@@ -56,7 +59,7 @@ installed here.
 to leaves a mixture of both states, and no error says so.
 
 ```bash
-cd /opt/understandtech
+cd /usr/share/understandtech
 docker compose stop api api-customer workers workers-customer llm
 ```
 
@@ -99,7 +102,7 @@ docker exec ut-mongodb mongorestore --gzip --archive=/tmp/restore.gz \
 ```
 
 `$USER` and `$PASSWORD` are `MONGODB_USERNAME` and `MONGODB_PASSWORD` from
-`/opt/understandtech/.env`.
+`/etc/understandtech/.env`.
 
 `--drop` replaces each collection as it is restored. Without it, restoring onto
 a database that still holds documents merges the two.
@@ -207,7 +210,7 @@ failure.
 ## 4 · Start again
 
 ```bash
-cd /opt/understandtech
+cd /usr/share/understandtech
 docker compose up -d
 docker compose ps
 ```
@@ -216,7 +219,87 @@ Wait for every service to read `healthy`. Then open the platform and check one
 document you know the content of — a service that starts is not a service that
 kept its data.
 
+## On another machine
+
+When the machine is gone, its backup comes back on another one installed
+afresh. What it takes: the disk the backup went to, and `BACKUP_FILES_PASSWORD`.
+Nothing of the old appliance.
+
+**1 · Install the same version, under the same address.** The address is in
+the links users kept and in the sign-on settings the database carries, so
+another one breaks both.
+
+```bash
+sudo ut-install --domain box.example.com
+```
+
+It generates new secrets, and this machine keeps them: what comes from the old
+one is the data, never its accounts. Everyone signs in again afterwards.
+
+**2 · Mount the backup disk, and read the latest snapshot from it.**
+
+```bash
+read -rs RESTIC_PASSWORD && export RESTIC_PASSWORD
+docker run --rm -e RESTIC_PASSWORD -e RESTIC_REPOSITORY=/destination/restic \
+    -v /mnt/appliance-backup:/destination:ro -v /var/lib/understandtech-restored:/out \
+    restic/restic:0.18.1 restore latest --target /out --no-lock
+```
+
+`read` takes `BACKUP_FILES_PASSWORD` without echoing it or leaving it in the
+shell history. `--no-lock` is what lets `restic` read a disk mounted read-only.
+
+**3 · Stop what writes, then put the files in place.**
+
+```bash
+cd /usr/share/understandtech
+docker compose stop api api-customer workers workers-customer llm step-ca files-backup
+sudo cp -a /var/lib/understandtech-restored/data/. /var/lib/understandtech/
+```
+
+That brings back the documents, the App Builder's projects and the authority's
+root, which replaces the one the fresh install had just created.
+
+**4 · Restore the database, without its accounts.**
+
+```bash
+ARCHIVE=$(sudo sh -c 'ls -t /var/lib/understandtech-restored/backup/mongo_*.archive.gz | head -1')
+sudo docker cp "$ARCHIVE" ut-mongodb:/tmp/restore.gz
+docker exec -it ut-mongodb mongorestore --gzip --archive=/tmp/restore.gz --drop \
+    --nsExclude 'admin.*' -u "$(sudo sed -n 's/^MONGODB_USERNAME="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' /etc/understandtech/.env)" \
+    --authenticationDatabase admin
+```
+
+It asks for the password: this machine's `MONGODB_PASSWORD`, in
+`/etc/understandtech/.env`.
+
+**The archive carries the accounts of the machine it came from.** Restored
+whole, they replace this machine's, and every service is locked out at its next
+start. Leaving `admin` out keeps this machine's accounts; every other database
+comes back.
+
+**5 · Start again, and check what came back.**
+
+```bash
+docker compose up -d
+docker exec ut-step-ca step certificate inspect /home/step/certs/root_ca.crt --short
+```
+
+The fingerprint is the old machine's, so the browsers and machines that trusted
+it keep doing so. Then open the platform and check one document you know the
+content of.
+
+**What you set again by hand.** `/etc/understandtech/local.env` is not in the
+backup: the TLS mode and a customer certificate, the backup destination, and
+every value you had changed from the release — model memory, file budget,
+ports. **Before naming the backup destination again, give this machine the old
+`BACKUP_FILES_PASSWORD`**, or point it at a new directory: the repository there
+opens with the old password only.
+
 ## What this does not cover
+
+**The settings in `/etc/understandtech/local.env`.** They live outside
+`DATA_ROOT`, so no backup carries them. See [above](#on-another-machine) for
+what to set again.
 
 **The databases of generated applications.** The App Builder starts one MongoDB
 per application under `workspaces/*/mongo-data`, and the file backup excludes
@@ -225,8 +308,8 @@ corrupt state. They need a dump each, which is pending a product decision.
 
 **Anything outside this machine, unless you configured it.** The `restic`
 repository defaults to `/backup/restic` — the same volume as the database
-archives. Losing that volume loses both. Set `BACKUP_FILES_REPOSITORY` to an S3
-or SFTP destination if the data matters more than the machine does; see
+archives. Losing that volume loses both. Set `BACKUP_FILES_DESTINATION` to a
+disk the host mounts if the data matters more than the machine does; see
 [configuration](configuration.md#sending-backups-off-the-machine).
 
 **The archive left behind on the machine.** `restic` carries the `mongodump`
