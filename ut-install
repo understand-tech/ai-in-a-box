@@ -45,7 +45,7 @@ SHIPPED_PLACEHOLDERS=(
     "" "12345678" "password" "SECRET" "SJKFVK" "FVVE" "SJBVSJB" "ut"
     "czIzgahTJGzdG3b1XtEgGIWPvwhdfBvhVd1JjzetjWQ"
 )
-GENERATED_SECRET_KEYS=(JWT_SECRET STATE_SECRET OPENID_SECRET_KEY ADMIN_SETUP_PASSWORD BACKUP_FILES_PASSWORD CA_PASSWORD GPU_VM_API_TOKEN GATEWAY_METRICS_TOKEN)
+GENERATED_SECRET_KEYS=(JWT_SECRET STATE_SECRET OPENID_SECRET_KEY ADMIN_SETUP_PASSWORD BACKUP_FILES_PASSWORD CA_PASSWORD GPU_VM_API_TOKEN GATEWAY_METRICS_TOKEN APP_BUILDER_TOKEN_ENCRYPTION_KEY)
 STEP_CA_UID=1000
 CA_CERT_DURATION=168h
 
@@ -140,6 +140,16 @@ random_alphanumeric() {
         raw=$(od -An -tx1 -N "$(( (chars + 1) / 2 ))" /dev/urandom | tr -d ' \n')
     fi
     printf '%s' "${raw:0:chars}"
+}
+
+# The App Builder reads its token key with Fernet, which takes 32 bytes in
+# URL-safe base64 and refuses anything else, hexadecimal included.
+random_fernet_key() {
+    if command -v openssl >/dev/null 2>&1; then
+        openssl rand -base64 32 | tr '+/' '-_'
+    else
+        head -c 32 /dev/urandom | base64 | tr '+/' '-_'
+    fi
 }
 
 env_get() {
@@ -674,6 +684,7 @@ generate_application_secrets() {
         if is_shipped_placeholder "$(env_get "$local_file" "$key" || true)"; then
             case "$key" in
                 JWT_SECRET|BACKUP_FILES_PASSWORD|CA_PASSWORD) env_set "$local_file" "$key" "$(random_alphanumeric 64)" ;;
+                APP_BUILDER_TOKEN_ENCRYPTION_KEY) env_set "$local_file" "$key" "$(random_fernet_key)" ;;
                 *)                                env_set "$local_file" "$key" "$(random_alphanumeric 32)" ;;
             esac
             rotated+=("$key")

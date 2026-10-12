@@ -33,7 +33,8 @@ Knowing which kind you are editing matters more than knowing the variable.
 
 **Generated at install, never edited.** `JWT_SECRET`, `STATE_SECRET`,
 `OPENID_SECRET_KEY`, `ADMIN_SETUP_PASSWORD`, `BACKUP_FILES_PASSWORD`,
-`CA_PASSWORD`, `GPU_VM_API_TOKEN`, `GATEWAY_METRICS_TOKEN`, and the MongoDB credentials. Changing one
+`CA_PASSWORD`, `GPU_VM_API_TOKEN`, `GATEWAY_METRICS_TOKEN`,
+`APP_BUILDER_TOKEN_ENCRYPTION_KEY`, and the MongoDB credentials. Changing one
 after the fact breaks something: rotating `MONGODB_PASSWORD` on a database that
 already exists locks every service out, because the image only reads it when it
 creates the data directory.
@@ -72,7 +73,15 @@ done
 **Hexadecimal on purpose.** The database URI is built by concatenation, so a
 value holding `@`, `/`, `#` or `%` breaks the connection string.
 
-**Two of them cannot be rotated afterwards.**
+`APP_BUILDER_TOKEN_ENCRYPTION_KEY` is the exception. The App Builder reads it
+with Fernet, which takes 32 random bytes in URL-safe base64 and refuses
+hexadecimal:
+
+```bash
+sed -i "s|^APP_BUILDER_TOKEN_ENCRYPTION_KEY=.*|APP_BUILDER_TOKEN_ENCRYPTION_KEY=\"$(openssl rand -base64 32 | tr '+/' '-_')\"|" /etc/understandtech/local.env
+```
+
+**Three of them cannot be rotated afterwards.**
 
 `MONGODB_PASSWORD` is only read when the database is first created. Changing it
 later changes nothing in the database and stops every service from connecting.
@@ -81,6 +90,10 @@ later changes nothing in the database and stops every service from connecting.
 snapshot unreadable — including the offsite copies, including the certificate
 authority's root. **Write it down somewhere other than this machine**, because
 the offsite copy is exactly what you reach for when this machine is gone.
+
+`APP_BUILDER_TOKEN_ENCRYPTION_KEY` encrypts the GitLab tokens the App Builder
+stores. Changing it makes every stored connection unreadable, and every user has
+to connect GitLab again.
 
 `JWT_SECRET` is shared by four services, so a token minted at one customer
 would be accepted at another if the value were the same. That is why nothing
@@ -103,6 +116,50 @@ Once the platform is up:
 Step 3 is not optional. The overlay declares that network `external`, generated
 apps join it from their own compose projects, so no project owns it and compose
 refuses to start without it.
+
+### Pushing apps to GitLab
+
+The App Builder can push each generated app's code to a GitLab repository, in
+two ways. Each one stays hidden while its settings are empty.
+
+**With a personal access token**, on by default. Users paste the address of
+their GitLab and a token with the `api` scope. The App Builder stores the token
+encrypted with `APP_BUILDER_TOKEN_ENCRYPTION_KEY`, which `ut-install` generates.
+
+**A GitLab on your own network is refused until you name it.** The App Builder
+only contacts hosts that resolve to public addresses, except the ones listed
+here — and once the list is set, those are the only ones it contacts:
+
+```bash
+APP_BUILDER_GITLAB_ALLOWED_HOSTS="gitlab.example.internal,git.example.com"
+```
+
+**With one click, on gitlab.com only.** Register a confidential application in
+gitlab.com (**Settings → Applications**) with the `api` and `read_user` scopes
+and `https://builder.<UT_DOMAIN>/api/gitlab/auth/callback` as its redirect URI,
+then:
+
+```bash
+APP_BUILDER_GITLAB_CLIENT_ID="…"
+APP_BUILDER_GITLAB_CLIENT_SECRET="…"
+```
+
+The appliance has to reach gitlab.com for this one. Set
+`APP_BUILDER_GITLAB_REDIRECT_URI` only if GitLab has to call back another
+address.
+
+### Build progress
+
+```bash
+APP_BUILDER_LLM_STREAMING=""
+APP_BUILDER_PROGRESS_WAIT_SECS=""
+```
+
+The App Builder streams the model's answer: that is what shows the file being
+written, and what says *Waiting for capacity* when no first token has come after
+`APP_BUILDER_PROGRESS_WAIT_SECS` seconds, 15 when empty. `"0"` in
+`APP_BUILDER_LLM_STREAMING` goes back to whole answers, and that message goes
+with it.
 
 ## Inference
 
@@ -226,6 +283,22 @@ WORKER_CUSTOMER_REPLICAS="2"
 
 Background document processing. More replicas, more parallel ingestion, more
 memory.
+
+### Gateway limits
+
+```bash
+GATEWAY_MAX_PROMPT_TOKENS="65536"
+GATEWAY_RPM_PER_KEY=""
+GATEWAY_RPM_PER_USER=""
+GATEWAY_RPM_PER_KEY_TOTAL=""
+```
+
+A prompt estimated above `GATEWAY_MAX_PROMPT_TOKENS` is answered with a 400
+instead of reaching the engine; `0` lifts the cap. Each API key may make
+`GATEWAY_RPM_PER_KEY` requests a minute, 60 when empty. The App Builder's key
+acts for many people, so each of them gets `GATEWAY_RPM_PER_USER` — the per-key
+limit when empty — and all of them together `GATEWAY_RPM_PER_KEY_TOTAL`, ten
+times the per-key limit when empty, `0` to lift it.
 
 ### Verbosity
 

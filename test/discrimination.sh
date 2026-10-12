@@ -100,6 +100,10 @@ discriminates "a secret defaulted in a compose file" \
     "compose-secret-default:JWT_SECRET" \
     "sed -i.bak 's|\${JWT_SECRET:?[^}]*}|\${JWT_SECRET:-shipped-value}|' compose.yaml"
 
+discriminates "the App Builder's token key defaulted in its overlay" \
+    "compose-secret-default:APP_BUILDER_TOKEN_ENCRYPTION_KEY" \
+    "sed -i.bak 's|\${APP_BUILDER_TOKEN_ENCRYPTION_KEY:-}|\${APP_BUILDER_TOKEN_ENCRYPTION_KEY:-shipped-value}|' compose.appbuilder.yaml"
+
 if grep -q 'check_healthcheck_asks_for_a_certified_name' "$REPO_ROOT/test/invariants.sh"; then
     discriminates "a healthcheck asking for a name the certificate does not carry" \
         "healthcheck-name-not-certified:localhost" \
@@ -699,6 +703,18 @@ fi
     install_walk_discriminates "two machines given the same secret" \
         "two installs do not share a secret" \
         "sed -i.bak 's|^random_alphanumeric() {$|random_alphanumeric() { printf %s the-same-everywhere; return 0;|' ut-install"
+
+    install_walk_discriminates "a token key the App Builder cannot read" \
+        "the App Builder's token key is one Fernet accepts" \
+        "sed -i.bak 's|^random_fernet_key() {$|random_fernet_key() { random_alphanumeric 44; return 0;|' ut-install"
+
+    install_walk_discriminates "two machines given the same token key" \
+        "two installs do not share a secret" \
+        "sed -i.bak 's|^random_fernet_key() {$|random_fernet_key() { printf %s the-same-everywhere; return 0;|' ut-install"
+
+    install_walk_discriminates "a carried token key replaced by a new one" \
+        "the App Builder's token key comes along" \
+        "sed -i.bak 's|^    local local_file=\$1 key rotated=()\$|&; env_set \"\$local_file\" APP_BUILDER_TOKEN_ENCRYPTION_KEY \"\"|' ut-install"
 
     install_walk_discriminates "a declared machine refused anyway" \
         "the install goes on when the inference is served elsewhere" \
