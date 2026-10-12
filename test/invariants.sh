@@ -230,6 +230,53 @@ check_every_service_declares_its_role() {
     fi
 }
 
+judge_one_service_health() {
+    local service=$1 has_healthcheck=$2
+    [[ -n "$service" ]] || return 0
+    $has_healthcheck && return 0
+    report "service-without-a-healthcheck:${service}" \
+        "${service} declares no healthcheck — ut-install and ut-status count it as serving for as long as its process runs, even once it no longer does its work"
+}
+
+# Docker only knows that a process runs. The healthcheck is what tells ut-install,
+# ut-status and the usage report that the service still does its job.
+check_every_service_declares_a_healthcheck() {
+    local line entry in_services=false service="" has_healthcheck=false
+    while IFS= read -r line; do
+        entry=${line%"${line##*[![:space:]]}"}
+        case "$entry" in
+            "services:")
+                in_services=true
+                continue
+                ;;
+            [a-z]*:*)
+                if $in_services; then
+                    judge_one_service_health "$service" "$has_healthcheck"
+                fi
+                in_services=false
+                service=""
+                has_healthcheck=false
+                continue
+                ;;
+        esac
+        $in_services || continue
+        case "$entry" in
+            "  "[a-z]*":")
+                judge_one_service_health "$service" "$has_healthcheck"
+                service=${entry#  }
+                service=${service%:}
+                has_healthcheck=false
+                ;;
+            "    healthcheck:")
+                has_healthcheck=true
+                ;;
+        esac
+    done < "$REPO_ROOT/compose.yaml"
+    if $in_services; then
+        judge_one_service_health "$service" "$has_healthcheck"
+    fi
+}
+
 judge_one_gateway() {
     local service=$1 hosts_the_gateway=$2 trusts_the_builder=$3
     [[ -n "$service" ]] || return 0
@@ -645,6 +692,7 @@ main() {
     check_healthcheck_asks_for_a_certified_name
     check_no_service_starts_slower_than_the_installer_waits
     check_every_service_declares_its_role
+    check_every_service_declares_a_healthcheck
     check_the_first_backup_is_not_deferred_to_a_clock_time
     check_every_setting_reaches_something
     check_the_gateway_trusts_the_app_builder_key

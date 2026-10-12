@@ -130,6 +130,12 @@ if grep -q 'check_every_service_declares_its_role' "$REPO_ROOT/test/invariants.s
         "sed -i.bak '/^  nim-llm:\$/,/^      ut.role:/ s|ut.role: \"inference\"|ut.role: \"inferences\"|' compose.yaml"
 fi
 
+if grep -q 'check_every_service_declares_a_healthcheck' "$REPO_ROOT/test/invariants.sh"; then
+    discriminates "a service whose healthcheck was dropped" \
+        "service-without-a-healthcheck:workers" \
+        "sed -i.bak '/^  workers:\$/,/^    logging:/ s|^    healthcheck:\$|    healthcheck_dropped:|' compose.yaml"
+fi
+
 if grep -q 'check_the_first_backup_is_not_deferred_to_a_clock_time' "$REPO_ROOT/test/invariants.sh"; then
     discriminates "the first backup put back on a clock time" \
         "first-backup-deferred:1520" \
@@ -370,6 +376,18 @@ if [[ -x "$REPO_ROOT/ut-report" ]]; then
     capability_discriminates "a stopped recorder reported as an idle machine" \
         "an engine nobody recorded is flagged" \
         "sed -i.bak '/recorder-missing:/d' ut-report"
+
+    capability_discriminates "a forecast that never warns" \
+        "a recorder that will outgrow its cap is flagged before it does" \
+        "sed -i.bak 's|if (kept < wanted)|if (kept < 0)|' ut-report"
+
+    capability_discriminates "a retention read up to its first unit only" \
+        "a cap written in other units is read the same" \
+        "sed -i.bak 's|while (match(d,|if (match(d,|' ut-report"
+
+    capability_discriminates "a forecast drawn from an hour of write-ahead log" \
+        "a recorder too young to judge raises nothing" \
+        "sed -i.bak 's|covered < 1 |covered < 0 |' ut-report"
 
     capability_discriminates "a report silent about memory" \
         "the report gives each service its memory peak and limit" \
@@ -636,7 +654,7 @@ if grep -q 'checkouts_holding_settings' "$REPO_ROOT/ut-install"; then
 
     install_walk_discriminates "a required variable nobody generates" \
         "every variable the stack requires has a value" \
-        "sed -i.bak 's| CA_PASSWORD GPU_VM_API_TOKEN)| CA_PASSWORD)|' ut-install"
+        "sed -i.bak 's| GPU_VM_API_TOKEN\\([ )]\\)|\\1|' ut-install"
 
 if grep -q 'check_the_package_stamps_the_commit_it_was_built_from' "$REPO_ROOT/test/invariants.sh"; then
     discriminates "a package that says nothing about the code inside it" \
