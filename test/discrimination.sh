@@ -764,6 +764,10 @@ if [[ -x "$REPO_ROOT/test/ingress.sh" ]]; then
         "a forged host is pooled" \
         "sed -i.bak 's|^        per_host\$|        per_host\\n        observe_catchall_hosts|' caddy/ingress-internal.caddy"
 
+    ingress_discriminates "a recorder that filters out the handler Caddy counts under" \
+        "the recorder keeps each request to a surface" \
+        "sed -i.bak 's/_total;metrics\"/_total;subroute\"/' metrics/prometheus.yml"
+
     # The defect this caught the day it was written: a redirect URI that the
     # ingress sends to the frontend, where no callback is ever handled.
     # custom mode falling back to the appliance's own authority is invisible: the

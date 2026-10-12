@@ -15,7 +15,7 @@ PROBE_IMAGE=$ALPINE_IMAGE
 # them: caddy:2-alpine is public, and stubs answer for the eight upstreams. So
 # the one surface a browser actually meets is the one that can be checked here.
 cleanup() {
-    docker rm -f ut-ingress-caddy ut-ingress-stub ut-ingress-probe >/dev/null 2>&1
+    docker rm -f ut-ingress-caddy ut-ingress-stub ut-ingress-probe ut-ingress-recorder >/dev/null 2>&1
     docker network rm "$NETWORK" >/dev/null 2>&1
     rm -rf "$WORK_DIR"
 }
@@ -120,7 +120,7 @@ EOF
 # expansion has to be guarded rather than quoted.
 start_the_front_door() {
     local mode=${1:-internal} args=() extra=()
-    while IFS= read -r line; do args+=("$line"); done < <(aliases_for "$SURFACES")
+    while IFS= read -r line; do args+=("$line"); done < <(aliases_for "$SURFACES caddy")
 
     case "$mode" in
         custom)
@@ -154,6 +154,13 @@ start_the_prober() {
         sleep 1; waited=$((waited + 1))
         (( waited < 60 )) || { echo "curl never installed in the prober" >&2; return 1; }
     done
+}
+
+start_the_recorder() {
+    sed 's/scrape_interval: [0-9]*s/scrape_interval: 1s/' "$REPO_ROOT/metrics/prometheus.yml" > "$WORK_DIR/prometheus.yml"
+    docker run -d --name ut-ingress-recorder --network "$NETWORK" \
+        -v "$WORK_DIR/prometheus.yml":/etc/prometheus/prometheus.yml:ro \
+        "$PROMETHEUS_IMAGE" --config.file=/etc/prometheus/prometheus.yml >/dev/null
 }
 
 SCHEME="https"
@@ -321,8 +328,41 @@ a_forged_host_is_pooled() {
     return 1
 }
 
+requests_the_recorder_holds_for() {
+    docker exec ut-ingress-recorder wget -qO- "http://localhost:9090/federate?match%5B%5D=caddy_http_requests_total" 2>/dev/null \
+        | awk -v host="$1" 'index($0, "host=\"" host "\"") { total += $(NF - 1) } END { print total + 0 }'
+}
+
+the_recorder_reads_caddy() {
+    docker exec ut-ingress-recorder wget -qO- "http://localhost:9090/federate?match%5B%5D=up%7Bjob%3D%22caddy%22%7D" 2>/dev/null \
+        | grep -q '^up{.*} 1 '
+}
+
+the_recorder_keeps_each_request_once() {
+    local host="llms.${DOMAIN}" before after waited=0
+    until the_recorder_reads_caddy; do
+        sleep 1; waited=$((waited + 1))
+        (( waited < 30 )) || { echo "the recorder never read Caddy's counters"; return 1; }
+    done
+    waited=0
+    sleep 2
+    before=$(requests_the_recorder_holds_for "$host")
+    status_of "$host" >/dev/null; status_of "$host" >/dev/null; status_of "$host" >/dev/null
+    after=$before
+    while (( after == before && waited < 20 )); do
+        sleep 1; waited=$((waited + 1))
+        after=$(requests_the_recorder_holds_for "$host")
+    done
+    sleep 2
+    after=$(requests_the_recorder_holds_for "$host")
+    (( after - before == 3 )) && return 0
+    echo "three requests to ${host}, and the recorder holds $((after - before)) more"
+    return 1
+}
+
 start_the_upstreams
 start_the_front_door
+start_the_recorder
 start_the_prober || exit 1
 docker exec ut-ingress-probe sh -c 'apk add --no-cache openssl >/dev/null 2>&1' || true
 
@@ -360,6 +400,7 @@ printf '\n%sWhat the recorder reads%s\n' "$BOLD" "$NC"
 surface "Caddy counts what each surface answered, by host" the_counters_name_each_surface
 surface "the counters are not served on the front door" the_counters_stay_off_the_front_door
 surface "a forged host is pooled, not counted on its own" a_forged_host_is_pooled
+surface "the recorder keeps each request to a surface, exactly once" the_recorder_keeps_each_request_once
 
 printf '\n%sMode custom — the certificate comes from the operator%s\n' "$BOLD" "$NC"
 restart_the_front_door_in custom
