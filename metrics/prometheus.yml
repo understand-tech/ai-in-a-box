@@ -36,14 +36,18 @@ scrape_configs:
         regex: "ut_inference_.*"
         action: keep
 
-  # What each surface of the front door answered, by host and status code. Caddy
-  # counts a request once per handler it passes through: only the handler that
-  # reaches an application is kept, with the health of each upstream.
+  # What each surface of the front door answered, by host and status code, with
+  # the health of each upstream. Caddy counts a request under the outermost
+  # handler of its route — subroute for every site here — never under the
+  # reverse_proxy inside it. Its own scrapes, under "metrics", are dropped.
   - job_name: caddy
     scrape_interval: 60s
     static_configs:
       - targets: ["caddy:2020"]
     metric_relabel_configs:
       - source_labels: [__name__, handler]
-        regex: "caddy_http_request(s|_errors)_total;reverse_proxy|caddy_reverse_proxy_upstreams_healthy;"
+        regex: "caddy_http_request(s|_errors)_total;metrics"
+        action: drop
+      - source_labels: [__name__]
+        regex: "caddy_http_request(s|_errors)_total|caddy_reverse_proxy_upstreams_healthy"
         action: keep
