@@ -420,6 +420,12 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
+    healthcheck:
+      # rq names each worker at random: what ties a registered worker to this
+      # container is the host it records.
+      test: ["CMD", "python3", "-c", "import socket, redis, rq; r = redis.Redis.from_url('redis://redis:6379'); raise SystemExit(socket.gethostname() not in {w.hostname for w in rq.Worker.all(connection=r)})"]
+      <<: *healthcheck-defaults
+      start_period: 30s
     logging: *default-logging
     #stop_grace_period: 30s
     deploy:
@@ -576,6 +582,12 @@ services:
         condition: service_healthy
       mongodb:
         condition: service_healthy
+    healthcheck:
+      # rq names each worker at random: what ties a registered worker to this
+      # container is the host it records.
+      test: ["CMD", "python3", "-c", "import socket, redis, rq; r = redis.Redis.from_url('redis://redis:6379'); raise SystemExit(socket.gethostname() not in {w.hostname for w in rq.Worker.all(connection=r)})"]
+      <<: *healthcheck-defaults
+      start_period: 30s
     logging: *default-logging
     deploy:
       mode: replicated
