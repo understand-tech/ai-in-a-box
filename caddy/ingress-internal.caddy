@@ -6,6 +6,15 @@
 # the internal CA lives in the ut-caddy-data volume, so that warning keeps the
 # same fingerprint across restarts instead of changing every time.
 
+# Every mode carries the same metrics option: the global block lives in this
+# file, and a Caddyfile has only one. Hosts that no site names are pooled under
+# "_other", so a forged Host header cannot grow the counters.
+{
+    metrics {
+        per_host
+    }
+}
+
 (tls) {
     tls internal
 }

@@ -281,6 +281,46 @@ printf '%sThe front door, actually serving%s %s(caddy on the real Caddyfile, stu
     "$BOLD" "$NC" "$DIM" "$NC"
 
 docker network create "$NETWORK" >/dev/null 2>&1
+counters() {
+    docker exec ut-ingress-probe curl -s --max-time 10 "http://ut-ingress-caddy:2020/metrics" 2>/dev/null
+}
+
+# Each surface counted under its own name is what splits the load by tool.
+the_counters_name_each_surface() {
+    local host counted missing=""
+    for host in "$DOMAIN" "llms.${DOMAIN}" "assistants.${DOMAIN}"; do
+        status_of "$host" >/dev/null
+    done
+    counted=$(counters)
+    for host in "$DOMAIN" "llms.${DOMAIN}" "assistants.${DOMAIN}"; do
+        grep -q "^caddy_http_requests_total{.*host=\"${host}\"" <<< "$counted" || missing+=" ${host}"
+    done
+    [[ -z "$missing" ]] && return 0
+    echo "no request counted for:${missing}"
+    return 1
+}
+
+the_counters_stay_off_the_front_door() {
+    grep -q 'caddy_http_requests_total' <<< "$(body_of "$DOMAIN" /metrics)" || return 0
+    echo "${SCHEME}://${DOMAIN}/metrics hands Caddy's counters to any browser"
+    return 1
+}
+
+# A Host header is whatever the client writes. Counted as written, a loop of
+# forged names would grow Caddy's counters without bound. Port 80 is where a
+# handler answers any name — the redirect to https — so a forged name sent there
+# is counted, and must be counted under "_other".
+a_forged_host_is_pooled() {
+    local counted
+    docker exec ut-ingress-probe curl -s -o /dev/null --max-time 10 \
+        -H "Host: forged-${RANDOM}.example" "http://${DOMAIN}/" >/dev/null 2>&1
+    counted=$(counters)
+    grep -q 'host="forged-' <<< "$counted" && { echo "a forged Host header got counters of its own"; return 1; }
+    grep -q 'host="_other"' <<< "$counted" && return 0
+    echo "the forged request was not counted at all, so pooling is not shown"
+    return 1
+}
+
 start_the_upstreams
 start_the_front_door
 start_the_prober || exit 1
@@ -316,6 +356,11 @@ surface "the apex certificate names the apex" \
 surface "a generated application gets a certificate for its own name" \
     the_certificate_covers_the_name "demo.apps.${DOMAIN}"
 
+printf '\n%sWhat the recorder reads%s\n' "$BOLD" "$NC"
+surface "Caddy counts what each surface answered, by host" the_counters_name_each_surface
+surface "the counters are not served on the front door" the_counters_stay_off_the_front_door
+surface "a forged host is pooled, not counted on its own" a_forged_host_is_pooled
+
 printf '\n%sMode custom — the certificate comes from the operator%s\n' "$BOLD" "$NC"
 restart_the_front_door_in custom
 surface "custom mode comes up" wait_for_the_front_door
@@ -331,6 +376,7 @@ surface "edge mode comes up on plain HTTP" wait_for_the_front_door
 surface "it holds no certificate on 443" caddy_holds_no_certificate_in_edge_mode
 surface "it believes a trusted proxy about the scheme" \
     a_trusted_proxy_is_believed_about_the_scheme
+surface "on plain HTTP too, each surface is counted by host" the_counters_name_each_surface
 
 printf '\n%s%d served%s' "$GREEN" "$PASSED" "$NC"
 if (( FAILED )); then

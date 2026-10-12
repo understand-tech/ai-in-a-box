@@ -14,6 +14,15 @@
 # degrading quietly. `sudo ./setup-autostart.sh --check` catches that before
 # the first `up`.
 
+# Every mode carries the same metrics option: the global block lives in this
+# file, and a Caddyfile has only one. Hosts that no site names are pooled under
+# "_other", so a forged Host header cannot grow the counters.
+{
+    metrics {
+        per_host
+    }
+}
+
 (tls) {
     tls {$UT_CERT_FILE:/etc/caddy/certs/fullchain.pem} {$UT_KEY_FILE:/etc/caddy/certs/privkey.pem}
 }

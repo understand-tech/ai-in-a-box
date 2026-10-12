@@ -52,9 +52,9 @@ diagram has not been seen rendered — no rendering engine is installed here.
 ## What can reach the internet
 
 <!-- Scope: network membership and egress. Not the request path. -->
-<!-- Source of truth: compose.yaml:795-811 for the declarations,
-     compose.yaml:45-795 for membership -->
-<!-- Date: 2026-09-18 -->
+<!-- Source of truth: compose.yaml:846-868 for the declarations,
+     compose.yaml:43-845 for membership -->
+<!-- Date: 2026-10-12 -->
 <!-- Target: github — status of "flowchart": rendered -->
 
 ```mermaid
@@ -64,15 +64,17 @@ flowchart LR
     BACK["ut-backend-network - internal"]
     DATA["ut-data-network - internal"]
     CA["ut-ca-network - internal"]
+    METRICS["ut-metrics-network - internal"]
     OUTSIDE -->|"ports 80 and 443, caddy only"| FRONT
     FRONT --- BACK
     FRONT --- DATA
     FRONT --- CA
+    FRONT --- METRICS
 ```
 
-**Description** — The stack declares four bridge networks. **Only
+**Description** — The stack declares five bridge networks. **Only
 `ut-frontend-network` is reachable from outside**, and only through the two
-ports `caddy` publishes. The other three are declared `internal: true`, which
+ports `caddy` publishes. The other four are declared `internal: true`, which
 means a container attached only to one of them has no route off the box — it
 cannot call an external API, download anything, or be reached from the network.
 The plain lines are not traffic: they mark that some containers sit on two
@@ -89,13 +91,19 @@ Builder's generated apps is not shown. Not verified: not seen rendered.
 | `ut-backend-network` | **yes** | `api`, `api-customer`, the workers, `app-assistants`, `admin-portal`, `llm`, `nim-llm`, `metrics`, `redis`, `files-backup` |
 | `ut-data-network` | **yes** | `mongodb`, `mongodb-backup`, `api`, `api-customer`, the workers, `app-llms`, `app-assistants`, `llm` |
 | `ut-ca-network` | **yes** | `caddy`, `step-ca` |
+| `ut-metrics-network` | **yes** | `caddy`, `metrics` |
 
 Read that table the other way round and it says what matters: `mongodb` is on
-`ut-data-network` alone, `redis`, `nim-llm` and `metrics` on
-`ut-backend-network` alone, `step-ca` on `ut-ca-network` alone. **None of the
-four can reach the internet, and none of them publishes a host port.** The only
-containers that straddle the boundary are the ones that have to answer a
-browser.
+`ut-data-network` alone, `redis` and `nim-llm` on `ut-backend-network` alone,
+`metrics` on `ut-backend-network` and `ut-metrics-network`, both internal,
+`step-ca` on `ut-ca-network` alone. **None of them can reach the internet, and
+none of them publishes a host port.** The only containers that straddle the
+boundary are the ones that have to answer a browser.
+
+`ut-metrics-network` exists so the recorder can read Caddy's counters on
+`:2020` without joining the network browsers come in on. It works both ways:
+`caddy` can reach the recorder's API in return, which answers read queries only
+— its admin and lifecycle endpoints are off.
 
 ## Where the data is
 

@@ -85,6 +85,7 @@ services:
       - caddy-config:/config
     networks:
       ut-frontend-network:
+      ut-metrics-network:
       ut-ca-network:
         aliases:
           - ${UT_NODE_NAME:-node}.${UT_DOMAIN:-understand.local}
@@ -758,6 +759,7 @@ services:
       - gateway_metrics_token
     networks:
       - ut-backend-network
+      - ut-metrics-network
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/ready"]
       <<: *healthcheck-defaults
@@ -855,6 +857,12 @@ networks:
     internal: true
   ut-ca-network:
     name: ${RESOURCE_PREFIX:-ut}-ca-network
+    driver: bridge
+    internal: true
+  # Caddy and the recorder, and nothing else: the recorder reads Caddy's counters
+  # here without joining the network browsers come in on.
+  ut-metrics-network:
+    name: ${RESOURCE_PREFIX:-ut}-metrics-network
     driver: bridge
     internal: true
 

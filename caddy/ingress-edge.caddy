@@ -20,6 +20,10 @@
         trusted_proxies static {$UT_TRUSTED_PROXIES:private_ranges}
         client_ip_headers X-Forwarded-For
     }
+    # The metrics option every mode carries: see ingress-internal.caddy.
+    metrics {
+        per_host
+    }
 }
 
 # No tls directive: the certificate lives upstream, and Caddy rejects a `tls`

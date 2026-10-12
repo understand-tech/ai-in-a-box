@@ -79,3 +79,9 @@ import /etc/caddy/surface.caddy
 
     import tls_apps
 }
+
+# Caddy's own counters, for the recorder alone: no compose file publishes this
+# port, and the network it is read on joins Caddy to the recorder and nothing else.
+http://:2020 {
+    metrics /metrics
+}
