@@ -377,6 +377,18 @@ if [[ -x "$REPO_ROOT/ut-report" ]]; then
         "an engine nobody recorded is flagged" \
         "sed -i.bak '/recorder-missing:/d' ut-report"
 
+    capability_discriminates "a forecast that never warns" \
+        "a recorder that will outgrow its cap is flagged before it does" \
+        "sed -i.bak 's|if (kept < wanted)|if (kept < 0)|' ut-report"
+
+    capability_discriminates "a retention read up to its first unit only" \
+        "a cap written in other units is read the same" \
+        "sed -i.bak 's|while (match(d,|if (match(d,|' ut-report"
+
+    capability_discriminates "a forecast drawn from an hour of write-ahead log" \
+        "a recorder too young to judge raises nothing" \
+        "sed -i.bak 's|covered < 1 |covered < 0 |' ut-report"
+
     capability_discriminates "a report silent about memory" \
         "the report gives each service its memory peak and limit" \
         "sed -i.bak '/\"memory\": %s/d' ut-report"

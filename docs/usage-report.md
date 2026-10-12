@@ -78,6 +78,7 @@ A report never fills a gap with zero. What it could not find is listed under
 | `series-missing:<engine>:<figure>` | The recorder has nothing for that figure over the window: it was not running, or the engine names it differently since an update. |
 | `memory-peak-unknown:<service>` | The kernel does not keep a memory peak for that service (cgroup v1, or a kernel older than 5.19). Its current use is still given. |
 | `users-missing` | The engines served requests and no person was counted. The platform's records were not readable, or have changed shape. |
+| `recorder-budget-short` | At the pace the recorder has filled its disk so far, its size cap holds fewer days than it is set to keep. Nothing is lost yet: once over the cap, the recorder drops its oldest days without a word, and the window this report covers shrinks with them. Raise the cap, or record less. |
 
 A machine that serves no inference — a control plane whose engines run
 elsewhere — reports an empty `capacity` list, without a warning. A machine that
