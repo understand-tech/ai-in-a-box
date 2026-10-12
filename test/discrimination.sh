@@ -736,6 +736,18 @@ if [[ -x "$REPO_ROOT/test/ingress.sh" ]]; then
         "https://llms.box.example.test is served" \
         "sed -i.bak 's|reverse_proxy app-llms:80|reverse_proxy nowhere:80|' Caddyfile"
 
+    ingress_discriminates "a front door that counts nothing" \
+        "Caddy counts what each surface answered" \
+        "sed -i.bak '/^    metrics {\$/,/^    }\$/d' caddy/ingress-internal.caddy"
+
+    ingress_discriminates "the counters handed to any browser" \
+        "the counters are not served on the front door" \
+        "sed -i.bak 's|^(platform_routes) {\$|(platform_routes) {\\n    handle /metrics {\\n        metrics\\n    }|' Caddyfile"
+
+    ingress_discriminates "every Host header counted as written" \
+        "a forged host is pooled" \
+        "sed -i.bak 's|^        per_host\$|        per_host\\n        observe_catchall_hosts|' caddy/ingress-internal.caddy"
+
     # The defect this caught the day it was written: a redirect URI that the
     # ingress sends to the frontend, where no callback is ever handled.
     # custom mode falling back to the appliance's own authority is invisible: the
