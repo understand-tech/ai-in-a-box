@@ -92,6 +92,8 @@ services:
           memory: 1G
 
   app-builder-traefik:
+    labels:
+      ut.release: "${UT_RELEASE_VERSION:-}"
     image: ${TRAEFIK_IMAGE:-traefik:v3.2@sha256:e561a37f8710d9cf41c78bdf421d822b2c0b48267ec0552e644565fb55466ea9}
     container_name: ${CONTAINER_PREFIX:-ut}-app-builder-traefik
     restart: unless-stopped

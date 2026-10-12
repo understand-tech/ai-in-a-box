@@ -180,6 +180,12 @@ if grep -q 'check_the_recorder_is_bounded' "$REPO_ROOT/test/invariants.sh"; then
         "sed -i.bak '/--storage.tsdb.retention.time=/d' compose.yaml"
 fi
 
+if grep -q 'check_services_that_mount_a_release_file_follow_the_release' "$REPO_ROOT/test/invariants.sh"; then
+    discriminates "a service reading a release file that no release recreates" \
+        "release-file-without-release-label:metrics" \
+        "sed -i.bak '/ut.role: \"metrics\"/{n;/ut.release/d;}' compose.yaml"
+fi
+
 if grep -q 'check_the_package_ships_what_the_stack_mounts' "$REPO_ROOT/test/invariants.sh"; then
     discriminates "a mounted file left out of the package" \
         "mounted-but-not-shipped:metrics" \

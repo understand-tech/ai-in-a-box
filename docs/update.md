@@ -55,7 +55,9 @@ they are not in the package, so there is nothing for it to overwrite. Data in
 removed.
 
 `ut-install` then generates whatever new variables the release made mandatory,
-and restarts the stack.
+and restarts the stack. Caddy, the metrics recorder, the files backup and the App
+Builder's proxy read a file from the release, so every new version recreates
+them: a changed file reaches them without a reboot.
 
 ### Installed from a git checkout
 
