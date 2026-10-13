@@ -383,6 +383,10 @@ if [[ -x "$REPO_ROOT/ut-report" ]]; then
         "a series the recorder does not have is flagged" \
         "sed -i.bak '/series-missing:/d' ut-report"
 
+    capability_discriminates "the minutes requests waited left out of the report" \
+        "the minutes requests waited for the engine are counted" \
+        "sed -i.bak 's/ waiting_peak saturated_minutes / waiting_peak /' ut-report"
+
     capability_discriminates "a stopped recorder reported as an idle machine" \
         "an engine nobody recorded is flagged" \
         "sed -i.bak '/recorder-missing:/d' ut-report"
@@ -772,7 +776,11 @@ if [[ -x "$REPO_ROOT/test/ingress.sh" ]]; then
 
     ingress_discriminates "a recorder that filters out the handler Caddy counts under" \
         "the recorder keeps each request to a surface" \
-        "sed -i.bak 's/_total;metrics\"/_total;subroute\"/' metrics/prometheus.yml"
+        "sed -i.bak 's/;metrics\"/;subroute\"/' metrics/prometheus.yml"
+
+    ingress_discriminates "a recorder that keeps the counts but not the durations" \
+        "the recorder keeps how long each request to a surface took" \
+        "sed -i.bak 's#|request_duration_seconds_(bucket|sum|count))|caddy_reverse#)|caddy_reverse#' metrics/prometheus.yml"
 
     # The defect this caught the day it was written: a redirect URI that the
     # ingress sends to the frontend, where no callback is ever handled.

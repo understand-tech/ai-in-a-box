@@ -328,9 +328,10 @@ a_forged_host_is_pooled() {
     return 1
 }
 
-requests_the_recorder_holds_for() {
-    docker exec ut-ingress-recorder wget -qO- "http://localhost:9090/federate?match%5B%5D=caddy_http_requests_total" 2>/dev/null \
-        | awk -v host="$1" 'index($0, "host=\"" host "\"") { total += $(NF - 1) } END { print total + 0 }'
+recorded_for() {
+    local series=$1 host=$2
+    docker exec ut-ingress-recorder wget -qO- "http://localhost:9090/federate?match%5B%5D=${series}" 2>/dev/null \
+        | awk -v host="$host" 'index($0, "host=\"" host "\"") { total += $(NF - 1) } END { print total + 0 }'
 }
 
 the_recorder_reads_caddy() {
@@ -338,25 +339,25 @@ the_recorder_reads_caddy() {
         | grep -q '^up{.*} 1 '
 }
 
-the_recorder_keeps_each_request_once() {
-    local host="llms.${DOMAIN}" before after waited=0
+three_requests_are_recorded_as_three() {
+    local series=$1 host="llms.${DOMAIN}" before after waited=0
     until the_recorder_reads_caddy; do
         sleep 1; waited=$((waited + 1))
         (( waited < 30 )) || { echo "the recorder never read Caddy's counters"; return 1; }
     done
     waited=0
     sleep 2
-    before=$(requests_the_recorder_holds_for "$host")
+    before=$(recorded_for "$series" "$host")
     status_of "$host" >/dev/null; status_of "$host" >/dev/null; status_of "$host" >/dev/null
     after=$before
     while (( after == before && waited < 20 )); do
         sleep 1; waited=$((waited + 1))
-        after=$(requests_the_recorder_holds_for "$host")
+        after=$(recorded_for "$series" "$host")
     done
     sleep 2
-    after=$(requests_the_recorder_holds_for "$host")
+    after=$(recorded_for "$series" "$host")
     (( after - before == 3 )) && return 0
-    echo "three requests to ${host}, and the recorder holds $((after - before)) more"
+    echo "three requests to ${host}, and the recorder holds $((after - before)) more in ${series}"
     return 1
 }
 
@@ -400,7 +401,10 @@ printf '\n%sWhat the recorder reads%s\n' "$BOLD" "$NC"
 surface "Caddy counts what each surface answered, by host" the_counters_name_each_surface
 surface "the counters are not served on the front door" the_counters_stay_off_the_front_door
 surface "a forged host is pooled, not counted on its own" a_forged_host_is_pooled
-surface "the recorder keeps each request to a surface, exactly once" the_recorder_keeps_each_request_once
+surface "the recorder keeps each request to a surface, exactly once" \
+    three_requests_are_recorded_as_three caddy_http_requests_total
+surface "the recorder keeps how long each request to a surface took" \
+    three_requests_are_recorded_as_three caddy_http_request_duration_seconds_count
 
 printf '\n%sMode custom — the certificate comes from the operator%s\n' "$BOLD" "$NC"
 restart_the_front_door_in custom

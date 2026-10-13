@@ -34,8 +34,9 @@ database, through the container that holds it.
 **What the report holds**:
 
 - per hour and per inference engine: requests served, the most requests running
-  and waiting at once, how many got their first token within 1 s and within
-  2.5 s, and how many prompts were up to 500, 2,000 and 10,000 tokens long;
+  and waiting at once, how many minutes at least one request waited, how many
+  got their first token within 1 s and within 2.5 s, and how many prompts were
+  up to 500, 2,000 and 10,000 tokens long;
 - per hour: how many distinct people sent a request — a number, never who;
 - for each service: the memory it uses, the most it has used since it started,
   and its limit, if it has one; and the machine's total and available memory.
