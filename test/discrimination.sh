@@ -295,11 +295,11 @@ printf '\n%sCapabilities, seen failing%s\n\n' "$BOLD" "$NC"
 if grep -q 'role_is_waited_for' "$REPO_ROOT/ut-install"; then
     capability_discriminates "the install waiting for the models again" \
         "handed back while the models are still loading" \
-        "sed -i.bak 's|^    \\[\\[ \"\$1\" != \"inference\" \\]\\]\$|    return 0|' ut-install"
+        "sed -i.bak 's|^    \\[\\[ \"\$1\" != \"inference\".*|    return 0|' ut-install"
 
     capability_discriminates "nothing waited for at all" \
         "a control plane service still starting is waited for" \
-        "sed -i.bak 's|^    \\[\\[ \"\$1\" != \"inference\" \\]\\]\$|    return 1|' ut-install"
+        "sed -i.bak 's|^    \\[\\[ \"\$1\" != \"inference\".*|    return 1|' ut-install"
 
     # An engine that gave up and one still loading must not leave by the same
     # door: treating both as loading is how an install claims a success it does
