@@ -143,8 +143,10 @@ Backup
   ✔ an SFTP destination is trusted only under the host key pinned for it
   ✔ a destination that does not answer is named, and nothing is written
   ✔ a password that does not open the repository is named as such
+  ✔ the authority that signs the HTTPS certificate sits where the backup looks
+  ✔ that authority is backed up and restores identically
 
-47 verified
+49 verified
 ```
 
 The list grows with the branch, not with the file: each block is guarded by the

@@ -604,6 +604,14 @@ capability_discriminates "a guide that restores a foreign database whole" \
     "restored on another machine, as the guide says" \
     "sed -i.bak \"s| --nsExclude 'admin.\\*'||\" docs/restore.md"
 
+capability_discriminates "the HTTPS authority left out of what the backup sees" \
+    "signs the HTTPS certificate sits where the backup looks" \
+    "sed -i.bak '/      - caddy-data:\/caddy:ro/d' compose.yaml"
+
+capability_discriminates "the HTTPS authority seen but not saved" \
+    "that authority is backed up and restores identically" \
+    "sed -i.bak 's/^    set -- \"\\\$@\" \"\\\$HTTPS_AUTHORITY\"\$/    :/' backup-files.sh"
+
 capability_discriminates "a network destination left on the internal network" \
     "gives the backup one way out, its own" \
     "sed -i.bak 's|      - ut-backup-network|      - ut-backend-network|' compose.backup-network.yaml"

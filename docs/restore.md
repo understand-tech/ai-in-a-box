@@ -1,7 +1,7 @@
 # Restoring
 
 Three things can be restored independently: the database, the customer's files,
-and the certificate authority. Each has its own archive and its own command.
+and the certificate authorities. Each has its own archive and its own command.
 
 Every procedure below has been run end to end. Where a step says what to expect,
 that is what it actually printed.
@@ -20,6 +20,7 @@ flowchart LR
     DBBACKUP["mongodb-backup - full-server dump, gzip"]
     DUMPS["ut-mongodb-backup volume"]
     DATAROOT["DATA_ROOT - documents, App Builder projects, the authority root"]
+    HTTPSCA["ut-caddy-data - the authority browsers trust"]
     FILESBACKUP["files-backup - restic, encrypted"]
     REPO["restic repository - in that volume by default"]
     MOUNTED["or on a disk the host mounts - BACKUP_FILES_DESTINATION"]
@@ -27,6 +28,7 @@ flowchart LR
     MONGO --> DBBACKUP --> DUMPS
     DATAROOT --> FILESBACKUP
     DUMPS --> FILESBACKUP
+    HTTPSCA --> FILESBACKUP
     FILESBACKUP --> REPO
     FILESBACKUP -.-> MOUNTED
     FILESBACKUP -.-> REMOTE
@@ -34,9 +36,10 @@ flowchart LR
 
 **Description** — Two services, in a chain. `mongodb-backup` takes a full-server
 dump of every database, compressed with gzip, and writes it into the
-`ut-mongodb-backup` volume. `files-backup` then reads two things — that volume,
-and `DATA_ROOT` on the host, which holds uploaded documents, the App Builder's
-projects and the certificate authority's root — and writes them into a `restic`
+`ut-mongodb-backup` volume. `files-backup` then reads three things — that
+volume; `DATA_ROOT` on the host, which holds uploaded documents, the App
+Builder's projects and step-ca's root; and, in `ut-caddy-data`, the authority
+that signs the HTTPS certificate browsers see — and writes them into a `restic`
 repository, encrypted with `BACKUP_FILES_PASSWORD`. By default the repository
 sits in the same volume as the archives. The two dotted lines are the ways off
 the machine, one at a time: a disk the host mounts — a NAS share or a USB disk —
@@ -190,10 +193,19 @@ checksum — the authority's root included.
 snapshots cannot be read at all** — no support path, no recovery. It is printed
 once at install time and stored nowhere else.
 
-## 3 · The certificate authority
+## 3 · The certificate authorities
 
-The authority's root lives at `${DATA_ROOT}/ca`, so the file backup above
-carries it. Restoring the files restores the authority.
+The appliance runs two, and the file backup carries both.
+
+**The one browsers trust** signs the HTTPS certificate of every name the
+appliance serves, when it issues its own (`UT_INGRESS_MODE="internal"`). Caddy
+keeps it in the `ut-caddy-data` volume, under `caddy/pki/authorities/local`; the
+backup reads it from there. It is the root your users' machines imported. With a
+certificate of your own, or behind your load balancer, browsers trust your
+authority instead, and this one signs nothing they see.
+
+**The one machines trust**, step-ca, lives at `${DATA_ROOT}/ca`. Restoring the
+files restores it.
 
 **After a restore, check the root is the one you had:**
 
@@ -259,8 +271,20 @@ docker compose stop api api-customer workers workers-customer llm step-ca files-
 sudo cp -a /var/lib/understandtech-restored/data/. /var/lib/understandtech/
 ```
 
-That brings back the documents, the App Builder's projects and the authority's
-root, which replaces the one the fresh install had just created.
+That brings back the documents, the App Builder's projects and step-ca's root,
+which replaces the one the fresh install had just created.
+
+**Then the authority browsers trust**, into the volume where Caddy keeps it.
+The certificates the fresh install already issued with its own authority go, so
+that Caddy signs new ones with the restored root when it starts:
+
+```bash
+docker compose stop caddy
+docker compose run --rm --no-deps --entrypoint sh \
+    -v /var/lib/understandtech-restored/caddy/caddy/pki/authorities/local:/restored:ro caddy -c \
+    'rm -rf /data/caddy/pki/authorities/local /data/caddy/certificates/local &&
+     mkdir -p /data/caddy/pki/authorities && cp -a /restored /data/caddy/pki/authorities/local'
+```
 
 **4 · Restore the database, without its accounts.**
 
@@ -284,12 +308,13 @@ comes back.
 
 ```bash
 docker compose up -d
+docker exec ut-caddy cat /data/caddy/pki/authorities/local/root.crt | openssl x509 -noout -fingerprint -sha256
 docker exec ut-step-ca step certificate inspect /home/step/certs/root_ca.crt --short
 ```
 
-The fingerprint is the old machine's, so the browsers and machines that trusted
-it keep doing so. Then open the platform and check one document you know the
-content of.
+Both fingerprints are the old machine's: the browsers that imported the first
+root, and the machines enrolled against the second, see nothing change. Then
+open the platform and check one document you know the content of.
 
 **What you set again by hand.** `/etc/understandtech/local.env` is not in the
 backup: the TLS mode and a customer certificate, the backup destination, and

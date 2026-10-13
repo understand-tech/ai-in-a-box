@@ -279,6 +279,7 @@ services:
     volumes:
       - ${DATA_ROOT:-/var/lib/understandtech}:/data:ro
       - mongodb-backups:/backup
+      - caddy-data:/caddy:ro
       - ./backup-files.sh:/usr/local/bin/backup-files:ro
     entrypoint:
       - /bin/sh

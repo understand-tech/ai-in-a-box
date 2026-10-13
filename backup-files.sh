@@ -4,6 +4,7 @@ set -eu
 
 SOURCE_DIR="${BACKUP_SOURCE:-/data}"
 DUMP_DIR="${BACKUP_DUMPS:-/backup}"
+HTTPS_AUTHORITY="${BACKUP_HTTPS_AUTHORITY:-/caddy/caddy/pki/authorities/local}"
 KEEP_DAILY="${BACKUP_FILES_KEEP_DAILY:-7}"
 KEEP_WEEKLY="${BACKUP_FILES_KEEP_WEEKLY:-4}"
 KEEP_MONTHLY="${BACKUP_FILES_KEEP_MONTHLY:-6}"
@@ -43,6 +44,12 @@ esac
 set -- "$SOURCE_DIR"
 if [ -d "$DUMP_DIR" ]; then
     set -- "$@" "$DUMP_DIR"
+fi
+
+# Caddy's own authority signs the HTTPS certificate browsers see; one recreated
+# on a restored machine sends every client back to importing a root.
+if [ -d "$HTTPS_AUTHORITY" ]; then
+    set -- "$@" "$HTTPS_AUTHORITY"
 fi
 
 # The repository usually lives inside DUMP_DIR, so without this exclusion restic

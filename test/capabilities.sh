@@ -777,6 +777,36 @@ the_authority_root_is_where_the_backup_looks() {
     [[ "$root" == "$backed_up"/* ]] || { echo "the root at ${root} is outside ${backed_up}"; return 1; }
 }
 
+the_https_authority_is_where_the_backup_looks() {
+    command -v jq >/dev/null || { echo "jq absent"; return 1; }
+    local config mounted
+    config=$( cd "$WORK_DIR" && docker compose -f compose.yaml config --format json 2>/dev/null )
+    mounted=$(jq -r '.services["files-backup"].volumes[]? | select(.source == "caddy-data") | .target' <<< "$config")
+    [[ -n "$mounted" ]] || { echo "files-backup does not mount caddy-data"; return 1; }
+    grep -q "BACKUP_HTTPS_AUTHORITY:-${mounted}/caddy/pki/authorities/local}" "$REPO_ROOT/backup-files.sh" \
+        || { echo "backup-files.sh does not look under ${mounted}"; return 1; }
+}
+
+the_https_authority_is_backed_up_and_restores_identically() {
+    local repo="$WORK_DIR/https-repo" caddy="$WORK_DIR/https-caddy" source="$WORK_DIR/https-source" out="$WORK_DIR/https-out"
+    local authority="$caddy/caddy/pki/authorities/local"
+    mkdir -p "$authority" "$source/app-data" "$out"
+    head -c 800 /dev/urandom > "$authority/root.crt"
+    head -c 300 /dev/urandom > "$authority/root.key"
+    echo "metadata" > "$source/app-data/notes.txt"
+
+    docker run --rm -v "$source":/data:ro -v "$caddy":/caddy:ro -v "$repo":/backup \
+        -v "$REPO_ROOT/backup-files.sh":/usr/local/bin/backup-files:ro \
+        -e RESTIC_REPOSITORY=/backup/restic -e RESTIC_PASSWORD=capability-test \
+        --entrypoint /usr/local/bin/backup-files "$RESTIC_IMAGE" >/dev/null 2>&1 || { echo "the backup failed"; return 1; }
+    docker run --rm -v "$repo":/backup -v "$out":/out \
+        -e RESTIC_REPOSITORY=/backup/restic -e RESTIC_PASSWORD=capability-test \
+        "$RESTIC_IMAGE" restore latest --target /out >/dev/null 2>&1 || { echo "the restore failed"; return 1; }
+    docker run --rm -v "$caddy":/before:ro -v "$out":/after:ro "$ALPINE_IMAGE" \
+        diff -r /before/caddy/pki/authorities/local /after/caddy/caddy/pki/authorities/local >/dev/null 2>&1 \
+        || { echo "the authority did not come back as it was"; return 1; }
+}
+
 the_machine_surface_uses_the_local_authority() {
     grep -q 'step-ca:9000/acme' "$REPO_ROOT/caddy/internal-surface.caddy" \
         && ! grep -qE 'UT_CERT_FILE|acme-v02\.api\.letsencrypt' "$REPO_ROOT/caddy/internal-surface.caddy"
@@ -1451,6 +1481,10 @@ if [[ -f "$REPO_ROOT/backup-files.sh" ]]; then
         with_a_backup_destination the_backup_has_no_way_off_the_machine -f compose.yaml -f compose.backup-mount.yaml
     capability "a database restored on another machine, as the guide says, keeps that machine's accounts" \
         the_guide_s_restore_keeps_this_machine_s_accounts
+    capability "the authority that signs the HTTPS certificate sits where the backup looks" \
+        the_https_authority_is_where_the_backup_looks
+    capability "that authority is backed up and restores identically" \
+        the_https_authority_is_backed_up_and_restores_identically
     capability "an S3 or SFTP destination gives the backup one way out, its own" \
         with_a_network_repository the_network_destination_gets_a_way_out_of_its_own -f compose.yaml -f compose.backup-network.yaml
     capability "an SFTP destination is trusted only under the host key pinned for it" \
