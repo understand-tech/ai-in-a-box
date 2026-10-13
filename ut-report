@@ -100,6 +100,60 @@ engines_recorded() {
         | grep -oE '"instance":"[^"]+"' | cut -d'"' -f4 | sort -u
 }
 
+# "bytes on disk, oldest sample" — read from the recorder's own counters, which it
+# does not record: reading them adds no series.
+recorder_storage() {
+    compose_here exec -T metrics wget -qO- "http://localhost:9090/metrics" 2>/dev/null | awk '
+        /^prometheus_tsdb_(storage_blocks_bytes|wal_storage_size_bytes|head_chunks_storage_size_bytes) / { used += $2 }
+        /^prometheus_tsdb_lowest_timestamp_seconds / { oldest = $2 }
+        END { if (oldest > 0) printf "%.0f %.0f\n", used, oldest }'
+}
+
+# "5w or 1GiB": the retention in force, whether flags or the config file set it.
+recorder_retention() {
+    ask_the_recorder "status/runtimeinfo" | grep -oE '"storageRetention":"[^"]*"' | cut -d'"' -f4
+}
+
+# Prometheus counts its write-ahead log and head chunks against the size cap and,
+# once over it, drops the oldest days without a word. At the pace the disk has
+# filled so far, say so before it happens.
+forecast_the_recorder() {
+    local work=$1 used oldest retention
+    read -r used oldest <<< "$(recorder_storage || true)"
+    [[ -n "${oldest:-}" ]] || return 0
+    retention=$(recorder_retention || true)
+    awk -v used="$used" -v oldest="$oldest" -v now="$(date +%s)" -v retention="$retention" -v window="$DAYS" '
+        function seconds(d,   total, n, unit) {
+            while (match(d, /^[0-9]+(ms|y|w|d|h|m|s)/)) {
+                n = substr(d, 1, RLENGTH); unit = n; sub(/^[0-9]+/, "", unit)
+                total += (n + 0) * (unit == "y" ? 31536000 : unit == "w" ? 604800 : unit == "d" ? 86400 : \
+                                    unit == "h" ? 3600 : unit == "m" ? 60 : unit == "s" ? 1 : 0.001)
+                d = substr(d, RLENGTH + 1)
+            }
+            return total
+        }
+        function bytes(s,   unit) {
+            unit = s; sub(/^[0-9.]+/, "", unit)
+            return (s + 0) * (unit ~ /^K/ ? 1024 : unit ~ /^M/ ? 1048576 : unit ~ /^G/ ? 1073741824 : \
+                              unit ~ /^T/ ? 1099511627776 : 1)
+        }
+        BEGIN {
+            wanted = window
+            n = split(retention, parts, / or /)
+            for (i = 1; i <= n; i++) {
+                if (parts[i] ~ /B$/) { cap = bytes(parts[i]); cap_text = parts[i] }
+                else wanted = seconds(parts[i]) / 86400
+            }
+            covered = (now - oldest) / 86400
+            if (!cap || covered < 1 || used <= 0) exit
+            per_day = used / covered
+            kept = cap / per_day
+            if (kept < wanted)
+                printf "recorder-budget-short: at %.0f MB a day, its %s cap holds %.0f of the %.0f days it keeps\n", \
+                    per_day / 1048576, cap_text, kept, wanted
+        }' >> "$work/warnings"
+}
+
 # One "hour value" line per hour of the window, the hour as a Unix timestamp.
 hourly() {
     local query=$1 end start
@@ -181,7 +235,7 @@ running_images() {
     done <<< "$(compose_here ps -q 2>/dev/null)"
 }
 
-ENGINE_FIELDS="requests running_peak waiting_peak first_token_within_1s first_token_within_2_5s prompts_le_500 prompts_le_2000 prompts_le_10000"
+ENGINE_FIELDS="requests running_peak waiting_peak saturated_minutes first_token_within_1s first_token_within_2_5s prompts_le_500 prompts_le_2000 prompts_le_10000"
 
 # Counted on the histograms' own bounds, never interpolated between them: vLLM has
 # no bound between 1 s and 2.5 s, and a p95 read there gave 2.16 s for 1.40 s
@@ -192,6 +246,7 @@ query_for() {
         requests)                printf 'sum(increase(vllm:request_success_total{%s}[1h]))' "$selector" ;;
         running_peak)            printf 'max(max_over_time(vllm:num_requests_running{%s}[1h]))' "$selector" ;;
         waiting_peak)            printf 'max(max_over_time(vllm:num_requests_waiting{%s}[1h]))' "$selector" ;;
+        saturated_minutes)       printf 'sum_over_time((max(vllm:num_requests_waiting{%s}) > bool 0)[1h:1m])' "$selector" ;;
         first_token_within_1s)   printf 'sum(increase(vllm:time_to_first_token_seconds_bucket{%s,le="1.0"}[1h]))' "$selector" ;;
         first_token_within_2_5s) printf 'sum(increase(vllm:time_to_first_token_seconds_bucket{%s,le="2.5"}[1h]))' "$selector" ;;
         prompts_le_500)          printf 'sum(increase(vllm:request_prompt_tokens_bucket{%s,le="500.0"}[1h]))' "$selector" ;;
@@ -330,6 +385,7 @@ write_report() {
     capacity=$(capacity_section "$work")
     users=$(users_section "$work")
     memory=$(memory_section "$work")
+    forecast_the_recorder "$work"
     mkdir -p "$out"
     {
         printf '{\n'

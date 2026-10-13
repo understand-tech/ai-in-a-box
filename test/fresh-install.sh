@@ -164,7 +164,7 @@ state_setup() {
         volume_with_shipped_password)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'MONGODB_USERNAME="mongoadmin"\nMONGODB_PASSWORD="12345678"\n'"'"' > /etc/understandtech/local.env' ;;
         previous_checkout)
-            echo 'install -d /opt/understandtech && printf '"'"'UT_DOMAIN="carried.example"\nJWT_SECRET="keptfromthecheckout0123456789abcdef0123456789ab"\nLOG_LEVEL="WARNING"\n'"'"' > /opt/understandtech/.env' ;;
+            echo 'install -d /opt/understandtech && printf '"'"'UT_DOMAIN="carried.example"\nJWT_SECRET="keptfromthecheckout0123456789abcdef0123456789ab"\nLOG_LEVEL="WARNING"\nAPP_BUILDER_TOKEN_ENCRYPTION_KEY="a2VwdGZyb210aGVjaGVja291dDAxMjM0NTY3ODlhYmM="\n'"'"' > /opt/understandtech/.env' ;;
         checkout_without_domain)
             echo 'install -d /opt/understandtech && printf '"'"'PUBLIC_BASE_URL="https://named.by.the.urls"\nBACKEND_URL="https://named.by.the.urls/api"\nJWT_SECRET="keptfromthecheckout0123456789abcdef0123456789ab"\n'"'"' > /opt/understandtech/.env' ;;
         # /w is bind-mounted from the host, so a directory under it sits on another
@@ -261,6 +261,14 @@ the_checkout_is_left_alone() {
     return 1
 }
 
+the_builder_key_comes_from_the_checkout() {
+    local settings
+    settings=$(settings_of previous_checkout)
+    grep -q '^APP_BUILDER_TOKEN_ENCRYPTION_KEY="a2VwdGZyb210aGVjaGVja291dDAxMjM0NTY3ODlhYmM="' <<< "$settings" && return 0
+    echo "the key became $(grep -m1 '^APP_BUILDER_TOKEN_ENCRYPTION_KEY=' <<< "$settings") — every GitLab token the App Builder stored is now unreadable"
+    return 1
+}
+
 secrets_are_not_the_shipped_ones() {
     local state=$1 mine
     if grep -q '^JWT_SECRET=' "$REPO_ROOT/release.env"; then
@@ -273,13 +281,25 @@ secrets_are_not_the_shipped_ones() {
     return 1
 }
 
-two_installs_do_not_share_a_secret() {
-    local a b
-    a=$(grep -m1 '^JWT_SECRET=' <<< "$(settings_of bare)" | cut -d= -f2-)
-    b=$(grep -m1 '^JWT_SECRET=' <<< "$(settings_of empty_settings)" | cut -d= -f2-)
-    [[ -n "$a" && "$a" != "$b" ]] && return 0
-    echo "two separate installs produced the same JWT_SECRET"
+the_builder_key_is_one_fernet_accepts() {
+    local key bytes
+    key=$(grep -m1 '^APP_BUILDER_TOKEN_ENCRYPTION_KEY=' <<< "$(settings_of bare)" | cut -d= -f2- | tr -d '"')
+    bytes=$(printf '%s' "$key" | tr -- '-_' '+/' | base64 -d 2>/dev/null | wc -c | tr -d ' ')
+    [[ ${#key} -eq 44 && "$bytes" == 32 ]] && return 0
+    echo "APP_BUILDER_TOKEN_ENCRYPTION_KEY is '${key}' — Fernet wants 32 bytes in URL-safe base64"
     return 1
+}
+
+two_installs_do_not_share_a_secret() {
+    local key a b
+    for key in JWT_SECRET APP_BUILDER_TOKEN_ENCRYPTION_KEY; do
+        a=$(grep -m1 "^${key}=" <<< "$(settings_of bare)" | cut -d= -f2-)
+        b=$(grep -m1 "^${key}=" <<< "$(settings_of empty_settings)" | cut -d= -f2-)
+        [[ -n "$a" && "$a" != "$b" ]] && continue
+        echo "two separate installs produced the same ${key}"
+        return 1
+    done
+    return 0
 }
 
 running_it_again_changes_nothing() {
@@ -600,6 +620,8 @@ property "what it wrote renders a stack" \
     the_settings_render_a_stack bare
 property "the secrets are not the ones the template ships" \
     secrets_are_not_the_shipped_ones bare
+property "the App Builder's token key is one Fernet accepts" \
+    the_builder_key_is_one_fernet_accepts
 
 property "it names the setting the platform will not start without" \
     the_install_names_what_would_keep_the_platform_down
@@ -655,6 +677,8 @@ property "the address it already answers on is kept" \
     the_address_comes_from_the_checkout
 property "the checkout itself is left untouched" \
     the_checkout_is_left_alone
+property "the App Builder's token key comes along, so stored GitLab tokens stay readable" \
+    the_builder_key_comes_from_the_checkout
 property "an install too old to name its address has it read from its URLs" \
     the_address_is_read_from_the_urls
 

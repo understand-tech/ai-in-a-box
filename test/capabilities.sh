@@ -1610,7 +1610,7 @@ if [[ -x "$REPO_ROOT/ut-status" ]]; then
         a_status_verdict_is_kept_beside_the_installs
 fi
 
-REPORT_KEYS="schema generated_at install_id window_days release images service image capacity engine hours hour requests running_peak waiting_peak first_token_within_1s first_token_within_2_5s prompts_le_500 prompts_le_2000 prompts_le_10000 users_by_hour users history at tool outcome step warnings memory host total_bytes available_bytes services current_bytes peak_bytes limit_bytes started_at"
+REPORT_KEYS="schema generated_at install_id window_days release images service image capacity engine hours hour requests running_peak waiting_peak saturated_minutes first_token_within_1s first_token_within_2_5s prompts_le_500 prompts_le_2000 prompts_le_10000 users_by_hour users history at tool outcome step warnings memory host total_bytes available_bytes services current_bytes peak_bytes limit_bytes started_at"
 
 ut_report_refuses() {
     local dir=$1 expected=$2 output
@@ -1647,10 +1647,13 @@ hourly() {
     case "\$1" in
         *request_success*)    printf '$requests' ;;
         *time_to_first_token*) printf '$ttft' ;;
+        *sum_over_time*)      printf '1759651200 17\n' ;;
         *)                    printf '1759651200 2\n' ;;
     esac
 }
 users_by_hour() { printf '$users'; }
+recorder_storage() { printf '${RECORDER_STORAGE-}'; }
+recorder_retention() { printf '${RECORDER_RETENTION-5w or 1GiB}'; }
 the_database_runs_here() { return 0; }
 running_images() { printf 'api ghcr.io/understand-tech/ut-api-customer:2.1-arm64@sha256:0000\n'; }
 host_memory() { printf '128000000000 23000000000\n'; }
@@ -1701,11 +1704,64 @@ a_series_the_recorder_does_not_have_is_flagged() {
     return 1
 }
 
+the_minutes_requests_waited_are_counted() {
+    local report
+    report=$(a_served_hour)
+    grep -q '"saturated_minutes": 17' <<< "$report" && return 0
+    echo "${report:-no report written}"
+    return 1
+}
+
 an_engine_nobody_recorded_is_flagged() {
     local report
     report=$(ENGINES="" report_from "$(history_probe)" '' '' '')
     grep -q '"recorder-missing' <<< "$report" && return 0
     echo "${report:-no report written}"
+    return 1
+}
+
+# A recorder that filled 100 MiB in two days needs 1.7 GiB for five weeks: its
+# 1 GiB cap would start dropping days long before then.
+a_recorder_that_will_outgrow_its_cap_is_flagged_before_it_does() {
+    local report started
+    started=$(( $(date +%s) - 2 * 86400 ))
+    report=$(RECORDER_STORAGE="$(( 100 * 1048576 )) ${started}" report_from "$(history_probe)" '1759651200 5\n' '1759651200 3\n' '1759651200 0.8\n')
+    grep -q '"recorder-budget-short' <<< "$report" && return 0
+    echo "${report:-no report written}"
+    return 1
+}
+
+# 512 MiB at 15 MB a day lasts 35.5 days: under the 36 of 5w1d, above the 35 a
+# reader that dropped the trailing 1d would compare it with.
+a_cap_written_in_other_units_is_read_the_same() {
+    local report started
+    started=$(( $(date +%s) - 2 * 86400 ))
+    report=$(RECORDER_STORAGE="30247836 ${started}" RECORDER_RETENTION="5w1d or 512MiB" \
+        report_from "$(history_probe)" '1759651200 5\n' '1759651200 3\n' '1759651200 0.8\n')
+    grep -q '"recorder-budget-short' <<< "$report" && return 0
+    echo "${report:-no report written}"
+    return 1
+}
+
+a_recorder_well_within_its_cap_raises_nothing() {
+    local report started
+    started=$(( $(date +%s) - 2 * 86400 ))
+    report=$(RECORDER_STORAGE="$(( 4 * 1048576 )) ${started}" report_from "$(history_probe)" '1759651200 5\n' '1759651200 3\n' '1759651200 0.8\n')
+    [[ -n "$report" ]] || { echo "no report written"; return 1; }
+    grep -q '"recorder-budget-short' <<< "$report" || return 0
+    echo "$report"
+    return 1
+}
+
+# An hour of data is mostly write-ahead log: dividing it by an hour would
+# forecast a recorder ten times hungrier than it is.
+a_recorder_too_young_to_judge_raises_nothing() {
+    local report started
+    started=$(( $(date +%s) - 3600 ))
+    report=$(RECORDER_STORAGE="$(( 100 * 1048576 )) ${started}" report_from "$(history_probe)" '1759651200 5\n' '1759651200 3\n' '1759651200 0.8\n')
+    [[ -n "$report" ]] || { echo "no report written"; return 1; }
+    grep -q '"recorder-budget-short' <<< "$report" || return 0
+    echo "$report"
     return 1
 }
 
@@ -1799,8 +1855,18 @@ if [[ -x "$REPO_ROOT/ut-report" ]]; then
         requests_served_with_no_user_counted_are_flagged
     capability "a series the recorder does not have is flagged" \
         a_series_the_recorder_does_not_have_is_flagged
+    capability "the minutes requests waited for the engine are counted, hour by hour" \
+        the_minutes_requests_waited_are_counted
     capability "an engine nobody recorded is flagged" \
         an_engine_nobody_recorded_is_flagged
+    capability "a recorder that will outgrow its cap is flagged before it does" \
+        a_recorder_that_will_outgrow_its_cap_is_flagged_before_it_does
+    capability "a cap written in other units is read the same" \
+        a_cap_written_in_other_units_is_read_the_same
+    capability "a recorder well within its cap raises nothing" \
+        a_recorder_well_within_its_cap_raises_nothing
+    capability "a recorder too young to judge raises nothing" \
+        a_recorder_too_young_to_judge_raises_nothing
     capability "the report gives each service its memory peak and limit" \
         the_report_gives_each_service_its_memory_peak_and_limit
     capability "a memory peak nobody can read is flagged" \

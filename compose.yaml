@@ -45,6 +45,9 @@ services:
   caddy:
     labels:
       ut.role: "control-plane"
+      # A file mounted on its own keeps the content the container started with;
+      # this label changes with each release, so compose recreates the service.
+      ut.release: "${UT_RELEASE_VERSION:-}"
     image: ${CADDY_IMAGE:-caddy:2-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f}
     container_name: ${CONTAINER_PREFIX:-ut}-caddy
     restart: unless-stopped
@@ -85,6 +88,7 @@ services:
       - caddy-config:/config
     networks:
       ut-frontend-network:
+      ut-metrics-network:
       ut-ca-network:
         aliases:
           - ${UT_NODE_NAME:-node}.${UT_DOMAIN:-understand.local}
@@ -264,6 +268,7 @@ services:
   files-backup:
     labels:
       ut.role: "backup"
+      ut.release: "${UT_RELEASE_VERSION:-}"
     image: ${FILES_BACKUP_IMAGE:-restic/restic:0.18.1@sha256:39d9072fb5651c80d75c7a811612eb60b4c06b32ffe87c2e9f3c7222e1797e76}
     container_name: ${CONTAINER_PREFIX:-ut}-files-backup
     restart: unless-stopped
@@ -347,9 +352,13 @@ services:
       GATEWAY_VLM_MODEL: ${GATEWAY_VLM_MODEL:-}
       GATEWAY_PUBLIC_URL: *url-gateway-public
       GATEWAY_RPM_PER_KEY: ${GATEWAY_RPM_PER_KEY:-}
+      GATEWAY_MAX_PROMPT_TOKENS: ${GATEWAY_MAX_PROMPT_TOKENS:-}
       # The app builder's key may name the person behind each call, so each
       # of its users gets a rate limit of their own.
       GATEWAY_TRUSTED_PROXY_KEYS: ${GATEWAY_TRUSTED_PROXY_KEYS:-${APP_BUILDER_GATEWAY_API_KEY:-}}
+      GATEWAY_RPM_PER_USER: ${GATEWAY_RPM_PER_USER:-}
+      GATEWAY_RPM_PER_KEY_TOTAL: ${GATEWAY_RPM_PER_KEY_TOTAL:-}
+      GATEWAY_METRICS_TOKEN: ${GATEWAY_METRICS_TOKEN:-}
       API_KEY_HASH_NEW_KEYS: ${API_KEY_HASH_NEW_KEYS:-}
       API_KEY_HASH_LAZY_MIGRATION: ${API_KEY_HASH_LAZY_MIGRATION:-}
       GATEWAY_MODELS: ${GATEWAY_MODELS:-}
@@ -420,6 +429,12 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
+    healthcheck:
+      # rq names each worker at random: what ties a registered worker to this
+      # container is the host it records.
+      test: ["CMD", "python3", "-c", "import socket, redis, rq; r = redis.Redis.from_url('redis://redis:6379'); raise SystemExit(socket.gethostname() not in {w.hostname for w in rq.Worker.all(connection=r)})"]
+      <<: *healthcheck-defaults
+      start_period: 30s
     logging: *default-logging
     #stop_grace_period: 30s
     deploy:
@@ -508,9 +523,13 @@ services:
       GATEWAY_VLM_MODEL: ${GATEWAY_VLM_MODEL:-}
       GATEWAY_PUBLIC_URL: *url-gateway-public
       GATEWAY_RPM_PER_KEY: ${GATEWAY_RPM_PER_KEY:-}
+      GATEWAY_MAX_PROMPT_TOKENS: ${GATEWAY_MAX_PROMPT_TOKENS:-}
       # The app builder's key may name the person behind each call, so each
       # of its users gets a rate limit of their own.
       GATEWAY_TRUSTED_PROXY_KEYS: ${GATEWAY_TRUSTED_PROXY_KEYS:-${APP_BUILDER_GATEWAY_API_KEY:-}}
+      GATEWAY_RPM_PER_USER: ${GATEWAY_RPM_PER_USER:-}
+      GATEWAY_RPM_PER_KEY_TOTAL: ${GATEWAY_RPM_PER_KEY_TOTAL:-}
+      GATEWAY_METRICS_TOKEN: ${GATEWAY_METRICS_TOKEN:-}
       API_KEY_HASH_NEW_KEYS: ${API_KEY_HASH_NEW_KEYS:-}
       API_KEY_HASH_LAZY_MIGRATION: ${API_KEY_HASH_LAZY_MIGRATION:-}
       GATEWAY_MODELS: ${GATEWAY_MODELS:-}
@@ -575,6 +594,12 @@ services:
         condition: service_healthy
       mongodb:
         condition: service_healthy
+    healthcheck:
+      # rq names each worker at random: what ties a registered worker to this
+      # container is the host it records.
+      test: ["CMD", "python3", "-c", "import socket, redis, rq; r = redis.Redis.from_url('redis://redis:6379'); raise SystemExit(socket.gethostname() not in {w.hostname for w in rq.Worker.all(connection=r)})"]
+      <<: *healthcheck-defaults
+      start_period: 30s
     logging: *default-logging
     deploy:
       mode: replicated
@@ -739,6 +764,7 @@ services:
   metrics:
     labels:
       ut.role: "metrics"
+      ut.release: "${UT_RELEASE_VERSION:-}"
     profiles: ["nim", "nim-llm"]
     image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.13.4@sha256:87861b8cf91579109319ebc300f3f1060e6da9c05d6ae8ad15a20c879e84e32e}
     container_name: ${CONTAINER_PREFIX:-ut}-metrics
@@ -753,8 +779,11 @@ services:
     volumes:
       - ./metrics/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - metrics-data:/prometheus
+    secrets:
+      - gateway_metrics_token
     networks:
       - ut-backend-network
+      - ut-metrics-network
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/ready"]
       <<: *healthcheck-defaults
@@ -808,6 +837,7 @@ services:
       VLLM_VLM_EXTRA_ARGS: ${VLLM_VLM_EXTRA_ARGS:-}
       VLLM_API_KEY: ${VLLM_API_KEY:-}
       LLM_BACKEND: ${LLM_BACKEND:-}
+      GATEWAY_METRICS_TOKEN: ${GATEWAY_METRICS_TOKEN:-}
       DOWNLOAD_ONNX_EMBED: ${DOWNLOAD_ONNX_EMBED:-}
       ONNX_EMBED_HF_REPO: ${ONNX_EMBED_HF_REPO:-}
       EMBED_MODEL_BACKEND: ${EMBED_MODEL_BACKEND:-}
@@ -853,6 +883,17 @@ networks:
     name: ${RESOURCE_PREFIX:-ut}-ca-network
     driver: bridge
     internal: true
+  # Caddy and the recorder, and nothing else: the recorder reads Caddy's counters
+  # here without joining the network browsers come in on.
+  ut-metrics-network:
+    name: ${RESOURCE_PREFIX:-ut}-metrics-network
+    driver: bridge
+    internal: true
+
+# ut-install generates GATEWAY_METRICS_TOKEN; the recorder reads it as a file.
+secrets:
+  gateway_metrics_token:
+    environment: GATEWAY_METRICS_TOKEN
 
 volumes:
   caddy-data:

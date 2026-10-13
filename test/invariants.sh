@@ -15,7 +15,8 @@ SENSITIVE_KEYS=(
     OPENID_SECRET_KEY OA_KEY SENDGRID_API_KEY GROQ_API_KEY HF_TOKEN
     VLLM_API_KEY GPU_VM_API_TOKEN APP_BUILDER_ANTHROPIC_API_KEY
     APP_BUILDER_GATEWAY_API_KEY NGC_API_KEY CLAUDE_API_KEY
-    GATEWAY_TRUSTED_PROXY_KEYS
+    GATEWAY_TRUSTED_PROXY_KEYS GATEWAY_METRICS_TOKEN
+    APP_BUILDER_TOKEN_ENCRYPTION_KEY APP_BUILDER_GITLAB_CLIENT_SECRET
 )
 
 NOT_SECRETS_DESPITE_THE_NAME=(
@@ -227,6 +228,53 @@ check_every_service_declares_its_role() {
     done < "$REPO_ROOT/compose.yaml"
     if $in_services; then
         judge_one_service_role "$service" "$role"
+    fi
+}
+
+judge_one_service_health() {
+    local service=$1 has_healthcheck=$2
+    [[ -n "$service" ]] || return 0
+    $has_healthcheck && return 0
+    report "service-without-a-healthcheck:${service}" \
+        "${service} declares no healthcheck — ut-install and ut-status count it as serving for as long as its process runs, even once it no longer does its work"
+}
+
+# Docker only knows that a process runs. The healthcheck is what tells ut-install,
+# ut-status and the usage report that the service still does its job.
+check_every_service_declares_a_healthcheck() {
+    local line entry in_services=false service="" has_healthcheck=false
+    while IFS= read -r line; do
+        entry=${line%"${line##*[![:space:]]}"}
+        case "$entry" in
+            "services:")
+                in_services=true
+                continue
+                ;;
+            [a-z]*:*)
+                if $in_services; then
+                    judge_one_service_health "$service" "$has_healthcheck"
+                fi
+                in_services=false
+                service=""
+                has_healthcheck=false
+                continue
+                ;;
+        esac
+        $in_services || continue
+        case "$entry" in
+            "  "[a-z]*":")
+                judge_one_service_health "$service" "$has_healthcheck"
+                service=${entry#  }
+                service=${service%:}
+                has_healthcheck=false
+                ;;
+            "    healthcheck:")
+                has_healthcheck=true
+                ;;
+        esac
+    done < "$REPO_ROOT/compose.yaml"
+    if $in_services; then
+        judge_one_service_health "$service" "$has_healthcheck"
     fi
 }
 
@@ -503,6 +551,40 @@ check_the_recorder_is_bounded() {
     done
 }
 
+release_files_each_service_mounts() {
+    awk '
+        /^services:/ { in_services = 1; next }
+        /^[^ #]/ { in_services = 0 }
+        in_services && /^  [a-z0-9_-]+:[[:space:]]*$/ { service = $1; sub(/:$/, "", service); next }
+        in_services && /^      - "?\.\// { source = $2; gsub(/"/, "", source); sub(/:.*/, "", source); print service, source }
+    ' "${COMPOSE_FILES[@]}"
+}
+
+services_that_follow_the_release() {
+    awk '
+        /^services:/ { in_services = 1; next }
+        /^[^ #]/ { in_services = 0 }
+        in_services && /^  [a-z0-9_-]+:[[:space:]]*$/ { service = $1; sub(/:$/, "", service); next }
+        in_services && /ut\.release: "?\$\{UT_RELEASE_VERSION/ { print service }
+    ' "${COMPOSE_FILES[@]}"
+}
+
+# A file mounted on its own keeps the content its container started with: a release
+# that replaces it reaches the service only through a new container. Seen on 2026-10-12,
+# when the recorder kept the filter of the release before.
+check_services_that_mount_a_release_file_follow_the_release() {
+    local following service source reported=""
+    following=$(services_that_follow_the_release)
+    while read -r service source; do
+        [[ -n "$service" && "$source" != *'$'* && -f "$REPO_ROOT/${source#./}" ]] || continue
+        grep -qx "$service" <<< "$following" && continue
+        [[ " $reported " == *" $service "* ]] && continue
+        reported+=" $service"
+        report "release-file-without-release-label:${service}" \
+            "${service} mounts ${source} on its own and has no ut.release label — a release that changes the file never reaches the running container"
+    done <<< "$(release_files_each_service_mounts)"
+}
+
 # The boot service starts the stack with --remove-orphans. An install that does not
 # leaves a retired service running beside the one that replaced it, still holding
 # the memory its replacement was given.
@@ -645,6 +727,7 @@ main() {
     check_healthcheck_asks_for_a_certified_name
     check_no_service_starts_slower_than_the_installer_waits
     check_every_service_declares_its_role
+    check_every_service_declares_a_healthcheck
     check_the_first_backup_is_not_deferred_to_a_clock_time
     check_every_setting_reaches_something
     check_the_gateway_trusts_the_app_builder_key
@@ -659,6 +742,7 @@ main() {
     check_images_are_pinned
     check_compose_images_are_pinned
     check_the_recorder_is_bounded
+    check_services_that_mount_a_release_file_follow_the_release
     check_the_install_starts_the_stack_as_boot_does
     check_production_defaults
     check_documented_paths_exist

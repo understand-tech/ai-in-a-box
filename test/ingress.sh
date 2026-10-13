@@ -15,7 +15,7 @@ PROBE_IMAGE=$ALPINE_IMAGE
 # them: caddy:2-alpine is public, and stubs answer for the eight upstreams. So
 # the one surface a browser actually meets is the one that can be checked here.
 cleanup() {
-    docker rm -f ut-ingress-caddy ut-ingress-stub ut-ingress-probe >/dev/null 2>&1
+    docker rm -f ut-ingress-caddy ut-ingress-stub ut-ingress-probe ut-ingress-recorder >/dev/null 2>&1
     docker network rm "$NETWORK" >/dev/null 2>&1
     rm -rf "$WORK_DIR"
 }
@@ -120,7 +120,7 @@ EOF
 # expansion has to be guarded rather than quoted.
 start_the_front_door() {
     local mode=${1:-internal} args=() extra=()
-    while IFS= read -r line; do args+=("$line"); done < <(aliases_for "$SURFACES")
+    while IFS= read -r line; do args+=("$line"); done < <(aliases_for "$SURFACES caddy")
 
     case "$mode" in
         custom)
@@ -154,6 +154,13 @@ start_the_prober() {
         sleep 1; waited=$((waited + 1))
         (( waited < 60 )) || { echo "curl never installed in the prober" >&2; return 1; }
     done
+}
+
+start_the_recorder() {
+    sed 's/scrape_interval: [0-9]*s/scrape_interval: 1s/' "$REPO_ROOT/metrics/prometheus.yml" > "$WORK_DIR/prometheus.yml"
+    docker run -d --name ut-ingress-recorder --network "$NETWORK" \
+        -v "$WORK_DIR/prometheus.yml":/etc/prometheus/prometheus.yml:ro \
+        "$PROMETHEUS_IMAGE" --config.file=/etc/prometheus/prometheus.yml >/dev/null
 }
 
 SCHEME="https"
@@ -281,8 +288,82 @@ printf '%sThe front door, actually serving%s %s(caddy on the real Caddyfile, stu
     "$BOLD" "$NC" "$DIM" "$NC"
 
 docker network create "$NETWORK" >/dev/null 2>&1
+counters() {
+    docker exec ut-ingress-probe curl -s --max-time 10 "http://ut-ingress-caddy:2020/metrics" 2>/dev/null
+}
+
+# Each surface counted under its own name is what splits the load by tool.
+the_counters_name_each_surface() {
+    local host counted missing=""
+    for host in "$DOMAIN" "llms.${DOMAIN}" "assistants.${DOMAIN}"; do
+        status_of "$host" >/dev/null
+    done
+    counted=$(counters)
+    for host in "$DOMAIN" "llms.${DOMAIN}" "assistants.${DOMAIN}"; do
+        grep -q "^caddy_http_requests_total{.*host=\"${host}\"" <<< "$counted" || missing+=" ${host}"
+    done
+    [[ -z "$missing" ]] && return 0
+    echo "no request counted for:${missing}"
+    return 1
+}
+
+the_counters_stay_off_the_front_door() {
+    grep -q 'caddy_http_requests_total' <<< "$(body_of "$DOMAIN" /metrics)" || return 0
+    echo "${SCHEME}://${DOMAIN}/metrics hands Caddy's counters to any browser"
+    return 1
+}
+
+# A Host header is whatever the client writes. Counted as written, a loop of
+# forged names would grow Caddy's counters without bound. Port 80 is where a
+# handler answers any name — the redirect to https — so a forged name sent there
+# is counted, and must be counted under "_other".
+a_forged_host_is_pooled() {
+    local counted
+    docker exec ut-ingress-probe curl -s -o /dev/null --max-time 10 \
+        -H "Host: forged-${RANDOM}.example" "http://${DOMAIN}/" >/dev/null 2>&1
+    counted=$(counters)
+    grep -q 'host="forged-' <<< "$counted" && { echo "a forged Host header got counters of its own"; return 1; }
+    grep -q 'host="_other"' <<< "$counted" && return 0
+    echo "the forged request was not counted at all, so pooling is not shown"
+    return 1
+}
+
+recorded_for() {
+    local series=$1 host=$2
+    docker exec ut-ingress-recorder wget -qO- "http://localhost:9090/federate?match%5B%5D=${series}" 2>/dev/null \
+        | awk -v host="$host" 'index($0, "host=\"" host "\"") { total += $(NF - 1) } END { print total + 0 }'
+}
+
+the_recorder_reads_caddy() {
+    docker exec ut-ingress-recorder wget -qO- "http://localhost:9090/federate?match%5B%5D=up%7Bjob%3D%22caddy%22%7D" 2>/dev/null \
+        | grep -q '^up{.*} 1 '
+}
+
+three_requests_are_recorded_as_three() {
+    local series=$1 host="llms.${DOMAIN}" before after waited=0
+    until the_recorder_reads_caddy; do
+        sleep 1; waited=$((waited + 1))
+        (( waited < 30 )) || { echo "the recorder never read Caddy's counters"; return 1; }
+    done
+    waited=0
+    sleep 2
+    before=$(recorded_for "$series" "$host")
+    status_of "$host" >/dev/null; status_of "$host" >/dev/null; status_of "$host" >/dev/null
+    after=$before
+    while (( after == before && waited < 20 )); do
+        sleep 1; waited=$((waited + 1))
+        after=$(recorded_for "$series" "$host")
+    done
+    sleep 2
+    after=$(recorded_for "$series" "$host")
+    (( after - before == 3 )) && return 0
+    echo "three requests to ${host}, and the recorder holds $((after - before)) more in ${series}"
+    return 1
+}
+
 start_the_upstreams
 start_the_front_door
+start_the_recorder
 start_the_prober || exit 1
 docker exec ut-ingress-probe sh -c 'apk add --no-cache openssl >/dev/null 2>&1' || true
 
@@ -316,6 +397,15 @@ surface "the apex certificate names the apex" \
 surface "a generated application gets a certificate for its own name" \
     the_certificate_covers_the_name "demo.apps.${DOMAIN}"
 
+printf '\n%sWhat the recorder reads%s\n' "$BOLD" "$NC"
+surface "Caddy counts what each surface answered, by host" the_counters_name_each_surface
+surface "the counters are not served on the front door" the_counters_stay_off_the_front_door
+surface "a forged host is pooled, not counted on its own" a_forged_host_is_pooled
+surface "the recorder keeps each request to a surface, exactly once" \
+    three_requests_are_recorded_as_three caddy_http_requests_total
+surface "the recorder keeps how long each request to a surface took" \
+    three_requests_are_recorded_as_three caddy_http_request_duration_seconds_count
+
 printf '\n%sMode custom — the certificate comes from the operator%s\n' "$BOLD" "$NC"
 restart_the_front_door_in custom
 surface "custom mode comes up" wait_for_the_front_door
@@ -331,6 +421,7 @@ surface "edge mode comes up on plain HTTP" wait_for_the_front_door
 surface "it holds no certificate on 443" caddy_holds_no_certificate_in_edge_mode
 surface "it believes a trusted proxy about the scheme" \
     a_trusted_proxy_is_believed_about_the_scheme
+surface "on plain HTTP too, each surface is counted by host" the_counters_name_each_surface
 
 printf '\n%s%d served%s' "$GREEN" "$PASSED" "$NC"
 if (( FAILED )); then

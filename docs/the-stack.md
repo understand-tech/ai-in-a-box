@@ -32,7 +32,7 @@ follows `COMPOSE_PROJECT_NAME`.
 | `admin-portal` | `ut-admin-portal` | — | Tenant and user administration, at `admin.<UT_DOMAIN>` |
 | `llm` | `understandtech-llm-*` | — | RAG, embeddings and reranking on GPU, `:8000` internal |
 | `nim-llm` | `understandtech-nim-llm-*` | 127.0.0.1:8001 | NVIDIA NIM serving the chat model (profile `nim`) |
-| `metrics` | `ut-metrics` | — | Records how loaded the engine is and how long users wait for it, 35 days or 1 GB, whichever comes first (profile `nim`) |
+| `metrics` | `ut-metrics` | — | Records how loaded the engine is, how long users wait for it, and what each surface of the front door answered and how long it took, 35 days or 1 GB, whichever comes first (profile `nim`) |
 | `mongodb` | `ut-mongodb` | — | Document database |
 | `redis` | `ut-redis` | — | Task queue and cache |
 | `mongodb-backup` | `ut-mongodb-backup` | — | Full-server dump of every database |
@@ -49,7 +49,7 @@ The worker services scale with `WORKER_REPLICAS` and `WORKER_CUSTOMER_REPLICAS`.
 
 ## Networks
 
-The stack declares four bridge networks. **Three of them are `internal: true`**,
+The stack declares five bridge networks. **Four of them are `internal: true`**,
 which means the containers attached only to those have no route off the box.
 
 | Network | Internal | Who is on it |
@@ -58,6 +58,7 @@ which means the containers attached only to those have no route off the box.
 | `ut-backend-network` | **yes** | `api`, `api-customer`, the workers, `app-assistants`, `admin-portal`, `llm`, `nim-llm`, `metrics`, `redis`, `files-backup` |
 | `ut-data-network` | **yes** | `mongodb`, `mongodb-backup`, `api`, `api-customer`, the workers, `app-llms`, `app-assistants`, `llm` |
 | `ut-ca-network` | **yes** | `caddy`, `step-ca` |
+| `ut-metrics-network` | **yes** | `caddy`, `metrics` — the recorder reads Caddy's counters on `:2020`, which no compose file publishes |
 
 One more, for the add-on only:
 

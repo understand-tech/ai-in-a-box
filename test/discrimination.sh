@@ -101,6 +101,10 @@ discriminates "a secret defaulted in a compose file" \
     "compose-secret-default:JWT_SECRET" \
     "sed -i.bak 's|\${JWT_SECRET:?[^}]*}|\${JWT_SECRET:-shipped-value}|' compose.yaml"
 
+discriminates "the App Builder's token key defaulted in its overlay" \
+    "compose-secret-default:APP_BUILDER_TOKEN_ENCRYPTION_KEY" \
+    "sed -i.bak 's|\${APP_BUILDER_TOKEN_ENCRYPTION_KEY:-}|\${APP_BUILDER_TOKEN_ENCRYPTION_KEY:-shipped-value}|' compose.appbuilder.yaml"
+
 if grep -q 'check_healthcheck_asks_for_a_certified_name' "$REPO_ROOT/test/invariants.sh"; then
     discriminates "a healthcheck asking for a name the certificate does not carry" \
         "healthcheck-name-not-certified:localhost" \
@@ -129,6 +133,12 @@ if grep -q 'check_every_service_declares_its_role' "$REPO_ROOT/test/invariants.s
     discriminates "a role spelled in a way nothing reads" \
         "service-with-an-unknown-role:nim-llm" \
         "sed -i.bak '/^  nim-llm:\$/,/^      ut.role:/ s|ut.role: \"inference\"|ut.role: \"inferences\"|' compose.yaml"
+fi
+
+if grep -q 'check_every_service_declares_a_healthcheck' "$REPO_ROOT/test/invariants.sh"; then
+    discriminates "a service whose healthcheck was dropped" \
+        "service-without-a-healthcheck:workers" \
+        "sed -i.bak '/^  workers:\$/,/^    logging:/ s|^    healthcheck:\$|    healthcheck_dropped:|' compose.yaml"
 fi
 
 if grep -q 'check_the_first_backup_is_not_deferred_to_a_clock_time' "$REPO_ROOT/test/invariants.sh"; then
@@ -169,6 +179,12 @@ if grep -q 'check_the_recorder_is_bounded' "$REPO_ROOT/test/invariants.sh"; then
     discriminates "the recorder kept by size alone" \
         "recorder-unbounded-in-time" \
         "sed -i.bak '/--storage.tsdb.retention.time=/d' compose.yaml"
+fi
+
+if grep -q 'check_services_that_mount_a_release_file_follow_the_release' "$REPO_ROOT/test/invariants.sh"; then
+    discriminates "a service reading a release file that no release recreates" \
+        "release-file-without-release-label:metrics" \
+        "sed -i.bak '/ut.role: \"metrics\"/{n;/ut.release/d;}' compose.yaml"
 fi
 
 if grep -q 'check_the_package_ships_what_the_stack_mounts' "$REPO_ROOT/test/invariants.sh"; then
@@ -368,9 +384,25 @@ if [[ -x "$REPO_ROOT/ut-report" ]]; then
         "a series the recorder does not have is flagged" \
         "sed -i.bak '/series-missing:/d' ut-report"
 
+    capability_discriminates "the minutes requests waited left out of the report" \
+        "the minutes requests waited for the engine are counted" \
+        "sed -i.bak 's/ waiting_peak saturated_minutes / waiting_peak /' ut-report"
+
     capability_discriminates "a stopped recorder reported as an idle machine" \
         "an engine nobody recorded is flagged" \
         "sed -i.bak '/recorder-missing:/d' ut-report"
+
+    capability_discriminates "a forecast that never warns" \
+        "a recorder that will outgrow its cap is flagged before it does" \
+        "sed -i.bak 's|if (kept < wanted)|if (kept < 0)|' ut-report"
+
+    capability_discriminates "a retention read up to its first unit only" \
+        "a cap written in other units is read the same" \
+        "sed -i.bak 's|while (match(d,|if (match(d,|' ut-report"
+
+    capability_discriminates "a forecast drawn from an hour of write-ahead log" \
+        "a recorder too young to judge raises nothing" \
+        "sed -i.bak 's|covered < 1 |covered < 0 |' ut-report"
 
     capability_discriminates "a report silent about memory" \
         "the report gives each service its memory peak and limit" \
@@ -677,7 +709,7 @@ if grep -q 'checkouts_holding_settings' "$REPO_ROOT/ut-install"; then
 
     install_walk_discriminates "a required variable nobody generates" \
         "every variable the stack requires has a value" \
-        "sed -i.bak 's| CA_PASSWORD GPU_VM_API_TOKEN)| CA_PASSWORD)|' ut-install"
+        "sed -i.bak 's| GPU_VM_API_TOKEN\\([ )]\\)|\\1|' ut-install"
 
 if grep -q 'check_the_package_stamps_the_commit_it_was_built_from' "$REPO_ROOT/test/invariants.sh"; then
     discriminates "a package that says nothing about the code inside it" \
@@ -722,6 +754,18 @@ fi
     install_walk_discriminates "two machines given the same secret" \
         "two installs do not share a secret" \
         "sed -i.bak 's|^random_alphanumeric() {$|random_alphanumeric() { printf %s the-same-everywhere; return 0;|' ut-install"
+
+    install_walk_discriminates "a token key the App Builder cannot read" \
+        "the App Builder's token key is one Fernet accepts" \
+        "sed -i.bak 's|^random_fernet_key() {$|random_fernet_key() { random_alphanumeric 44; return 0;|' ut-install"
+
+    install_walk_discriminates "two machines given the same token key" \
+        "two installs do not share a secret" \
+        "sed -i.bak 's|^random_fernet_key() {$|random_fernet_key() { printf %s the-same-everywhere; return 0;|' ut-install"
+
+    install_walk_discriminates "a carried token key replaced by a new one" \
+        "the App Builder's token key comes along" \
+        "sed -i.bak 's|^    local local_file=\$1 key rotated=()\$|&; env_set \"\$local_file\" APP_BUILDER_TOKEN_ENCRYPTION_KEY \"\"|' ut-install"
 
     install_walk_discriminates "a declared machine refused anyway" \
         "the install goes on when the inference is served elsewhere" \
@@ -786,6 +830,26 @@ if [[ -x "$REPO_ROOT/test/ingress.sh" ]]; then
     ingress_discriminates "a surface whose upstream no longer exists" \
         "https://llms.box.example.test is served" \
         "sed -i.bak 's|reverse_proxy app-llms:80|reverse_proxy nowhere:80|' Caddyfile"
+
+    ingress_discriminates "a front door that counts nothing" \
+        "Caddy counts what each surface answered" \
+        "sed -i.bak '/^    metrics {\$/,/^    }\$/d' caddy/ingress-internal.caddy"
+
+    ingress_discriminates "the counters handed to any browser" \
+        "the counters are not served on the front door" \
+        "sed -i.bak 's|^(platform_routes) {\$|(platform_routes) {\\n    handle /metrics {\\n        metrics\\n    }|' Caddyfile"
+
+    ingress_discriminates "every Host header counted as written" \
+        "a forged host is pooled" \
+        "sed -i.bak 's|^        per_host\$|        per_host\\n        observe_catchall_hosts|' caddy/ingress-internal.caddy"
+
+    ingress_discriminates "a recorder that filters out the handler Caddy counts under" \
+        "the recorder keeps each request to a surface" \
+        "sed -i.bak 's/;metrics\"/;subroute\"/' metrics/prometheus.yml"
+
+    ingress_discriminates "a recorder that keeps the counts but not the durations" \
+        "the recorder keeps how long each request to a surface took" \
+        "sed -i.bak 's#|request_duration_seconds_(bucket|sum|count))|caddy_reverse#)|caddy_reverse#' metrics/prometheus.yml"
 
     # The defect this caught the day it was written: a redirect URI that the
     # ingress sends to the frontend, where no callback is ever handled.
