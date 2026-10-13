@@ -205,7 +205,8 @@ a backup written there dies with the machine. Once it has checked, it writes
 `.understandtech-backup-destination` into the directory.
 
 **Before every run, the backup looks for that file.** When the share is not
-mounted, it writes nothing, says so in its log, and its health check turns red:
+mounted, it writes nothing, says so in its log, and its health check turns red.
+An update that finds it unmounted says so too, and carries on:
 
 ```bash
 docker compose logs files-backup | grep 'not mounted'
@@ -227,8 +228,9 @@ BACKUP_FILES_S3_SECRET="..."
 ```
 
 Any S3-compatible endpoint works — AWS, MinIO, Scaleway, OVH. For SFTP, give
-`BACKUP_FILES_REPOSITORY="sftp:backup@nas.example:/appliance"` instead. Then run
-the installer again:
+`BACKUP_FILES_REPOSITORY="sftp:backup@nas.example:/appliance"` instead. **Never
+put a password in that address**: when the destination fails, the backup writes
+the address in its log. Then run the installer again:
 
 ```bash
 sudo ut-install --skip-pull

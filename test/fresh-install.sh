@@ -118,6 +118,7 @@ UT_REGISTRY_TOKEN=${INSTALL_TOKEN-test-token} \\
 printf 'EXIT=%s\n' "\$?" >> /w/$state/output.txt
 
 cp /etc/understandtech/.env /w/$state/env 2>/dev/null || : > /w/$state/env
+cp /etc/understandtech/local.env /w/$state/local-env 2>/dev/null || : > /w/$state/local-env
 cp /opt/understandtech/.env /w/$state/checkout-env 2>/dev/null || : > /w/$state/checkout-env
 chmod -R a+rw /w/$state
 PROBE
@@ -172,6 +173,10 @@ state_setup() {
             echo 'install -d /w/backup_destination_mounted/nas && install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_DESTINATION="/w/backup_destination_mounted/nas"\n'"'"' > /etc/understandtech/local.env' ;;
         backup_destination_not_mounted)
             echo 'install -d /mnt/nas && install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_DESTINATION="/mnt/nas"\n'"'"' > /etc/understandtech/local.env' ;;
+        # What an install that already sends its backup to a share leaves behind,
+        # replayed for an update while nothing is mounted at that path.
+        backup_destination_gone_on_an_update)
+            echo 'install -d /mnt/nas && install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_DESTINATION="/mnt/nas"\nCOMPOSE_FILE="compose.yaml:compose.backup-mount.yaml"\n'"'"' > /etc/understandtech/local.env' ;;
         backup_over_sftp)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_REPOSITORY="sftp:backup@nas.example.test:/appliance"\n'"'"' > /etc/understandtech/local.env' ;;
         backup_in_two_places)
@@ -364,7 +369,18 @@ two_destinations_stop_the_install() {
     local output
     output=$(output_of backup_in_two_places)
     grep -q 'both say where the backup goes' <<< "$output" \
-        && ! grep -q 'Downloading images' <<< "$output" && return 0
+        && ! grep -q 'Downloading images' <<< "$output" \
+        && ! grep -q 'compose.backup-mount.yaml' "$WORK_DIR/backup_in_two_places/local-env" && return 0
+    echo "$output"
+    grep -E '^COMPOSE_FILE' "$WORK_DIR/backup_in_two_places/local-env"
+    return 1
+}
+
+a_destination_gone_on_an_update_holds_nothing_back() {
+    local output
+    output=$(output_of backup_destination_gone_on_an_update)
+    grep -q 'the backup writes nothing until it is back' <<< "$output" \
+        && grep -q 'Downloading images' <<< "$output" && return 0
     echo "$output"
     return 1
 }
@@ -571,6 +587,7 @@ INSTALL_COMMAND="ut-install --no-gpu" run_install_from_state no_accelerator_by_f
 INSTALL_COMMAND="ut-install --no-gpu" run_install_from_state no_accelerator_pointed_at_a_real_machine
 run_install_from_state backup_destination_mounted
 run_install_from_state backup_destination_not_mounted
+run_install_from_state backup_destination_gone_on_an_update
 run_install_from_state backup_over_sftp
 run_install_from_state backup_in_two_places
 
@@ -672,8 +689,10 @@ property "an S3 or SFTP destination gets its way out, and the missing host key i
     a_network_destination_gets_its_way_out_and_names_the_key_it_lacks
 property "the default destination adds no way out" \
     the_default_destination_adds_no_way_out
-property "naming two destinations stops the install" \
+property "naming two destinations stops the install, before anything is written" \
     two_destinations_stop_the_install
+property "a destination gone during an update holds the update back no more than it says so" \
+    a_destination_gone_on_an_update_holds_nothing_back
 
 printf '\n%sA database whose password happens to look shipped%s\n' "$BOLD" "$NC"
 property "the install carries on, because that password is the right one" \

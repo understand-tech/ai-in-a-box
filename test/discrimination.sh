@@ -767,6 +767,14 @@ fi
         "does not hold the install back" \
         "sed -i.bak 's/ \\&\\& \"\\\$1\" != \"backup\"//' ut-install"
 
+    install_walk_discriminates "a destination gone during an update stopping it" \
+        "gone during an update" \
+        "sed -i.bak 's|^                return 0 ;;\$|                : ;;|' ut-install"
+
+    install_walk_discriminates "two destinations checked only after one is written" \
+        "two destinations stops the install, before" \
+        "sed -i.bak '/^    die_on_two_backup_destinations \"\$local_file\"\$/d' ut-install"
+
     install_walk_discriminates "two backup destinations let through" \
         "naming two destinations stops the install" \
         "sed -i.bak '/both say where the backup goes/,/exit 1/ s/exit 1/:/' ut-install"
