@@ -139,8 +139,12 @@ Backup
   ✔ a destination that is not mounted is refused, and nothing is written
   ✔ the backup has no way off the machine, with a mounted destination too
   ✔ a database restored on another machine, as the guide says, keeps that machine's accounts
+  ✔ an S3 or SFTP destination gives the backup one way out, its own
+  ✔ an SFTP destination is trusted only under the host key pinned for it
+  ✔ a destination that does not answer is named, and nothing is written
+  ✔ a password that does not open the repository is named as such
 
-43 verified
+47 verified
 ```
 
 The list grows with the branch, not with the file: each block is guarded by the

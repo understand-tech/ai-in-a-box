@@ -90,6 +90,10 @@ with_a_backup_destination() {
     BACKUP_FILES_DESTINATION="$WORK_DIR/mounted" "$@"
 }
 
+with_a_network_repository() {
+    BACKUP_FILES_REPOSITORY="sftp:backup@nas.example.test:/appliance" BACKUP_FILES_SSH_DIR="$WORK_DIR/backup-ssh" "$@"
+}
+
 omits_service() {
     local service=$1; shift
     ! compose_services "$@" | grep -qx "$service"
@@ -1095,6 +1099,101 @@ the_backup_refuses_a_destination_that_is_not_mounted() {
     grep -q 'not mounted' <<< "$output" || { echo "$output"; return 1; }
 }
 
+the_network_destination_gets_a_way_out_of_its_own() {
+    command -v jq >/dev/null || { echo "jq absent"; return 1; }
+    local config open sharing
+    config=$( cd "$WORK_DIR" && docker compose "$@" config --format json 2>/dev/null )
+    [[ -n "$config" ]] || { echo "the stack does not render with a network destination"; return 1; }
+    open=$(jq -r '.networks as $declared
+        | .services["files-backup"].networks // {} | keys[]
+        | select($declared[.].internal != true)' <<< "$config")
+    [[ $(grep -c . <<< "$open") == 1 ]] || { echo "networks with a way out: $(tr '\n' ' ' <<< "$open")"; return 1; }
+    sharing=$(jq -r --arg net "$open" '.services | to_entries[]
+        | select(.key != "files-backup" and ((.value.networks // {}) | has($net))) | .key' <<< "$config")
+    [[ -z "$sharing" ]] || { echo "${open} is shared with: $(tr '\n' ' ' <<< "$sharing")"; return 1; }
+}
+
+backup_over_sftp() {
+    local source=$1 ssh_dir=$2 repository=$3 network=$4 config target
+    config=$( cd "$WORK_DIR" && BACKUP_FILES_REPOSITORY="$repository" BACKUP_FILES_SSH_DIR="$ssh_dir" \
+        docker compose -f compose.yaml -f compose.backup-network.yaml config --format json 2>/dev/null )
+    target=$(jq -r --arg d "$ssh_dir" '.services["files-backup"].volumes[]? | select(.source == $d) | .target' <<< "$config")
+    [[ -n "$target" ]] || { echo "the SSH directory is not handed to files-backup"; return 1; }
+    docker run --rm --network "$network" -v "$source":/data:ro -v "$ssh_dir":"$target":ro \
+        -v "$REPO_ROOT/backup-files.sh":/usr/local/bin/backup-files:ro \
+        -e RESTIC_REPOSITORY="$repository" -e RESTIC_PASSWORD=capability-test \
+        --entrypoint sh "$RESTIC_IMAGE" -c "timeout 90 /usr/local/bin/backup-files" 2>&1
+}
+
+# Written through a container: on Docker Desktop and OrbStack, a file rewritten
+# from the host can reach the next container as it was before the rewrite.
+pin_host_keys() {
+    docker run --rm -i -v "$1":/k "$ALPINE_IMAGE" sh -c 'cat > /k/known_hosts'
+}
+
+the_sftp_destination_has_to_prove_who_it_is() {
+    command -v jq >/dev/null || { echo "jq absent"; return 1; }
+    local run=cap-sftp-$$ net server ssh_dir="$WORK_DIR/sftp-ssh" source="$WORK_DIR/sftp-source" scanned="" attempt output verdict=1
+    local repository
+    net=$run-net; server=$run-server
+    repository="sftp://backup@${server}:2222/backups"
+    mkdir -p "$ssh_dir" "$source/app-data"
+    echo "customer notes" > "$source/app-data/notes.txt"
+
+    docker network create "$net" >/dev/null 2>&1
+    docker run --rm -v "$ssh_dir":/k --entrypoint ssh-keygen "$RESTIC_IMAGE" \
+        -q -t ed25519 -N '' -f /k/id_ed25519 -C capability >/dev/null 2>&1
+    docker run --rm -v "$WORK_DIR":/w --entrypoint ssh-keygen "$RESTIC_IMAGE" \
+        -q -t ed25519 -N '' -f /w/impostor -C impostor >/dev/null 2>&1
+    docker run -d --name "$server" --network "$net" -e USER_NAME=backup \
+        -e PUBLIC_KEY="$(cat "$ssh_dir/id_ed25519.pub")" "$SFTP_SERVER_IMAGE" >/dev/null 2>&1
+
+    for attempt in $(seq 1 30); do
+        scanned=$(docker run --rm --network "$net" --entrypoint ssh-keyscan "$RESTIC_IMAGE" \
+            -p 2222 -t ed25519 "$server" 2>/dev/null)
+        [[ -n "$scanned" ]] && break
+        sleep 2
+    done
+
+    if [[ -n "$scanned" ]]; then
+        printf '[%s]:2222 %s\n' "$server" "$(cut -d' ' -f1,2 "$WORK_DIR/impostor.pub")" | pin_host_keys "$ssh_dir"
+        if output=$(backup_over_sftp "$source" "$ssh_dir" "$repository" "$net"); then
+            echo "a host whose key was not the pinned one was trusted"
+        elif ! grep -qE 'Host key verification failed|HOST IDENTIFICATION HAS CHANGED' <<< "$output"; then
+            echo "$output"
+        else
+            printf '%s\n' "$scanned" | pin_host_keys "$ssh_dir"
+            output=$(backup_over_sftp "$source" "$ssh_dir" "$repository" "$net") && verdict=0 \
+                || echo "the pinned host was refused: $(tail -3 <<< "$output")"
+        fi
+    else
+        echo "the SFTP server never answered"
+    fi
+
+    docker rm -f "$server" >/dev/null 2>&1
+    docker network rm "$net" >/dev/null 2>&1
+    return "$verdict"
+}
+
+an_unreachable_destination_is_named() {
+    local output
+    output=$(docker run --rm -v "$REPO_ROOT/backup-files.sh":/usr/local/bin/backup-files:ro \
+        -e RESTIC_REPOSITORY='sftp:nobody@127.0.0.1:/appliance' -e RESTIC_PASSWORD=capability-test \
+        --entrypoint /usr/local/bin/backup-files "$RESTIC_IMAGE" 2>&1) && { echo "the backup reported success"; return 1; }
+    grep -q 'cannot reach the repository at sftp:nobody@127.0.0.1:/appliance' <<< "$output" || { echo "$output"; return 1; }
+}
+
+a_password_that_does_not_open_the_repository_is_named() {
+    local repo="$WORK_DIR/locked-repository" output
+    mkdir -p "$repo"
+    docker run --rm -v "$repo":/r -e RESTIC_REPOSITORY=/r/restic -e RESTIC_PASSWORD=the-old-machine \
+        "$RESTIC_IMAGE" init >/dev/null 2>&1 || { echo "no repository to test against"; return 1; }
+    output=$(docker run --rm -v "$repo":/r -v "$REPO_ROOT/backup-files.sh":/usr/local/bin/backup-files:ro \
+        -e RESTIC_REPOSITORY=/r/restic -e RESTIC_PASSWORD=this-machine \
+        --entrypoint /usr/local/bin/backup-files "$RESTIC_IMAGE" 2>&1) && { echo "the backup reported success"; return 1; }
+    grep -q 'BACKUP_FILES_PASSWORD does not open the repository at /r/restic' <<< "$output" || { echo "$output"; return 1; }
+}
+
 # The image starts mongod once to create the root account, stops it, and starts
 # it again: a ping answered during the first start is answered by a server
 # about to go away.
@@ -1352,6 +1451,14 @@ if [[ -f "$REPO_ROOT/backup-files.sh" ]]; then
         with_a_backup_destination the_backup_has_no_way_off_the_machine -f compose.yaml -f compose.backup-mount.yaml
     capability "a database restored on another machine, as the guide says, keeps that machine's accounts" \
         the_guide_s_restore_keeps_this_machine_s_accounts
+    capability "an S3 or SFTP destination gives the backup one way out, its own" \
+        with_a_network_repository the_network_destination_gets_a_way_out_of_its_own -f compose.yaml -f compose.backup-network.yaml
+    capability "an SFTP destination is trusted only under the host key pinned for it" \
+        the_sftp_destination_has_to_prove_who_it_is
+    capability "a destination that does not answer is named, and nothing is written" \
+        an_unreachable_destination_is_named
+    capability "a password that does not open the repository is named as such" \
+        a_password_that_does_not_open_the_repository_is_named
     capability "the database leaves with them, not only the files" \
         the_database_leaves_the_machine_with_the_files
 fi

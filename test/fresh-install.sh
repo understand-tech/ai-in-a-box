@@ -172,6 +172,10 @@ state_setup() {
             echo 'install -d /w/backup_destination_mounted/nas && install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_DESTINATION="/w/backup_destination_mounted/nas"\n'"'"' > /etc/understandtech/local.env' ;;
         backup_destination_not_mounted)
             echo 'install -d /mnt/nas && install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_DESTINATION="/mnt/nas"\n'"'"' > /etc/understandtech/local.env' ;;
+        backup_over_sftp)
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_REPOSITORY="sftp:backup@nas.example.test:/appliance"\n'"'"' > /etc/understandtech/local.env' ;;
+        backup_in_two_places)
+            echo 'install -d /w/backup_in_two_places/nas && install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_DESTINATION="/w/backup_in_two_places/nas"\nBACKUP_FILES_REPOSITORY="s3:https://s3.example.test/appliance"\n'"'"' > /etc/understandtech/local.env' ;;
         *)             echo ': ' ;;
     esac
 }
@@ -333,6 +337,33 @@ a_destination_on_the_machine_s_own_disk_stops_the_install() {
     output=$(output_of backup_destination_not_mounted)
     grep -q "this machine's own disk" <<< "$output" \
         && grep -q 'empty BACKUP_FILES_DESTINATION' <<< "$output" \
+        && ! grep -q 'Downloading images' <<< "$output" && return 0
+    echo "$output"
+    return 1
+}
+
+a_network_destination_gets_its_way_out_and_names_the_key_it_lacks() {
+    local settings output
+    settings=$(settings_of backup_over_sftp)
+    output=$(output_of backup_over_sftp)
+    grep -qE '^COMPOSE_FILE=.*compose\.backup-network\.yaml' <<< "$settings" \
+        && grep -q 'no host key is pinned for nas.example.test' <<< "$output" \
+        && grep -q 'Downloading images' <<< "$output" && return 0
+    grep -E '^COMPOSE_FILE' <<< "$settings"
+    echo "$output"
+    return 1
+}
+
+the_default_destination_adds_no_way_out() {
+    ! grep -q 'compose.backup-network.yaml' <<< "$(settings_of bare)" && return 0
+    grep -E '^COMPOSE_FILE' <<< "$(settings_of bare)"
+    return 1
+}
+
+two_destinations_stop_the_install() {
+    local output
+    output=$(output_of backup_in_two_places)
+    grep -q 'both say where the backup goes' <<< "$output" \
         && ! grep -q 'Downloading images' <<< "$output" && return 0
     echo "$output"
     return 1
@@ -540,6 +571,8 @@ INSTALL_COMMAND="ut-install --no-gpu" run_install_from_state no_accelerator_by_f
 INSTALL_COMMAND="ut-install --no-gpu" run_install_from_state no_accelerator_pointed_at_a_real_machine
 run_install_from_state backup_destination_mounted
 run_install_from_state backup_destination_not_mounted
+run_install_from_state backup_over_sftp
+run_install_from_state backup_in_two_places
 
 printf '%sA machine with nothing on it%s\n' "$BOLD" "$NC"
 property "the install reaches the point where it pulls images" \
@@ -633,6 +666,14 @@ property "a destination on a disk of its own is used, and marked as mounted" \
     a_mounted_backup_destination_is_used_and_marked
 property "one on the machine's own disk stops the install, and says how to get out" \
     a_destination_on_the_machine_s_own_disk_stops_the_install
+
+printf '\n%sA backup sent over the network%s\n' "$BOLD" "$NC"
+property "an S3 or SFTP destination gets its way out, and the missing host key is named" \
+    a_network_destination_gets_its_way_out_and_names_the_key_it_lacks
+property "the default destination adds no way out" \
+    the_default_destination_adds_no_way_out
+property "naming two destinations stops the install" \
+    two_destinations_stop_the_install
 
 printf '\n%sA database whose password happens to look shipped%s\n' "$BOLD" "$NC"
 property "the install carries on, because that password is the right one" \

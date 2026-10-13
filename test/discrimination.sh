@@ -29,7 +29,8 @@ fresh_copy() {
     rm -rf "$COPY"
     mkdir -p "$COPY"
     ( cd "$REPO_ROOT" && tar -cf - release.env compose.yaml compose.appbuilder.yaml \
-        compose.compute.yaml compose.no-gpu.yaml compose.backup-mount.yaml Caddyfile caddy metrics backup-files.sh \
+        compose.compute.yaml compose.no-gpu.yaml compose.backup-mount.yaml compose.backup-network.yaml \
+        Caddyfile caddy metrics backup-files.sh \
         setup-autostart.sh ut-logs-archive ut-install ut-certificate ut-verify ut-status ut-report appbuilder docs \
         packaging README.md test .github 2>/dev/null ) | tar -xf - -C "$COPY" 2>/dev/null
 }
@@ -603,6 +604,22 @@ capability_discriminates "a guide that restores a foreign database whole" \
     "restored on another machine, as the guide says" \
     "sed -i.bak \"s| --nsExclude 'admin.\\*'||\" docs/restore.md"
 
+capability_discriminates "a network destination left on the internal network" \
+    "gives the backup one way out, its own" \
+    "sed -i.bak 's|      - ut-backup-network|      - ut-backend-network|' compose.backup-network.yaml"
+
+capability_discriminates "an SFTP destination without the keys to check it" \
+    "trusted only under the host key pinned for it" \
+    "sed -i.bak '/\/root\/.ssh:ro/d' compose.backup-network.yaml"
+
+capability_discriminates "a destination that does not answer, left unnamed" \
+    "does not answer is named" \
+    "sed -i.bak '/cannot reach the repository/d' backup-files.sh"
+
+capability_discriminates "a password that does not fit, taken for a missing repository" \
+    "does not open the repository is named" \
+    "sed -i.bak '/does not open the repository/d' backup-files.sh"
+
 capability_discriminates "the dumps looked for where they are not" \
     "the database leaves with them" \
     "sed -i.bak 's|BACKUP_DUMPS:-/backup|BACKUP_DUMPS:-/nowhere|' backup-files.sh"
@@ -729,6 +746,18 @@ fi
     install_walk_discriminates "a backup destination on the machine's own disk taken for a mounted one" \
         "one on the machine's own disk stops the install" \
         "sed -i.bak 's|^    \[\[ \"\$filesystem\" != .*|    true|' ut-install"
+
+    install_walk_discriminates "an SFTP destination left without its way out" \
+        "an S3 or SFTP destination gets its way out" \
+        "sed -i.bak 's|\"\${compose_files}:compose.backup-network.yaml\"|\"\${compose_files}\"|' ut-install"
+
+    install_walk_discriminates "every repository taken for one over the network" \
+        "the default destination adds no way out" \
+        "sed -i.bak 's#^        s3:\*|sftp:\*|.*#        *) return 0 ;;#' ut-install"
+
+    install_walk_discriminates "two backup destinations let through" \
+        "naming two destinations stops the install" \
+        "sed -i.bak '/both say where the backup goes/,/exit 1/ s/exit 1/:/' ut-install"
 fi
 
 if [[ -x "$REPO_ROOT/test/ingress.sh" ]]; then

@@ -865,6 +865,72 @@ write_the_settings_a_backup_destination_needs() {
     log_info "Backups go to ${destination}, off this machine's disk"
 }
 
+the_backup_repository_is_reached_over_the_network() {
+    case "$1" in
+        s3:*|sftp:*|rest:*|b2:*|azure:*|gs:*|swift:*|rclone:*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+sftp_host_of() {
+    local address=${1#sftp:}
+    address=${address#//}
+    address=${address#*@}
+    address=${address%%[:/]*}
+    printf '%s' "$address"
+}
+
+# The overlay gives files-backup a network with a gateway, and Docker cannot
+# narrow it to one destination: it is only added when the repository needs it.
+write_the_settings_a_backup_over_the_network_needs() {
+    local local_file=$1 repository compose_files ssh_dir host
+
+    repository=$(env_get "$local_file" BACKUP_FILES_REPOSITORY 2>/dev/null || true)
+    compose_files=$(env_get "$local_file" COMPOSE_FILE 2>/dev/null || true)
+    [[ -n "$compose_files" ]] || compose_files=$(release_declares COMPOSE_FILE || echo "compose.yaml")
+
+    if ! the_backup_repository_is_reached_over_the_network "$repository"; then
+        case "$compose_files" in
+            *:compose.backup-network.yaml*)
+                env_set "$local_file" COMPOSE_FILE "${compose_files//:compose.backup-network.yaml/}"
+                log_info "The backup service has no way off this machine again" ;;
+        esac
+        return 0
+    fi
+
+    if [[ -n "$(env_get "$local_file" BACKUP_FILES_DESTINATION 2>/dev/null || true)" ]]; then
+        log_error "BACKUP_FILES_DESTINATION and BACKUP_FILES_REPOSITORY both say where the backup goes."
+        log_error ""
+        log_error "Keep one of them in $(settings_directory "$INSTALL_DIR/.env")/local.env: a disk the host"
+        log_error "mounts, or ${repository%%:*} over the network."
+        exit 1
+    fi
+
+    case "$compose_files" in
+        *compose.backup-network.yaml*) ;;
+        *) env_set "$local_file" COMPOSE_FILE "${compose_files}:compose.backup-network.yaml" ;;
+    esac
+    ssh_dir=$(env_get "$local_file" BACKUP_FILES_SSH_DIR 2>/dev/null || true)
+    if [[ -z "$ssh_dir" ]]; then
+        ssh_dir="$(settings_directory "$INSTALL_DIR/.env")/backup-ssh"
+        env_set "$local_file" BACKUP_FILES_SSH_DIR "$ssh_dir"
+    fi
+    install -d -m 700 "$ssh_dir"
+    log_warn "The backup service can now reach the network, to send to ${repository%%:*}."
+
+    [[ "$repository" == sftp:* ]] || return 0
+    host=$(sftp_host_of "$repository")
+    if [[ ! -s "$ssh_dir/known_hosts" ]] || ! grep -q "$host" "$ssh_dir/known_hosts"; then
+        log_warn "  But no host key is pinned for ${host}, so every backup will be refused."
+        log_warn "  Check the fingerprint with whoever runs ${host}, then:"
+        log_warn "    ssh-keyscan ${host} | sudo tee ${ssh_dir}/known_hosts"
+    fi
+    if [[ ! -s "$ssh_dir/id_ed25519" ]]; then
+        log_warn "  And no key to log in with. Make one, and give ${host} its public half:"
+        log_warn "    sudo ssh-keygen -t ed25519 -N '' -f ${ssh_dir}/id_ed25519"
+    fi
+}
+
 INTERNAL_INFERENCE_HOST=""
 
 # The release points VLLM_LLM_BASE_URL at nim-llm, a service on this machine's
@@ -940,6 +1006,7 @@ step_configure() {
 
     $NO_GPU && write_the_settings_a_machine_without_an_accelerator_needs "$local_file"
     write_the_settings_a_backup_destination_needs "$local_file"
+    write_the_settings_a_backup_over_the_network_needs "$local_file"
 
     render_settings "$env_file" "$local_file"
     generate_database_credentials "$env_file" "$local_file"

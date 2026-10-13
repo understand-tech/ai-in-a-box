@@ -195,7 +195,8 @@ installer again:
 
 ```bash
 echo 'BACKUP_FILES_DESTINATION="/mnt/appliance-backup"' | sudo tee -a /etc/understandtech/local.env
-sudo ut-install
+sudo ut-install --skip-pull
+docker compose up -d
 ```
 
 The installer refuses a directory on this machine's own disk, the root one or
@@ -215,11 +216,9 @@ later runs copy only what changed. The database archives stay on the machine as
 well, where they always were.
 
 To keep the backup on the machine again, empty `BACKUP_FILES_DESTINATION` and
-run `sudo ut-install` once more.
+run both commands once more.
 
 #### To S3 or SFTP
-
-Three settings change it:
 
 ```bash
 BACKUP_FILES_REPOSITORY="s3:https://s3.eu-west-3.amazonaws.com/your-bucket/appliance"
@@ -227,30 +226,54 @@ BACKUP_FILES_S3_KEY_ID="AKIA..."
 BACKUP_FILES_S3_SECRET="..."
 ```
 
-Any S3-compatible endpoint works — AWS, MinIO, Scaleway, OVH. For SFTP instead,
-give `BACKUP_FILES_REPOSITORY="sftp:user@host:/path"` and put the key where the
-container can read it.
+Any S3-compatible endpoint works — AWS, MinIO, Scaleway, OVH. For SFTP, give
+`BACKUP_FILES_REPOSITORY="sftp:backup@nas.example:/appliance"` instead. Then run
+the installer again:
 
 ```bash
-docker compose up -d files-backup
-docker compose logs -f files-backup
+sudo ut-install --skip-pull
+docker compose up -d
 ```
 
-The first run initialises the repository and uploads everything; later runs send
+**This gives the backup service a way off the machine.** It is the one service
+that reads every document, and Docker cannot narrow its network to the
+destination: it can reach whatever the host can. The installer adds that network
+only when the repository is S3 or SFTP, and takes it away when it is not. A disk
+the host mounts, above, needs none. Name one destination only: given both, the
+installer stops.
+
+**SFTP needs two files**, in `/etc/understandtech/backup-ssh`, which the
+installer creates and the service reads as root's `.ssh`:
+
+```bash
+sudo ssh-keygen -t ed25519 -N '' -f /etc/understandtech/backup-ssh/id_ed25519
+ssh-keyscan nas.example | sudo tee /etc/understandtech/backup-ssh/known_hosts
+```
+
+Give `id_ed25519.pub` to the account on the server. **Check the fingerprint
+`ssh-keyscan` printed with whoever runs that server before you keep it**: the
+backup trusts that key and no other, and refuses to connect when the server's
+key changes. Until both files are there, every backup is refused, and the
+installer says so.
+
+The first run creates the repository and uploads everything; later runs send
 only what changed. Check it arrived:
 
 ```bash
 docker exec ut-files-backup restic snapshots
 ```
 
+When the destination does not answer, or when `BACKUP_FILES_PASSWORD` does not
+open the repository there, the backup writes nothing and says which, by name, in
+its log:
+
+```bash
+docker compose logs files-backup | grep -E 'cannot reach|does not open'
+```
+
 **Keep `BACKUP_FILES_PASSWORD` somewhere else than the machine.** It encrypts
 the repository, so a remote copy is worth nothing without it — and a remote copy
 is exactly what you reach for when the machine is gone.
-
-What this covers, verified end to end on every push by
-`the_backup_round_trips_through_an_s3_endpoint`: the documents, and the certificate
-authority's root, backed up to an S3 endpoint and restored from that endpoint
-alone, path by path and checksum by checksum.
 
 ### Load
 

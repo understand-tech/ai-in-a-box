@@ -17,10 +17,23 @@ if [ -n "${BACKUP_DESTINATION_MARKER:-}" ] && [ ! -e "$BACKUP_DESTINATION_MARKER
     exit 1
 fi
 
-restic snapshots >/dev/null 2>&1 || {
-    log "initialising repository at ${RESTIC_REPOSITORY}"
-    restic init
-}
+# restic 0.18 exits 10 when there is no repository and 12 when the password
+# does not open it; anything else non-zero is a destination it cannot reach.
+status=0
+reason=$(restic cat config 2>&1 >/dev/null) || status=$?
+case "$status" in
+    0) ;;
+    10)
+        log "initialising repository at ${RESTIC_REPOSITORY}"
+        restic init ;;
+    12)
+        log "BACKUP_FILES_PASSWORD does not open the repository at ${RESTIC_REPOSITORY}, nothing written"
+        exit 1 ;;
+    *)
+        log "cannot reach the repository at ${RESTIC_REPOSITORY}, nothing written"
+        printf '%s\n' "$reason"
+        exit 1 ;;
+esac
 
 # A running database's files copied while it writes restore into a corrupt
 # state. The App Builder starts one MongoDB per generated app under
