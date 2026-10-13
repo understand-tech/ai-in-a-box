@@ -1179,7 +1179,7 @@ container_health_lines() {
 # existed then behaves exactly as it did, which is what an installed machine
 # replaying ut-install expects.
 role_is_waited_for() {
-    [[ "$1" != "inference" ]]
+    [[ "$1" != "inference" && "$1" != "backup" ]]
 }
 
 step_wait_healthy() {
@@ -1189,12 +1189,13 @@ step_wait_healthy() {
     log "     Waiting up to $((HEALTH_TIMEOUT / 60)) minutes for everything else."
 
     local deadline=$(( SECONDS + HEALTH_TIMEOUT ))
-    local pending loading failed name status health role line
+    local pending loading failed backup name status health role line
 
     while (( SECONDS < deadline )); do
         pending=""
         loading=""
         failed=""
+        backup=""
         while IFS='|' read -r name status health role; do
             [[ -n "$name" ]] || continue
             name=${name#/}
@@ -1204,6 +1205,8 @@ step_wait_healthy() {
             esac
             if role_is_waited_for "$role"; then
                 pending+="  ${name}: ${status}/${health}"$'\n'
+            elif [[ "$role" == "backup" ]]; then
+                backup+="  ${name}: ${status}/${health}"$'\n'
             elif [[ "$health" == "starting" ]]; then
                 loading+="  ${name}: ${status}/${health}"$'\n'
             else
@@ -1215,6 +1218,7 @@ step_wait_healthy() {
             printf '\r\033[K'
             log_info "The platform is ready"
             report_inference_still_loading "$loading"
+            report_backup_not_working "$backup"
             report_inference_that_failed "$failed" && return 0
             return 1
         fi
@@ -1249,6 +1253,25 @@ report_inference_still_loading() {
     log "     Inference is not ready yet, and the platform does not wait for it:"
     printf '%s' "$loading" | while IFS= read -r line; do [[ -n "$line" ]] && log "  ${line# }"; done
     log "     Follow it with: cd ${INSTALL_DIR} && sudo docker compose ps"
+}
+
+# A destination that is not mounted, does not answer or does not open with this
+# machine's password held the install for an hour before; the users do not need
+# the backup to start working, the operator needs to know it does not.
+report_backup_not_working() {
+    local backup=$1 line name reason
+    [[ -n "$backup" ]] || return 0
+    log_warn ""
+    log_warn "The backup is not working yet, and the platform does not wait for it:"
+    printf '%s' "$backup" | while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        log_warn "  ${line# }"
+        name=${line#  }
+        name=${name%%:*}
+        reason=$(docker logs --tail 20 "$name" 2>&1 | grep -F '[files-backup]' | tail -1)
+        [[ -z "$reason" ]] || log_warn "    ${reason#*\[files-backup\] }"
+    done
+    log_warn "  cd ${INSTALL_DIR} && docker compose logs files-backup mongodb-backup"
 }
 
 # Saying "still loading" about a container that has already failed would be the

@@ -763,6 +763,10 @@ fi
         "the default destination adds no way out" \
         "sed -i.bak 's#^        s3:\*|sftp:\*|.*#        *) return 0 ;;#' ut-install"
 
+    capability_discriminates "a backup that does not work holding the install back" \
+        "does not hold the install back" \
+        "sed -i.bak 's/ \\&\\& \"\\\$1\" != \"backup\"//' ut-install"
+
     install_walk_discriminates "two backup destinations let through" \
         "naming two destinations stops the install" \
         "sed -i.bak '/both say where the backup goes/,/exit 1/ s/exit 1/:/' ut-install"

@@ -307,6 +307,20 @@ an_inference_engine_that_failed_is_not_a_success() {
     return 1
 }
 
+a_backup_that_does_not_work_does_not_hold_the_install_back() {
+    local report
+    report=$(installer_wait_over '/ut-caddy|running|healthy|control-plane
+/ut-files-backup|running|unhealthy|backup
+/ut-mongodb-backup|running|starting|backup
+')
+    grep -q 'The platform is ready' <<< "$report" \
+        && grep -q 'The backup is not working yet' <<< "$report" \
+        && grep -q 'ut-files-backup' <<< "$report" \
+        && grep -q 'ut-mongodb-backup' <<< "$report" && return 0
+    echo "$report"
+    return 1
+}
+
 the_wait_names_what_is_late() {
     local report
     report=$(installer_wait_over '/ut-mongodb|running|starting|control-plane
@@ -1354,6 +1368,8 @@ if [[ -x "$REPO_ROOT/ut-install" ]]; then
         an_inference_engine_that_failed_is_not_a_success
     capability "the wait names what is late, not just how many" \
         the_wait_names_what_is_late
+    capability "a backup that does not work yet does not hold the install back, and is named" \
+        a_backup_that_does_not_work_does_not_hold_the_install_back
 
     if command -v python3 >/dev/null 2>&1; then
         capability "the address typed at the prompt is the one it takes" \
