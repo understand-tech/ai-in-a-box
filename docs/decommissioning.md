@@ -48,7 +48,8 @@ docker compose down
 
 `--uninstall` removes the boot service, the hourly status check and the mDNS
 publisher. Without it the machine republishes its names at the next reboot and
-answers for an appliance that is no longer meant to exist.
+answers for an appliance that is no longer meant to exist. It keeps the
+publisher's alias list, `/etc/default/ut-mdns-alias`, which step 4 removes.
 
 `down` stops and removes the containers and the networks. **It does not remove
 the volumes** — that is step 4.
@@ -62,6 +63,7 @@ sudo apt-get purge understandtech
 
 sudo rm -rf /etc/understandtech            # settings and every secret
 sudo rm -rf /var/lib/understandtech        # documents, generated apps, the CA root
+sudo rm -f /etc/default/ut-mdns-alias      # the alias list --uninstall keeps
 
 docker volume rm ut-mongodb-data ut-mongodb-backup ut-uploads-data \
                  ut-redis-data ut-caddy-data ut-caddy-config
@@ -98,10 +100,15 @@ docker network rm proxy
 Destroying the appliance destroys nothing held elsewhere. Deal with each
 deliberately:
 
-- **The offsite `restic` repository**, if `BACKUP_FILES_S3_KEY_ID` was set. It
-  holds the databases, the documents and the authority's root, encrypted. Delete
-  the bucket contents, or keep them and keep the password with them — an
-  unreadable backup you cannot delete is worse than no backup.
+- **The off-machine `restic` repository**, if a destination was named:
+  `BACKUP_FILES_DESTINATION`, a disk the host mounts, or
+  `BACKUP_FILES_REPOSITORY`, an S3 bucket or an SFTP server. It holds the
+  databases, the documents and both certificate authorities, encrypted. Delete
+  it, or keep it and keep the password with it — an unreadable backup you cannot
+  delete is worse than no backup.
+- **The key an SFTP server trusts.** The private key goes with
+  `/etc/understandtech`, unless `BACKUP_FILES_SSH_DIR` put it elsewhere; its
+  public key stays in the server's `authorized_keys` until it is removed there.
 - **The registry token.** Have it revoked; it is per-deployment.
 - **The DNS records.** Six names, plus `*.apps.` if the App Builder was on.
 - **The identity provider's application registration**, and the redirect URI
@@ -114,6 +121,7 @@ deliberately:
 docker ps -a | grep ut-          # nothing
 docker volume ls | grep ut-      # nothing
 ls /etc/understandtech /var/lib/understandtech   # both gone
+ls /etc/default/ut-mdns-alias                    # gone
 systemctl status understandtech ut-mdns-alias    # both gone
 ```
 
