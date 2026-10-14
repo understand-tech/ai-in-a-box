@@ -366,6 +366,13 @@ write_package_probe() {
     cat > "$WORK_DIR/package-probe.sh" <<'PROBE'
 set -u
 export OUT_DIR=/out
+# The package is under test here, not the compiler: stand-ins take the place of
+# the two ut-send builds, so this suite needs no Go.
+export UT_SEND_BUILDS=/ut-send-builds
+mkdir -p "$UT_SEND_BUILDS"
+for arch in arm64 amd64; do
+    printf '#!/bin/sh\necho %s\n' "$arch" > "$UT_SEND_BUILDS/ut-send-linux-$arch"
+done
 /src/packaging/build-deb.sh 2026.09.1 >/dev/null
 /src/packaging/build-deb.sh 2026.09.2 >/dev/null
 
@@ -399,6 +406,8 @@ dpkg -i --force-depends /out/understandtech_2026.09.1_all.deb >/dev/null 2>&1
 say INSTALLED_VERSION "$(dpkg-query -W -f='${Version}' understandtech 2>/dev/null)"
 say RELEASE_FILE      "$(present_file /usr/share/understandtech/compose.yaml)"
 say COMMAND           "$([ -x /usr/bin/ut-install ] && echo present || echo gone)"
+say UT_SEND           "$([ -x /usr/bin/ut-send ] && [ -x /usr/lib/understandtech/ut-send-linux-arm64 ] \
+    && [ -x /usr/lib/understandtech/ut-send-linux-amd64 ] && echo both || echo missing)"
 say CONFIG_DIR_MODE   "$(stat -c '%a' /etc/understandtech 2>/dev/null)"
 say DATA_DIR          "$(present_dir /var/lib/understandtech)"
 say SETTINGS_SHIPPED  "$(dpkg -L understandtech | grep -c '^/etc/understandtech/.' || true)"
@@ -1413,6 +1422,8 @@ if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
         reports SIZE_FREE_OF_THE_FILESYSTEM yes
     capability "the release installs as a package, in its own place" \
         the_release_installs_to_its_own_place
+    capability "it carries ut-send for both architectures it serves" \
+        reports UT_SEND both
     capability "the settings directory is prepared, and the package puts nothing in it" \
         the_settings_directory_is_prepared_but_never_filled
     capability "the settings are read from where the release lives" \

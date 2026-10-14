@@ -30,6 +30,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: ./test/invariants.sh
 
+  # ut-send is the one compiled tool: vetted, tested, formatted, and built for
+  # both architectures the package carries, so a release cannot fail to compile.
+  ut-send:
+    name: ut-send builds and passes its tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go vet ./...
+      - run: go test ./...
+      - run: test -z "$(gofmt -l .)"
+      - run: ./packaging/build-ut-send.sh
+
   capabilities:
     name: capabilities${{ matrix.suffix }}
     runs-on: ${{ matrix.runner }}

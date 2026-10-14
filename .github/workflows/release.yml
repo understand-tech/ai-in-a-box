@@ -37,6 +37,14 @@ jobs:
       - name: A fresh install, walked
         run: ./test/fresh-install.sh
 
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build ut-send for both architectures
+        run: ./packaging/build-ut-send.sh
+
       - name: Build the package
         run: ./packaging/build-deb.sh "$VERSION"
 

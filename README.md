@@ -84,8 +84,10 @@ appliance. Change it and all six follow.
 | `ut-certificate` | Obtains and renews a publicly trusted certificate by DNS-01, so nothing has to be installed on user machines |
 | `ut-verify` | Checks a package's signature offline, for a machine with no network — `dpkg` verifies nothing on its own |
 | `ut-report` | Writes how loaded the engines were and how many people they served, hour by hour, for the operator to pass on. Sends nothing |
+| `ut-send`, `cmd/ut-send/` | Will send the usage reports this machine writes, once its operator agrees to. For now it only says it is off. Written in Go, standard library only: `go vet ./... && go test ./...` |
 | `metrics/prometheus.yml` | What the `metrics` service keeps of the engines' counters, and of the gateway's and the LLM service's per-request measures |
 | `packaging/build-deb.sh` | Builds the Debian package: release in `/usr/share`, settings in `/etc`, data in `/var/lib` |
+| `packaging/build-ut-send.sh` | Compiles `ut-send` for arm64 and amd64, the same bytes every time; run it before `packaging/build-deb.sh` |
 | `packaging/pin-images.sh` | Rewrites every image in `release.env` as `name:tag@sha256:…`, so a version names one exact image and not whatever the tag points at today. `--check` reports without changing anything |
 | `packaging/release-bom.sh` | Writes what a release is made of, as CycloneDX: one component per image, named by digest. Reads `release.env` and nothing else — no registry, no pull |
 | `appbuilder/traefik/` | Static routing config for the App Builder's per-app router |
