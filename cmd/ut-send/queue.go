@@ -106,5 +106,5 @@ func enqueue(dir, kind string, content []byte, now time.Time) error {
 		}
 		created = created.Add(time.Nanosecond)
 	}
-	return writeWhole(filepath.Join(dir, itemName(created, kind)), content)
+	return writeWhole(filepath.Join(dir, itemName(created, kind)), content, 0o600)
 }

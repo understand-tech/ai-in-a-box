@@ -20,6 +20,7 @@ type answers struct {
 	receiver     string
 	tokenFile    string
 	receiverCert string
+	everyMinutes int
 }
 
 func parseConfigure(args []string, stderr io.Writer) (answers, error) {
@@ -30,6 +31,7 @@ func parseConfigure(args []string, stderr io.Writer) (answers, error) {
 	flags.StringVar(&given.receiver, "receiver", "", "https address of the receiver")
 	flags.StringVar(&given.tokenFile, "token-file", "", "file holding this machine's token")
 	flags.StringVar(&given.receiverCert, "receiver-cert", "", "the receiver's certificate, in PEM")
+	flags.IntVar(&given.everyMinutes, "every", 0, "minutes between two sends")
 	if err := flags.Parse(args); err != nil {
 		return answers{}, err
 	}
@@ -38,6 +40,11 @@ func parseConfigure(args []string, stderr io.Writer) (answers, error) {
 	}
 	if given.consent != "yes" && given.consent != "no" {
 		return answers{}, errors.New("--consent must be yes or no: nothing is sent unless someone said yes")
+	}
+	everyGiven := false
+	flags.Visit(func(f *flag.Flag) { everyGiven = everyGiven || f.Name == "every" })
+	if everyGiven && (given.everyMinutes < 1 || given.everyMinutes > maxEveryMinutes) {
+		return answers{}, fmt.Errorf("--every must be between 1 and %d minutes", maxEveryMinutes)
 	}
 	return given, nil
 }
@@ -101,16 +108,19 @@ func decide(current Settings, given answers) (Settings, error) {
 			return Settings{}, err
 		}
 	}
+	if given.everyMinutes != 0 {
+		next.EveryMinutes = given.everyMinutes
+	}
 	return next, nil
 }
 
-func configure(args []string, path string, stdout, stderr io.Writer) int {
+func configure(args []string, place Place, run Runner, stdout, stderr io.Writer) int {
 	given, err := parseConfigure(args, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, "ut-send configure:", err)
 		return 2
 	}
-	current, _, err := loadSettings(path)
+	current, _, err := loadSettings(place.Settings)
 	if err != nil {
 		fmt.Fprintln(stderr, "ut-send configure: the settings in place cannot be read:", err)
 		return 1
@@ -120,10 +130,19 @@ func configure(args []string, path string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "ut-send configure:", err)
 		return 1
 	}
-	if err := saveSettings(path, next); err != nil {
+	if err := saveSettings(place.Settings, next); err != nil {
 		fmt.Fprintln(stderr, "ut-send configure:", err)
 		return 1
 	}
 	fmt.Fprintln(stdout, describe(next, true))
+	if next.Consent == "yes" {
+		err = schedule(place, run, next.every())
+	} else {
+		err = errors.Join(unschedule(place, run), os.RemoveAll(queueDir(place.State)))
+	}
+	if err != nil {
+		fmt.Fprintln(stderr, "ut-send configure: the answer is kept, but the timer could not follow it:", err)
+		return 1
+	}
 	return 0
 }

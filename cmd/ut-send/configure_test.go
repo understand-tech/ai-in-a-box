@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -50,66 +49,58 @@ func tokenFile(t *testing.T, content string) string {
 	return path
 }
 
-func send(t *testing.T, config string, args ...string) (int, string) {
-	t.Helper()
-	var out bytes.Buffer
-	code := run(args, config, &out, &out)
-	return code, out.String()
-}
-
-func statusOf(t *testing.T, config string) string {
-	t.Helper()
-	_, out := send(t, config, "status")
+func statusOf(b *box) string {
+	_, out := b.call("status")
 	decision, _, _ := strings.Cut(out, "\n")
 	return decision
 }
 
 func TestNothingIsDecidedUntilSomeoneAnswers(t *testing.T) {
-	config := filepath.Join(t.TempDir(), "reporting.json")
-	if got := statusOf(t, config); got != "Reporting: not decided" {
+	b := newBox(t, nil)
+	if got := statusOf(b); got != "Reporting: not decided" {
 		t.Fatalf("status = %q", got)
 	}
 }
 
 func TestANoIsKeptAndSendsNothing(t *testing.T) {
-	config := filepath.Join(t.TempDir(), "reporting.json")
-	if code, out := send(t, config, "configure", "--consent", "no"); code != 0 {
+	b := newBox(t, nil)
+	if code, out := b.call("configure", "--consent", "no"); code != 0 {
 		t.Fatalf("exit %d: %s", code, out)
 	}
-	if got := statusOf(t, config); got != "Reporting: off" {
+	if got := statusOf(b); got != "Reporting: off" {
 		t.Fatalf("status = %q", got)
 	}
 }
 
 func TestConfigureRefusesToGuessTheAnswer(t *testing.T) {
-	config := filepath.Join(t.TempDir(), "reporting.json")
+	b := newBox(t, nil)
 	for _, args := range [][]string{
 		{"configure"},
 		{"configure", "--consent", "maybe"},
 		{"configure", "--consent", "Yes"},
 	} {
-		if code, _ := send(t, config, args...); code != 2 {
+		if code, _ := b.call(args...); code != 2 {
 			t.Fatalf("%v: exit %d, want 2", args, code)
 		}
 	}
-	if _, err := os.Stat(config); !os.IsNotExist(err) {
+	if _, err := os.Stat(b.place.Settings); !os.IsNotExist(err) {
 		t.Fatalf("a refused answer wrote the settings: %v", err)
 	}
 }
 
 func TestAYesWithEverythingSendsToTheReceiver(t *testing.T) {
-	config := filepath.Join(t.TempDir(), "reporting.json")
-	code, out := send(t, config, "configure", "--consent", "yes",
+	b := newBox(t, nil)
+	code, out := b.call("configure", "--consent", "yes",
 		"--receiver", "https://receiver.example.test:8444",
 		"--token-file", tokenFile(t, token+"\n"),
 		"--receiver-cert", receiverCertificate(t))
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, out)
 	}
-	if got := statusOf(t, config); got != "Reporting: on, to receiver.example.test:8444" {
+	if got := statusOf(b); got != "Reporting: on, to receiver.example.test:8444, every 15 minutes" {
 		t.Fatalf("status = %q", got)
 	}
-	info, err := os.Stat(config)
+	info, err := os.Stat(b.place.Settings)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,24 +113,24 @@ func TestAYesWithEverythingSendsToTheReceiver(t *testing.T) {
 }
 
 func TestTheReceiverCanBeGivenAfterTheYes(t *testing.T) {
-	config := filepath.Join(t.TempDir(), "reporting.json")
-	send(t, config, "configure", "--consent", "yes")
-	if got := statusOf(t, config); got != "Reporting: on, waiting for the receiver's address, token and certificate" {
+	b := newBox(t, nil)
+	b.call("configure", "--consent", "yes")
+	if got := statusOf(b); got != "Reporting: on, waiting for the receiver's address, token and certificate" {
 		t.Fatalf("status = %q", got)
 	}
-	send(t, config, "configure", "--consent", "yes", "--receiver", "https://receiver.example.test:8444")
-	send(t, config, "configure", "--consent", "yes", "--token-file", tokenFile(t, token), "--receiver-cert", receiverCertificate(t))
-	if got := statusOf(t, config); got != "Reporting: on, to receiver.example.test:8444" {
+	b.call("configure", "--consent", "yes", "--receiver", "https://receiver.example.test:8444")
+	b.call("configure", "--consent", "yes", "--token-file", tokenFile(t, token), "--receiver-cert", receiverCertificate(t))
+	if got := statusOf(b); got != "Reporting: on, to receiver.example.test:8444, every 15 minutes" {
 		t.Fatalf("status = %q", got)
 	}
 }
 
 func TestANoForgetsTheToken(t *testing.T) {
-	config := filepath.Join(t.TempDir(), "reporting.json")
-	send(t, config, "configure", "--consent", "yes", "--receiver", "https://receiver.example.test:8444",
+	b := newBox(t, nil)
+	b.call("configure", "--consent", "yes", "--receiver", "https://receiver.example.test:8444",
 		"--token-file", tokenFile(t, token), "--receiver-cert", receiverCertificate(t))
-	send(t, config, "configure", "--consent", "no")
-	content, err := os.ReadFile(config)
+	b.call("configure", "--consent", "no")
+	content, err := os.ReadFile(b.place.Settings)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +140,7 @@ func TestANoForgetsTheToken(t *testing.T) {
 }
 
 func TestDetailsThatCannotWorkAreRefused(t *testing.T) {
-	config := filepath.Join(t.TempDir(), "reporting.json")
+	b := newBox(t, nil)
 	cases := map[string][]string{
 		"plain http":         {"--receiver", "http://receiver.example.test:8444"},
 		"no host":            {"--receiver", "https://"},
@@ -161,11 +152,11 @@ func TestDetailsThatCannotWorkAreRefused(t *testing.T) {
 	}
 	for name, extra := range cases {
 		args := append([]string{"configure", "--consent", "yes"}, extra...)
-		if code, _ := send(t, config, args...); code == 0 {
+		if code, _ := b.call(args...); code == 0 {
 			t.Errorf("%s: accepted", name)
 		}
 	}
-	if _, err := os.Stat(config); !os.IsNotExist(err) {
+	if _, err := os.Stat(b.place.Settings); !os.IsNotExist(err) {
 		t.Fatalf("refused details wrote the settings: %v", err)
 	}
 }

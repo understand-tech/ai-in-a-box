@@ -5,6 +5,7 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_SHARE_DIR="/usr/share/understandtech"
 INSTALL_DIR="${UT_INSTALL_DIR:-}"
+UT_SEND="${UT_SEND:-ut-send}"
 
 if [[ -t 1 ]]; then
     RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'; BOLD=$'\033[1m'; NC=$'\033[0m'
@@ -85,6 +86,23 @@ available_memory() {
     awk '/^MemAvailable:/ { printf "%d", $2 * 1024; found = 1 } END { if (!found) printf "null" }' /proc/meminfo 2>/dev/null || printf 'null'
 }
 
+# Said, never counted against the install: sending reports is the customer's
+# choice, and a platform that serves does so whether they go out or not.
+say_how_reports_go() {
+    local line
+    if ! command -v "$UT_SEND" >/dev/null 2>&1; then
+        log_info "ut-send is not installed here — no usage reports go out"
+        return 0
+    fi
+    while IFS= read -r line; do
+        line=${line#  }
+        case "$line" in
+            *"no timer runs it"*|*"last problem"*|*"token revoked"*|*"cannot be read"*) log_warn "$line" ;;
+            *) log_info "$line" ;;
+        esac
+    done < <("$UT_SEND" status 2>&1)
+}
+
 keep_the_verdict() {
     local verdict=$1 data_root history
     data_root=$(env_get "$INSTALL_DIR/.env" DATA_ROOT || true)
@@ -149,6 +167,9 @@ main() {
     else
         log_info "served by this machine"
     fi
+
+    log_step "Usage reports"
+    say_how_reports_go
 
     printf '\n'
     if (( failing )); then

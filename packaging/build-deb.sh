@@ -194,6 +194,14 @@ set -e
 # /etc/understandtech and /var/lib/understandtech are deliberately left behind:
 # they hold the customer's settings and data, which removing a package must not
 # take with it.
+
+# The timer ut-send configure set up would go on calling a program that is gone.
+# An upgrade keeps it: the new ut-send sits at the same path.
+if [ "$1" = remove ] && [ -e /etc/systemd/system/ut-send.timer ]; then
+    systemctl disable --now ut-send.timer >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/ut-send.timer /etc/systemd/system/ut-send.service
+    systemctl daemon-reload >/dev/null 2>&1 || true
+fi
 EOF
     chmod 755 "$root/DEBIAN/postinst" "$root/DEBIAN/prerm"
 }

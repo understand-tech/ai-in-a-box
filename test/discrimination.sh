@@ -367,6 +367,10 @@ if grep -q 'record_this_install' "$REPO_ROOT/ut-install"; then
     capability_discriminates "a status verdict nobody keeps" \
         "a status verdict is kept beside the installs" \
         "sed -i.bak '/keep_the_verdict \"/d' ut-status"
+
+    capability_discriminates "a timer that does not run, said as if all were well" \
+        "it says whether usage reports go out" \
+        "sed -i.bak 's/) log_warn \"\$line\" ;;/) log_info \"\$line\" ;;/' ut-status"
 fi
 
 if [[ -x "$REPO_ROOT/ut-report" ]]; then
@@ -507,6 +511,10 @@ if grep -q '^step_reporting()' "$REPO_ROOT/ut-install"; then
     capability_discriminates "an install stopped by reports it could not set up" \
         "reporting that cannot be set up does not stop the install" \
         "sed -i.bak 's|^    log_warn \"Usage reports could not be set up|    die \"Usage reports could not be set up|' ut-install"
+
+    capability_discriminates "a period the installer keeps to itself" \
+        "a period given to the installer reaches ut-send" \
+        "sed -i.bak '/--every \"\$REPORTING_EVERY\"/d' ut-install"
 fi
 
 if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
@@ -557,6 +565,14 @@ if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
     capability_discriminates "checksums left in the order the filesystem gave them" \
         "the checksums are written in one order" \
         "sed -i.bak 's/| LC_ALL=C sort -z | xargs -0 md5sum/| xargs -0 md5sum/' packaging/build-deb.sh"
+
+    capability_discriminates "a package upgrade that takes the reporting timer away" \
+        "an upgrade keeps the reporting timer" \
+        "sed -i.bak 's|^if \[ \"\$1\" = remove \]|if [ \"\$1\" != failed-upgrade ]|' packaging/build-deb.sh"
+
+    capability_discriminates "a package removal that leaves the reporting timer running" \
+        "an upgrade keeps the reporting timer" \
+        "sed -i.bak 's|^    systemctl disable --now ut-send.timer|    true|' packaging/build-deb.sh"
 
     capability_discriminates "a package that leaves ut-send's builds behind" \
         "it carries ut-send for both architectures" \

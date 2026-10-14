@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/url"
 	"os"
-	"path/filepath"
 	"time"
 )
 
@@ -14,6 +13,7 @@ const (
 	defaultInstall  = "/usr/share/understandtech"
 	defaultSettings = "/etc/understandtech/reporting.json"
 	defaultState    = "/var/lib/understandtech/reporting"
+	defaultUnits    = "/etc/systemd/system"
 	sendTimeout     = 30 * time.Second
 )
 
@@ -21,6 +21,8 @@ type Place struct {
 	Install  string
 	Settings string
 	State    string
+	Units    string
+	Self     string
 	Now      func() time.Time
 	Timeout  time.Duration
 }
@@ -30,9 +32,11 @@ const usage = `usage: ut-send <command>
   status      one line: whether this machine sends its usage reports, where,
               and how the last sends went
   configure   --consent yes|no [--receiver https://host:port] [--token-file path]
-              [--receiver-cert path]
+              [--receiver-cert path] [--every minutes]
               records the answer; details given with a yes are added to those
-              already kept, a no forgets all of them
+              already kept, a no forgets all of them. A yes starts a timer that
+              runs tick every 15 minutes, or as often as --every says; a no
+              removes it
   enqueue     report|usage <file>
               puts a copy of the file in line to be sent; refused without a yes
   collect     report: writes this machine's report — ut-report's, with the
@@ -42,6 +46,8 @@ const usage = `usage: ut-send <command>
               both refused without a yes
   send        sends what is in line, oldest first; what the receiver does not
               take stays in line for up to 7 days
+  tick        what the timer runs: collect usage, collect report once an hour,
+              then send
 `
 
 func describe(settings Settings, decided bool) string {
@@ -57,7 +63,7 @@ func describe(settings Settings, decided bool) string {
 	if err != nil {
 		return "Reporting: on, to an address that cannot be read"
 	}
-	return "Reporting: on, to " + address.Host
+	return fmt.Sprintf("Reporting: on, to %s, every %d minutes", address.Host, settings.every())
 }
 
 func describeSends(state State, waiting int, settings Settings) string {
@@ -79,13 +85,16 @@ func describeSends(state State, waiting int, settings Settings) string {
 	return line
 }
 
-func status(place Place, stdout, stderr io.Writer) int {
+func status(place Place, run Runner, stdout, stderr io.Writer) int {
 	settings, decided, err := loadSettings(place.Settings)
 	if err != nil {
 		fmt.Fprintln(stderr, "ut-send status: the settings cannot be read:", err)
 		return 1
 	}
 	fmt.Fprintln(stdout, describe(settings, decided))
+	if settings.Consent == "yes" && !scheduled(run) {
+		fmt.Fprintln(stdout, "  no timer runs it: nothing is collected or sent until ut-send configure --consent yes is given again")
+	}
 	if !settings.ready() {
 		return 0
 	}
@@ -197,6 +206,40 @@ func sendCommand(place Place, stdout, stderr io.Writer) int {
 	return 0
 }
 
+// What the timer runs. A step that fails does not hold back the next: a
+// recorder that is down still lets the hourly report and the sends go.
+func tickCommand(place Place, m machine, stdout, stderr io.Writer) int {
+	settings, _, err := loadSettings(place.Settings)
+	if err != nil {
+		fmt.Fprintln(stderr, "ut-send tick: the settings cannot be read:", err)
+		return 1
+	}
+	if settings.Consent != "yes" {
+		fmt.Fprintln(stdout, "ut-send tick: nobody said yes to sending reports; nothing to do")
+		return 0
+	}
+	failed := usageCommand(place, m, stdout, stderr) != 0
+	state, err := loadState(place.State)
+	if err != nil {
+		fmt.Fprintln(stderr, "ut-send tick: the state cannot be read:", err)
+		failed = true
+	} else if reportIsDue(state.LastReported, place.Now()) {
+		if collectCommand([]string{"report"}, place, m, stdout, stderr) != 0 {
+			failed = true
+		} else if err := markReported(place); err != nil {
+			fmt.Fprintln(stderr, "ut-send tick:", err)
+			failed = true
+		}
+	}
+	if sendCommand(place, stdout, stderr) != 0 {
+		failed = true
+	}
+	if failed {
+		return 1
+	}
+	return 0
+}
+
 func runIn(args []string, place Place, stdout, stderr io.Writer) int {
 	return runOn(args, place, machine{systemRunner, place.Install, statfsReader, containerOfProcess, ingressCertificate}, stdout, stderr)
 }
@@ -212,29 +255,21 @@ func runOn(args []string, place Place, m machine, stdout, stderr io.Writer) int 
 			fmt.Fprint(stderr, usage)
 			return 2
 		}
-		return status(place, stdout, stderr)
+		return status(place, m.run, stdout, stderr)
 	case "configure":
-		return configure(args[1:], place.Settings, stdout, stderr)
+		return configure(args[1:], place, m.run, stdout, stderr)
 	case "enqueue":
 		return enqueueCommand(args[1:], place, stderr)
 	case "collect":
 		return collectCommand(args[1:], place, m, stdout, stderr)
 	case "send":
 		return sendCommand(place, stdout, stderr)
+	case "tick":
+		return tickCommand(place, m, stdout, stderr)
 	default:
 		fmt.Fprint(stderr, usage)
 		return 2
 	}
-}
-
-func run(args []string, settings string, stdout, stderr io.Writer) int {
-	place := Place{
-		Settings: settings,
-		State:    filepath.Join(filepath.Dir(settings), "state"),
-		Now:      time.Now,
-		Timeout:  sendTimeout,
-	}
-	return runIn(args, place, stdout, stderr)
 }
 
 func fromEnvironment(name, fallback string) string {
@@ -245,10 +280,17 @@ func fromEnvironment(name, fallback string) string {
 }
 
 func main() {
+	self, err := os.Executable()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "ut-send: cannot tell where this program is:", err)
+		os.Exit(1)
+	}
 	place := Place{
 		Install:  fromEnvironment("UT_INSTALL_DIR", defaultInstall),
 		Settings: fromEnvironment("UT_SEND_SETTINGS", defaultSettings),
 		State:    fromEnvironment("UT_SEND_STATE", defaultState),
+		Units:    fromEnvironment("UT_SEND_UNITS", defaultUnits),
+		Self:     self,
 		Now:      time.Now,
 		Timeout:  sendTimeout,
 	}

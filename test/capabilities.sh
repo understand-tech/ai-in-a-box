@@ -274,6 +274,16 @@ reporting_that_fails_does_not_stop_the_install() {
     return 1
 }
 
+a_period_given_to_the_installer_reaches_ut_send() {
+    local probe report
+    probe=$(reporting_probe "Reporting: not decided")
+    report=$(installer_reporting "$probe" 'REPORTING_EVERY=5 step_reporting' UT_REPORTING=yes < /dev/null 2>&1)
+    [[ "$(cat "$probe/configure-call" 2>/dev/null)" == $'configure\n--consent\nyes\n--every\n5' ]] && return 0
+    echo "$report"
+    echo "ut-send was asked: $(tr '\n' ' ' < "$probe/configure-call" 2>/dev/null)"
+    return 1
+}
+
 an_address_given_up_front_is_taken_as_it_is() {
     local report
     report=$(installer_domain_decision box.example.com)
@@ -519,16 +529,22 @@ say TOKEN_ASKED_AGAIN "$(bash -c '
 
 mkdir -p /var/lib/understandtech/app-data
 echo document > /var/lib/understandtech/app-data/one
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> /systemctl-calls\n' > /usr/local/bin/systemctl
+chmod +x /usr/local/bin/systemctl
+mkdir -p /etc/systemd/system
+touch /etc/systemd/system/ut-send.timer /etc/systemd/system/ut-send.service
 
 dpkg -i --force-depends /out/understandtech_2026.09.2_all.deb >/dev/null 2>&1
 say UPGRADED_VERSION       "$(dpkg-query -W -f='${Version}' understandtech 2>/dev/null)"
 say SETTINGS_AFTER_UPGRADE "$(cat /etc/understandtech/.env 2>/dev/null || echo gone)"
 say RELEASE_AFTER_UPGRADE  "$(present_file /usr/share/understandtech/compose.yaml)"
+say TIMER_AFTER_UPGRADE    "$(present_file /etc/systemd/system/ut-send.timer)"
 
 dpkg --purge --force-depends understandtech >/dev/null 2>&1
 say RELEASE_AFTER_PURGE  "$(present_dir /usr/share/understandtech)"
 say SETTINGS_AFTER_PURGE "$(present_file /etc/understandtech/.env)"
 say DATA_AFTER_PURGE     "$(present_file /var/lib/understandtech/app-data/one)"
+say TIMER_AFTER_PURGE    "$(present_file /etc/systemd/system/ut-send.timer)$(grep -q '^disable --now ut-send.timer$' /systemctl-calls 2>/dev/null && echo ',stopped')"
 PROBE
 }
 
@@ -586,6 +602,11 @@ the_installed_command_takes_the_release_that_is_there() {
 
 a_registry_login_already_stored_is_not_asked_for_again() {
     reports TOKEN_ASKED_AGAIN no
+}
+
+an_upgrade_keeps_the_reporting_timer_and_removal_stops_it() {
+    reports TIMER_AFTER_UPGRADE present \
+        && reports TIMER_AFTER_PURGE gone,stopped
 }
 
 removing_the_package_leaves_the_settings_and_the_data() {
@@ -1497,6 +1518,8 @@ if grep -q '^step_reporting()' "$REPO_ROOT/ut-install"; then
         the_prompt_and_the_flags_hand_ut_send_the_same_thing
     capability "reporting that cannot be set up does not stop the install" \
         reporting_that_fails_does_not_stop_the_install
+    capability "a period given to the installer reaches ut-send" \
+        a_period_given_to_the_installer_reaches_ut_send
 fi
 
 if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
@@ -1526,6 +1549,8 @@ if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
         a_registry_login_already_stored_is_not_asked_for_again
     capability "removing the package leaves the settings and the data behind" \
         removing_the_package_leaves_the_settings_and_the_data
+    capability "an upgrade keeps the reporting timer, and removing the package stops it" \
+        an_upgrade_keeps_the_reporting_timer_and_removal_stops_it
     capability "every dependency it declares is one the shipped tools really call" \
         every_declared_dependency_is_really_used
 fi
@@ -1701,8 +1726,21 @@ a_status_verdict_is_kept_beside_the_installs() {
     return 1
 }
 
+ut_status_says_whether_reports_go_out() {
+    local probe output
+    probe=$(reporting_probe "Reporting: on, to receiver.example.test:8444, every 15 minutes
+  no timer runs it: nothing is collected or sent until ut-send configure --consent yes is given again")
+    output=$(UT_SEND="$probe/ut-send" "$REPO_ROOT/ut-status" --dir "$(history_probe)" 2>&1)
+    grep -q '\[ ok \] Reporting: on, to receiver.example.test:8444, every 15 minutes$' <<< "$output" \
+        && grep -q '\[warn\] no timer runs it' <<< "$output" && return 0
+    echo "$output"
+    return 1
+}
+
 if [[ -x "$REPO_ROOT/ut-status" ]]; then
     group "Telling whether an install serves"
+    capability "it says whether usage reports go out, and warns when nothing sends them" \
+        ut_status_says_whether_reports_go_out
     capability "a directory with no install is refused, not called healthy" \
         a_directory_with_no_install_is_refused
     capability "an install that was never configured is refused" \

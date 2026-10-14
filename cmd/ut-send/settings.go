@@ -12,10 +12,18 @@ type Settings struct {
 	Receiver     string `json:"receiver,omitempty"`
 	Token        string `json:"token,omitempty"`
 	ReceiverCert string `json:"receiver_cert,omitempty"`
+	EveryMinutes int    `json:"every_minutes,omitempty"`
 }
 
 func (s Settings) ready() bool {
 	return s.Consent == "yes" && s.Receiver != "" && s.Token != "" && s.ReceiverCert != ""
+}
+
+func (s Settings) every() int {
+	if s.EveryMinutes == 0 {
+		return defaultEveryMinutes
+	}
+	return s.EveryMinutes
 }
 
 func loadSettings(path string) (Settings, bool, error) {
@@ -41,5 +49,5 @@ func saveSettings(path string, settings Settings) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}
-	return writeWhole(path, append(content, '\n'))
+	return writeWhole(path, append(content, '\n'), 0o600)
 }
