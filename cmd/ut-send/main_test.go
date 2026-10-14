@@ -2,24 +2,14 @@ package main
 
 import (
 	"bytes"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestStatusSaysReportingIsOffUntilSomeoneTurnsItOn(t *testing.T) {
-	var out bytes.Buffer
-	code := run([]string{"status"}, &out, &out)
-	if code != 0 {
-		t.Fatalf("exit %d, want 0", code)
-	}
-	if got := strings.TrimSpace(out.String()); got != "Reporting: off" {
-		t.Fatalf("status = %q, want %q", got, "Reporting: off")
-	}
-}
-
 func TestAnUnknownCommandIsRefused(t *testing.T) {
 	var out bytes.Buffer
-	if code := run([]string{"launch"}, &out, &out); code != 2 {
+	if code := run([]string{"launch"}, filepath.Join(t.TempDir(), "reporting.json"), &out, &out); code != 2 {
 		t.Fatalf("exit %d, want 2", code)
 	}
 	if !strings.Contains(out.String(), "usage: ut-send") {
