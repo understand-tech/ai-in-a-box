@@ -10,12 +10,14 @@ import (
 )
 
 const (
+	defaultInstall  = "/usr/share/understandtech"
 	defaultSettings = "/etc/understandtech/reporting.json"
 	defaultState    = "/var/lib/understandtech/reporting"
 	sendTimeout     = 30 * time.Second
 )
 
 type Place struct {
+	Install  string
 	Settings string
 	State    string
 	Now      func() time.Time
@@ -32,6 +34,9 @@ const usage = `usage: ut-send <command>
               already kept, a no forgets all of them
   enqueue     report|usage <file>
               puts a copy of the file in line to be sent; refused without a yes
+  collect     writes this machine's report — ut-report's, with the health of
+              the stack and the use of each tool — and puts it in line;
+              refused without a yes
   send        sends what is in line, oldest first; what the receiver does not
               take stays in line for up to 7 days
 `
@@ -121,6 +126,38 @@ func enqueueCommand(args []string, place Place, stderr io.Writer) int {
 	return 0
 }
 
+func collectCommand(place Place, m machine, stderr io.Writer) int {
+	settings, _, err := loadSettings(place.Settings)
+	if err != nil {
+		fmt.Fprintln(stderr, "ut-send collect: the settings cannot be read:", err)
+		return 1
+	}
+	if settings.Consent != "yes" {
+		fmt.Fprintln(stderr, "ut-send collect: nobody said yes to sending reports; nothing is written")
+		return 1
+	}
+	if err := os.MkdirAll(place.State, 0o700); err != nil {
+		fmt.Fprintln(stderr, "ut-send collect:", err)
+		return 1
+	}
+	workDir, err := os.MkdirTemp(place.State, "collect-")
+	if err != nil {
+		fmt.Fprintln(stderr, "ut-send collect:", err)
+		return 1
+	}
+	defer os.RemoveAll(workDir)
+	report, err := collectReport(m, workDir)
+	if err != nil {
+		fmt.Fprintln(stderr, "ut-send collect:", err)
+		return 1
+	}
+	if err := enqueue(queueDir(place.State), "report", report, place.Now()); err != nil {
+		fmt.Fprintln(stderr, "ut-send collect:", err)
+		return 1
+	}
+	return 0
+}
+
 func sendCommand(place Place, stdout, stderr io.Writer) int {
 	settings, _, err := loadSettings(place.Settings)
 	if err != nil {
@@ -138,6 +175,10 @@ func sendCommand(place Place, stdout, stderr io.Writer) int {
 }
 
 func runIn(args []string, place Place, stdout, stderr io.Writer) int {
+	return runOn(args, place, machine{systemRunner, place.Install, statfsReader, containerOfProcess, ingressCertificate}, stdout, stderr)
+}
+
+func runOn(args []string, place Place, m machine, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usage)
 		return 2
@@ -153,6 +194,8 @@ func runIn(args []string, place Place, stdout, stderr io.Writer) int {
 		return configure(args[1:], place.Settings, stdout, stderr)
 	case "enqueue":
 		return enqueueCommand(args[1:], place, stderr)
+	case "collect":
+		return collectCommand(place, m, stderr)
 	case "send":
 		return sendCommand(place, stdout, stderr)
 	default:
@@ -180,6 +223,7 @@ func fromEnvironment(name, fallback string) string {
 
 func main() {
 	place := Place{
+		Install:  fromEnvironment("UT_INSTALL_DIR", defaultInstall),
 		Settings: fromEnvironment("UT_SEND_SETTINGS", defaultSettings),
 		State:    fromEnvironment("UT_SEND_STATE", defaultState),
 		Now:      time.Now,
