@@ -11,6 +11,8 @@ OUT_DIR="${OUT_DIR:-$REPO_ROOT/dist}"
 
 SHARE_DIR="usr/share/$PACKAGE"
 DOC_DIR="usr/share/doc/$PACKAGE"
+LIB_DIR="usr/lib/$PACKAGE"
+UT_SEND_BUILDS="${UT_SEND_BUILDS:-$REPO_ROOT/dist/ut-send}"
 CONFIG_DIR="etc/$PACKAGE"
 
 usage() {
@@ -22,8 +24,9 @@ build-deb.sh — builds the ${PACKAGE} Debian package.
 The version is the only argument. It has to be orderable by dpkg, so
 YYYY.MM.N reads the way it sorts.
 
-Writes to \$OUT_DIR (default: dist/). Needs dpkg-deb, so run it on Debian or
-in a container:
+Writes to \$OUT_DIR (default: dist/). Needs ut-send compiled first
+(packaging/build-ut-send.sh), and dpkg-deb, so run it on Debian or in a
+container:
 
   docker run --rm -v "\$PWD":/src -w /src debian:12-slim ./packaging/build-deb.sh 2026.09.1
 EOF
@@ -93,6 +96,19 @@ stage_commands() {
     install -m 755 "$REPO_ROOT/ut-verify" "$root/usr/bin/"
     install -m 755 "$REPO_ROOT/ut-status" "$root/usr/bin/"
     install -m 755 "$REPO_ROOT/ut-report" "$root/usr/bin/"
+    install -m 755 "$REPO_ROOT/ut-send" "$root/usr/bin/"
+}
+
+stage_ut_send_builds() {
+    local root=$1 arch
+    install -d "$root/$LIB_DIR"
+    for arch in arm64 amd64; do
+        [[ -f "$UT_SEND_BUILDS/ut-send-linux-$arch" ]] || {
+            echo "ut-send-linux-$arch is missing from $UT_SEND_BUILDS — run packaging/build-ut-send.sh first" >&2
+            exit 1
+        }
+        install -m 755 "$UT_SEND_BUILDS/ut-send-linux-$arch" "$root/$LIB_DIR/"
+    done
 }
 
 stage_documentation() {
@@ -209,6 +225,7 @@ main() {
     stage_release_files "$root"
     stamp_the_release_version "$root" "$VERSION"
     stage_commands "$root"
+    stage_ut_send_builds "$root"
     stage_documentation "$root"
     link_configuration_into_project_directory "$root"
     write_control "$root" "$VERSION"

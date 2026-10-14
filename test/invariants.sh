@@ -516,6 +516,16 @@ check_every_tool_ships() {
     done
 }
 
+# ut-send runs on machines that never reach the internet after delivery: a
+# module downloaded at build time is code nobody reviewed, shipped to all of them.
+check_ut_send_uses_only_the_standard_library() {
+    local module="$REPO_ROOT/go.mod"
+    [[ -f "$module" ]] || return 0
+    grep -qE '^[[:space:]]*require([[:space:]]|$)' "$module" || return 0
+    report "ut-send-dependency" \
+        "go.mod requires a module — ut-send is built from the standard library only, so the package ships no code we did not write"
+}
+
 check_images_are_pinned() {
     local key value
     while read -r key; do
@@ -739,6 +749,7 @@ main() {
     check_the_package_stamps_the_commit_it_was_built_from
     check_the_package_ships_what_the_stack_mounts
     check_every_tool_ships
+    check_ut_send_uses_only_the_standard_library
     check_images_are_pinned
     check_compose_images_are_pinned
     check_the_recorder_is_bounded

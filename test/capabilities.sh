@@ -200,6 +200,80 @@ installer_domain_decision() {
     ' _ "$REPO_ROOT"
 }
 
+# A stand-in ut-send: answers status with what it is given, records every
+# configure call one argument per line, and fails when told to.
+reporting_probe() {
+    local said=$1 configure_exit=${2:-0} probe
+    probe=$(mktemp -d "$WORK_DIR/reporting.XXXXXX")
+    cat > "$probe/ut-send" <<STANDIN
+#!/usr/bin/env bash
+if [[ "\$1" == status ]]; then echo "${said}"; exit 0; fi
+printf '%s\n' "\$@" > "$probe/configure-call"
+exit ${configure_exit}
+STANDIN
+    chmod +x "$probe/ut-send"
+    printf '%s' "$probe"
+}
+
+installer_reporting() {
+    local probe=$1 run=$2
+    shift 2
+    env UT_SEND="$probe/ut-send" UT_INSTALL_DIR="$probe" RUN="$run" "$@" bash -c '
+        set +u
+        source "$1/ut-install" >/dev/null 2>&1
+        set +eE
+        trap - ERR
+        terminal_is_reachable() { return 1; }
+        eval "$RUN"
+        echo "exit=$?"
+    ' _ "$REPO_ROOT"
+}
+
+no_answer_and_no_terminal_sends_nothing() {
+    local probe report
+    probe=$(reporting_probe "Reporting: not decided")
+    report=$(installer_reporting "$probe" step_reporting < /dev/null 2>&1)
+    [[ "$(cat "$probe/configure-call" 2>/dev/null)" == $'configure\n--consent\nno' ]] && return 0
+    echo "$report"
+    echo "ut-send was asked: $(tr '\n' ' ' < "$probe/configure-call" 2>/dev/null)"
+    return 1
+}
+
+an_answer_already_given_is_not_asked_again() {
+    local probe report
+    probe=$(reporting_probe "Reporting: off")
+    report=$(installer_reporting "$probe" step_reporting < /dev/null 2>&1)
+    [[ ! -e "$probe/configure-call" ]] && return 0
+    echo "it set the answer again: $(tr '\n' ' ' < "$probe/configure-call")"
+    return 1
+}
+
+the_prompt_and_the_flags_hand_ut_send_the_same_thing() {
+    local by_flags by_prompt
+    by_flags=$(reporting_probe "Reporting: not decided")
+    installer_reporting "$by_flags" step_reporting UT_REPORTING=yes < /dev/null >/dev/null 2>&1
+    installer_reporting "$by_flags" 'REPORTING=yes REPORTING_RECEIVER=https://receiver.example.test:8444 REPORTING_TOKEN_FILE=/root/token REPORTING_RECEIVER_CERT=/root/receiver.pem step_reporting' \
+        < /dev/null >/dev/null 2>&1
+    by_prompt=$(reporting_probe "Reporting: not decided")
+    printf '\nmaybe\nyes\nhttps://receiver.example.test:8444\n/root/token\n/root/receiver.pem\n' \
+        | installer_reporting "$by_prompt" 'ask_about_reporting && step_reporting' >/dev/null 2>&1
+    if [[ -s "$by_flags/configure-call" ]] && cmp -s "$by_flags/configure-call" "$by_prompt/configure-call"; then
+        return 0
+    fi
+    echo "flags:  $(tr '\n' ' ' < "$by_flags/configure-call" 2>/dev/null)"
+    echo "prompt: $(tr '\n' ' ' < "$by_prompt/configure-call" 2>/dev/null)"
+    return 1
+}
+
+reporting_that_fails_does_not_stop_the_install() {
+    local probe report
+    probe=$(reporting_probe "Reporting: not decided" 1)
+    report=$(installer_reporting "$probe" step_reporting UT_REPORTING=yes < /dev/null 2>&1)
+    grep -q '^exit=0$' <<< "$report" && grep -q 'could not be set up' <<< "$report" && return 0
+    echo "$report"
+    return 1
+}
+
 an_address_given_up_front_is_taken_as_it_is() {
     local report
     report=$(installer_domain_decision box.example.com)
@@ -366,6 +440,13 @@ write_package_probe() {
     cat > "$WORK_DIR/package-probe.sh" <<'PROBE'
 set -u
 export OUT_DIR=/out
+# The package is under test here, not the compiler: stand-ins take the place of
+# the two ut-send builds, so this suite needs no Go.
+export UT_SEND_BUILDS=/ut-send-builds
+mkdir -p "$UT_SEND_BUILDS"
+for arch in arm64 amd64; do
+    printf '#!/bin/sh\necho %s\n' "$arch" > "$UT_SEND_BUILDS/ut-send-linux-$arch"
+done
 /src/packaging/build-deb.sh 2026.09.1 >/dev/null
 /src/packaging/build-deb.sh 2026.09.2 >/dev/null
 
@@ -403,6 +484,8 @@ dpkg -i --force-depends /out/understandtech_2026.09.1_all.deb >/dev/null 2>&1
 say INSTALLED_VERSION "$(dpkg-query -W -f='${Version}' understandtech 2>/dev/null)"
 say RELEASE_FILE      "$(present_file /usr/share/understandtech/compose.yaml)"
 say COMMAND           "$([ -x /usr/bin/ut-install ] && echo present || echo gone)"
+say UT_SEND           "$([ -x /usr/bin/ut-send ] && [ -x /usr/lib/understandtech/ut-send-linux-arm64 ] \
+    && [ -x /usr/lib/understandtech/ut-send-linux-amd64 ] && echo both || echo missing)"
 say CONFIG_DIR_MODE   "$(stat -c '%a' /etc/understandtech 2>/dev/null)"
 say DATA_DIR          "$(present_dir /var/lib/understandtech)"
 say SETTINGS_SHIPPED  "$(dpkg -L understandtech | grep -c '^/etc/understandtech/.' || true)"
@@ -1404,6 +1487,18 @@ if [[ -x "$REPO_ROOT/packaging/release-bom.sh" ]]; then
         the_release_publishes_what_it_is_made_of
 fi
 
+if grep -q '^step_reporting()' "$REPO_ROOT/ut-install"; then
+    group "Asking before sending usage reports"
+    capability "with no answer and no terminal to ask on, nothing is sent" \
+        no_answer_and_no_terminal_sends_nothing
+    capability "an answer given once is not asked for again" \
+        an_answer_already_given_is_not_asked_again
+    capability "the prompt and the options hand ut-send the same answers" \
+        the_prompt_and_the_flags_hand_ut_send_the_same_thing
+    capability "reporting that cannot be set up does not stop the install" \
+        reporting_that_fails_does_not_stop_the_install
+fi
+
 if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
     group "Distribution"
     capability "the same tree builds the same bytes twice" \
@@ -1417,6 +1512,8 @@ if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
         reports SIZE_FREE_OF_THE_FILESYSTEM yes
     capability "the release installs as a package, in its own place" \
         the_release_installs_to_its_own_place
+    capability "it carries ut-send for both architectures it serves" \
+        reports UT_SEND both
     capability "the settings directory is prepared, and the package puts nothing in it" \
         the_settings_directory_is_prepared_but_never_filled
     capability "the settings are read from where the release lives" \

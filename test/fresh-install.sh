@@ -41,9 +41,22 @@ property() {
     fi
 }
 
+# The installer is under test here, not the compiler: stand-ins take the place
+# of the two ut-send builds, so this suite needs no Go. A package that did not
+# build stops the suite: every property below would otherwise pass on an
+# install that never ran.
 build_the_package() {
+    local arch
+    install -d "$WORK_DIR/ut-send-builds"
+    for arch in arm64 amd64; do
+        printf '#!/bin/sh\necho stand-in\n' > "$WORK_DIR/ut-send-builds/ut-send-linux-$arch"
+    done
     docker run --rm -v "$REPO_ROOT":/src:ro -v "$WORK_DIR":/out -w /src "$DEBIAN_IMAGE" \
-        sh -c "OUT_DIR=/out ./packaging/build-deb.sh '$VERSION'" >/dev/null
+        sh -c "OUT_DIR=/out UT_SEND_BUILDS=/out/ut-send-builds ./packaging/build-deb.sh '$VERSION'" >/dev/null
+    [[ -f "$WORK_DIR/understandtech_${VERSION}_all.deb" ]] || {
+        echo "The package did not build — nothing below would mean anything." >&2
+        exit 1
+    }
 }
 
 # The installer talks to a Docker daemon, to nvidia-smi and to df. Handing it the

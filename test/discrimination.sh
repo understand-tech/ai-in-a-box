@@ -31,7 +31,7 @@ fresh_copy() {
     ( cd "$REPO_ROOT" && tar -cf - release.env compose.yaml compose.appbuilder.yaml \
         compose.compute.yaml compose.no-gpu.yaml compose.backup-mount.yaml compose.backup-network.yaml \
         Caddyfile caddy metrics backup-files.sh \
-        setup-autostart.sh ut-logs-archive ut-install ut-certificate ut-verify ut-status ut-report appbuilder docs \
+        setup-autostart.sh ut-logs-archive ut-install ut-certificate ut-verify ut-status ut-report ut-send go.mod cmd appbuilder docs \
         packaging README.md test .github 2>/dev/null ) | tar -xf - -C "$COPY" 2>/dev/null
 }
 
@@ -197,6 +197,12 @@ if grep -q 'check_every_tool_ships' "$REPO_ROOT/test/invariants.sh"; then
     discriminates "an operator tool left out of the package" \
         "tool-not-shipped:ut-report" \
         "sed -i.bak '/REPO_ROOT\\/ut-report/d' packaging/build-deb.sh"
+fi
+
+if grep -q 'check_ut_send_uses_only_the_standard_library' "$REPO_ROOT/test/invariants.sh"; then
+    discriminates "a Go module pulled into ut-send" \
+        "ut-send-dependency" \
+        "printf 'require example.com/anything v1.0.0\\n' >> go.mod"
 fi
 
 if grep -q 'check_the_install_starts_the_stack_as_boot_does' "$REPO_ROOT/test/invariants.sh"; then
@@ -485,6 +491,24 @@ if grep -q 'read_domain' "$REPO_ROOT/ut-install"; then
     fi
 fi
 
+if grep -q '^step_reporting()' "$REPO_ROOT/ut-install"; then
+    capability_discriminates "reports switched on when nobody was there to answer" \
+        "with no answer and no terminal to ask on, nothing is sent" \
+        "sed -i.bak 's|^            REPORTING=\"no\"\$|            REPORTING=\"yes\"|' ut-install"
+
+    capability_discriminates "the question asked again on every run" \
+        "an answer given once is not asked for again" \
+        "sed -i.bak 's|^    \\[\\[ \"\\\$said\" != \"Reporting: not decided\" \\]\\]\$|    false|' ut-install"
+
+    capability_discriminates "a prompt that takes Enter for an answer" \
+        "the prompt and the options hand ut-send the same answers" \
+        "sed -i.bak 's|^    while \\[\\[ \"\\\$answer\" != \"yes\" \\&\\& \"\\\$answer\" != \"no\" \\]\\]; do\$|    while false; do|' ut-install"
+
+    capability_discriminates "an install stopped by reports it could not set up" \
+        "reporting that cannot be set up does not stop the install" \
+        "sed -i.bak 's|^    log_warn \"Usage reports could not be set up|    die \"Usage reports could not be set up|' ut-install"
+fi
+
 if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
     capability_discriminates "a command left out of the package" \
         "the release installs as a package" \
@@ -533,6 +557,10 @@ if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
     capability_discriminates "checksums left in the order the filesystem gave them" \
         "the checksums are written in one order" \
         "sed -i.bak 's/| LC_ALL=C sort -z | xargs -0 md5sum/| xargs -0 md5sum/' packaging/build-deb.sh"
+
+    capability_discriminates "a package that leaves ut-send's builds behind" \
+        "it carries ut-send for both architectures" \
+        "sed -i.bak 's|^    stage_ut_send_builds \"\$root\"\$|    true|' packaging/build-deb.sh"
 
     capability_discriminates "a size read off the block count" \
         "the installed size does not come from a block count" \
