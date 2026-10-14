@@ -10,7 +10,6 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -533,11 +532,12 @@ type machine struct {
 	ingress    func(domain string) *x509.Certificate
 }
 
-// Found by Compose's own project label: compose itself would need the settings
-// file, which only root reads.
+// Found by the directory Compose was started from, which it labels every
+// container with: compose itself would need the settings file, which only root
+// reads, and the project's name is not the directory's on a cloned install.
 func (m machine) containers() []container {
-	project := "label=com.docker.compose.project=" + filepath.Base(m.installDir)
-	ids, err := m.run("", "docker", "ps", "-aq", "--filter", project)
+	startedHere := "label=com.docker.compose.project.working_dir=" + m.installDir
+	ids, err := m.run("", "docker", "ps", "-aq", "--filter", startedHere)
 	if err != nil || strings.TrimSpace(ids) == "" {
 		return nil
 	}

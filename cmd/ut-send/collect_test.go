@@ -85,7 +85,7 @@ func machineAnswering(t *testing.T, answers map[string]string) machine {
 }
 
 var everyAnswer = map[string]string{
-	"docker ps -aq --filter label=com.docker.compose.project=understandtech": "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\n",
+	"docker ps -aq --filter label=com.docker.compose.project.working_dir=/usr/share/understandtech": "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\n",
 	"docker inspect":                                     inspected,
 	"docker container inspect":                           "/usr/share/understandtech/compose.yaml\n",
 	"docker exec eeee redis-cli SMEMBERS rq:queues":      "rq:queue:default\n",
@@ -153,7 +153,7 @@ func TestTheHealthOfTheStackIsReadTheWayThePrototypeReadIt(t *testing.T) {
 
 func TestAVLLMEngineDeclaresTheModelItServesNotTheNIMSettingsItInherits(t *testing.T) {
 	answers := map[string]string{
-		"docker ps -aq --filter label=com.docker.compose.project=understandtech": "ffff\n",
+		"docker ps -aq --filter label=com.docker.compose.project.working_dir=/usr/share/understandtech": "ffff\n",
 		"docker inspect": "nim-llm running healthy 0 false ffff\n",
 		"docker exec ffff curl -sf --max-time 5 http://127.0.0.1:8000/v1/models": `{"data": [{"id": "nemotron"}]}`,
 		"docker exec ffff printenv VLLM_ENGINE_MODEL":                            "nemotron\n",
@@ -169,7 +169,7 @@ func TestAVLLMEngineDeclaresTheModelItServesNotTheNIMSettingsItInherits(t *testi
 
 func TestAnUnreadableSourceIsNamedNotGuessed(t *testing.T) {
 	answers := map[string]string{
-		"docker ps -aq --filter label=com.docker.compose.project=understandtech": "ffff\nhhhh\n",
+		"docker ps -aq --filter label=com.docker.compose.project.working_dir=/usr/share/understandtech": "ffff\nhhhh\n",
 		"docker inspect": "nim-llm running healthy 0 false ffff\nmongodb-backup running healthy 0 false hhhh\n",
 	}
 	health, warnings := machineAnswering(t, answers).health()
@@ -196,7 +196,7 @@ func TestToolCountsComeOutSortedAndOnlyAsNumbers(t *testing.T) {
 }
 
 func TestADatabaseThatCannotBeCountedIsNamed(t *testing.T) {
-	answers := map[string]string{"docker ps -aq --filter label=com.docker.compose.project=understandtech": "dddd\n", "docker inspect": "mongodb running healthy 0 false dddd\n"}
+	answers := map[string]string{"docker ps -aq --filter label=com.docker.compose.project.working_dir=/usr/share/understandtech": "dddd\n", "docker inspect": "mongodb running healthy 0 false dddd\n"}
 	tools, warnings := machineAnswering(t, answers).tools(30)
 	if len(tools.RequestsByHour) != 0 || !reflect.DeepEqual(warnings, []string{"tools-unreadable:mongodb"}) {
 		t.Fatalf("tools %+v warnings %v", tools, warnings)
@@ -241,7 +241,7 @@ func TestNothingIsCollectedWithoutAYes(t *testing.T) {
 
 func TestAComputeNodeReportsItsAuthorityAndNoFrontDoorCertificate(t *testing.T) {
 	answers := map[string]string{
-		"docker ps -aq --filter label=com.docker.compose.project=understandtech": "ffff\ngggg\n",
+		"docker ps -aq --filter label=com.docker.compose.project.working_dir=/usr/share/understandtech": "ffff\ngggg\n",
 		"docker inspect":                      "nim-llm running healthy 0 false ffff\ncaddy running healthy 0 false gggg\n",
 		"docker exec gggg printenv UT_DOMAIN": "compute-56.example.test\n",
 		"docker exec gggg cat /data/caddy/pki/authorities/local/root.crt":        authorityRoot,
@@ -258,7 +258,7 @@ func TestAComputeNodeReportsItsAuthorityAndNoFrontDoorCertificate(t *testing.T) 
 
 func TestARedisThatDoesNotSayItsMemoryIsNamedNotGuessed(t *testing.T) {
 	answers := map[string]string{
-		"docker ps -aq --filter label=com.docker.compose.project=understandtech": "eeee\n",
+		"docker ps -aq --filter label=com.docker.compose.project.working_dir=/usr/share/understandtech": "eeee\n",
 		"docker inspect":                         "redis running healthy 0 false eeee\n",
 		"docker exec eeee redis-cli INFO memory": "# Memory\r\nused_memory_human:1.49M\r\n",
 	}
@@ -268,5 +268,16 @@ func TestARedisThatDoesNotSayItsMemoryIsNamedNotGuessed(t *testing.T) {
 	}
 	if !reflect.DeepEqual(warnings, []string{"health-unreadable:redis-memory"}) {
 		t.Fatalf("warnings %v", warnings)
+	}
+}
+
+func TestAStackClonedIntoADirectoryOfAnotherNameIsFound(t *testing.T) {
+	m := machineAnswering(t, map[string]string{
+		"docker ps -aq --filter label=com.docker.compose.project.working_dir=/home/ut/understand-tech": "aaaa\n",
+		"docker inspect": "api running healthy 0 false aaaa\n",
+	})
+	m.installDir = "/home/ut/understand-tech"
+	if health, _ := m.health(); len(health.Services) != 1 || health.Services[0].Service != "api" {
+		t.Fatalf("services %+v", health.Services)
 	}
 }

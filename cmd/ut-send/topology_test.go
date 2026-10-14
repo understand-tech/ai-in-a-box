@@ -23,7 +23,7 @@ func rootCertificate(t *testing.T) (content, fingerprint string) {
 
 func stackAnswering(configFiles string, more map[string]string) map[string]string {
 	answers := map[string]string{
-		"docker ps -aq --filter label=com.docker.compose.project=understandtech": "aaaa\ngggg\n",
+		"docker ps -aq --filter label=com.docker.compose.project.working_dir=/usr/share/understandtech": "aaaa\ngggg\n",
 		"docker inspect":           "api running healthy 0 false aaaa\ncaddy running healthy 0 false gggg\n",
 		"docker container inspect": configFiles + "\n",
 	}
