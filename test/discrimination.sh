@@ -518,6 +518,14 @@ if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
         "every dependency it declares" \
         "sed -i.bak 's|^Depends: openssl|Depends: curl, openssl|' packaging/build-deb.sh"
 
+    capability_discriminates "a package that never builds, compared with itself" \
+        "the same tree builds the same bytes twice" \
+        "sed -i.bak 's|^main \"\$@\"\$|exit 1|' packaging/build-deb.sh"
+
+    capability_discriminates "checksums read from a package that never built" \
+        "the checksums are written in one order" \
+        "sed -i.bak 's|^main \"\$@\"\$|exit 1|' packaging/build-deb.sh"
+
     capability_discriminates "a build that stamps the hour it ran at" \
         "the same tree builds the same bytes twice" \
         "sed -i.bak 's|^PACKAGE=|unset SOURCE_DATE_EPOCH\nPACKAGE=|' packaging/build-deb.sh"
