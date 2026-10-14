@@ -133,9 +133,20 @@ Multi-machine roles
 Backup
   ✔ files are backed up and restore identically
   ✔ a missing backup is visible, and recovers when one appears
-  ✔ backups can leave the machine, and come back from where they went
+  ✔ the backup has no way off the machine
+  ✔ the backup round-trips through an S3 endpoint, and comes back from it alone
+  ✔ a backup lands on the destination the host mounts, and reads back from it alone
+  ✔ a destination that is not mounted is refused, and nothing is written
+  ✔ the backup has no way off the machine, with a mounted destination too
+  ✔ a database restored on another machine, as the guide says, keeps that machine's accounts
+  ✔ an S3 or SFTP destination gives the backup one way out, its own
+  ✔ an SFTP destination is trusted only under the host key pinned for it
+  ✔ a destination that does not answer is named, and nothing is written
+  ✔ a password that does not open the repository is named as such
+  ✔ the authority that signs the HTTPS certificate sits where the backup looks
+  ✔ that authority is backed up and restores identically
 
-38 verified
+49 verified
 ```
 
 The list grows with the branch, not with the file: each block is guarded by the

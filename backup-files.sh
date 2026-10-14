@@ -4,16 +4,37 @@ set -eu
 
 SOURCE_DIR="${BACKUP_SOURCE:-/data}"
 DUMP_DIR="${BACKUP_DUMPS:-/backup}"
+HTTPS_AUTHORITY="${BACKUP_HTTPS_AUTHORITY:-/caddy/caddy/pki/authorities/local}"
 KEEP_DAILY="${BACKUP_FILES_KEEP_DAILY:-7}"
 KEEP_WEEKLY="${BACKUP_FILES_KEEP_WEEKLY:-4}"
 KEEP_MONTHLY="${BACKUP_FILES_KEEP_MONTHLY:-6}"
 
 log() { echo "$(date -u '+%Y-%m-%d %H:%M:%S') [files-backup] $*"; }
 
-restic snapshots >/dev/null 2>&1 || {
-    log "initialising repository at ${RESTIC_REPOSITORY}"
-    restic init
-}
+# An unmounted destination is an empty directory on the local disk: a backup
+# written there dies with the machine it was meant to outlive.
+if [ -n "${BACKUP_DESTINATION_MARKER:-}" ] && [ ! -e "$BACKUP_DESTINATION_MARKER" ]; then
+    log "the destination is not mounted: ${BACKUP_DESTINATION_MARKER} is missing, nothing written"
+    exit 1
+fi
+
+# restic 0.18 exits 10 when there is no repository and 12 when the password
+# does not open it; anything else non-zero is a destination it cannot reach.
+status=0
+reason=$(restic cat config 2>&1 >/dev/null) || status=$?
+case "$status" in
+    0) ;;
+    10)
+        log "initialising repository at ${RESTIC_REPOSITORY}"
+        restic init ;;
+    12)
+        log "BACKUP_FILES_PASSWORD does not open the repository at ${RESTIC_REPOSITORY}, nothing written"
+        exit 1 ;;
+    *)
+        log "cannot reach the repository at ${RESTIC_REPOSITORY}, nothing written"
+        printf '%s\n' "$reason"
+        exit 1 ;;
+esac
 
 # A running database's files copied while it writes restore into a corrupt
 # state. The App Builder starts one MongoDB per generated app under
@@ -23,6 +44,12 @@ restic snapshots >/dev/null 2>&1 || {
 set -- "$SOURCE_DIR"
 if [ -d "$DUMP_DIR" ]; then
     set -- "$@" "$DUMP_DIR"
+fi
+
+# Caddy's own authority signs the HTTPS certificate browsers see; one recreated
+# on a restored machine sends every client back to importing a root.
+if [ -d "$HTTPS_AUTHORITY" ]; then
+    set -- "$@" "$HTTPS_AUTHORITY"
 fi
 
 # The repository usually lives inside DUMP_DIR, so without this exclusion restic

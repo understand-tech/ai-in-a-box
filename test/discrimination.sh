@@ -29,7 +29,8 @@ fresh_copy() {
     rm -rf "$COPY"
     mkdir -p "$COPY"
     ( cd "$REPO_ROOT" && tar -cf - release.env compose.yaml compose.appbuilder.yaml \
-        compose.compute.yaml compose.no-gpu.yaml Caddyfile caddy metrics backup-files.sh \
+        compose.compute.yaml compose.no-gpu.yaml compose.backup-mount.yaml compose.backup-network.yaml \
+        Caddyfile caddy metrics backup-files.sh \
         setup-autostart.sh ut-logs-archive ut-install ut-certificate ut-verify ut-status ut-report appbuilder docs \
         packaging README.md test .github 2>/dev/null ) | tar -xf - -C "$COPY" 2>/dev/null
 }
@@ -310,11 +311,11 @@ printf '\n%sCapabilities, seen failing%s\n\n' "$BOLD" "$NC"
 if grep -q 'role_is_waited_for' "$REPO_ROOT/ut-install"; then
     capability_discriminates "the install waiting for the models again" \
         "handed back while the models are still loading" \
-        "sed -i.bak 's|^    \\[\\[ \"\$1\" != \"inference\" \\]\\]\$|    return 0|' ut-install"
+        "sed -i.bak 's|^    \\[\\[ \"\$1\" != \"inference\".*|    return 0|' ut-install"
 
     capability_discriminates "nothing waited for at all" \
         "a control plane service still starting is waited for" \
-        "sed -i.bak 's|^    \\[\\[ \"\$1\" != \"inference\" \\]\\]\$|    return 1|' ut-install"
+        "sed -i.bak 's|^    \\[\\[ \"\$1\" != \"inference\".*|    return 1|' ut-install"
 
     # An engine that gave up and one still loading must not leave by the same
     # door: treating both as loading is how an install claims a success it does
@@ -616,8 +617,48 @@ fi
 # meet.
 OFFSITE_ENDPOINT=nowhere-at-all \
 capability_discriminates "a backup destination that does not answer" \
-    "backups can leave the machine" \
+    "round-trips through an S3 endpoint" \
     "true"
+
+capability_discriminates "the backup given a network with a way out" \
+    "the backup has no way off the machine" \
+    "sed -i.bak '/^  files-backup:/,/^  [a-z]/ s/- ut-backend-network/- ut-frontend-network/' compose.yaml"
+
+capability_discriminates "the repository left on the machine's own disk" \
+    "lands on the destination the host mounts" \
+    "sed -i.bak 's|RESTIC_REPOSITORY: /destination/restic|RESTIC_REPOSITORY: /backup/restic|' compose.backup-mount.yaml"
+
+capability_discriminates "a backup written where nothing is mounted" \
+    "not mounted is refused" \
+    "sed -i.bak '/BACKUP_DESTINATION_MARKER:-/,/^fi\$/d' backup-files.sh"
+
+capability_discriminates "a guide that restores a foreign database whole" \
+    "restored on another machine, as the guide says" \
+    "sed -i.bak \"s| --nsExclude 'admin.\\*'||\" docs/restore.md"
+
+capability_discriminates "the HTTPS authority left out of what the backup sees" \
+    "signs the HTTPS certificate sits where the backup looks" \
+    "sed -i.bak '/      - caddy-data:\/caddy:ro/d' compose.yaml"
+
+capability_discriminates "the HTTPS authority seen but not saved" \
+    "that authority is backed up and restores identically" \
+    "sed -i.bak 's/^    set -- \"\\\$@\" \"\\\$HTTPS_AUTHORITY\"\$/    :/' backup-files.sh"
+
+capability_discriminates "a network destination left on the internal network" \
+    "gives the backup one way out, its own" \
+    "sed -i.bak 's|      - ut-backup-network|      - ut-backend-network|' compose.backup-network.yaml"
+
+capability_discriminates "an SFTP destination without the keys to check it" \
+    "trusted only under the host key pinned for it" \
+    "sed -i.bak '/\/root\/.ssh:ro/d' compose.backup-network.yaml"
+
+capability_discriminates "a destination that does not answer, left unnamed" \
+    "does not answer is named" \
+    "sed -i.bak '/cannot reach the repository/d' backup-files.sh"
+
+capability_discriminates "a password that does not fit, taken for a missing repository" \
+    "does not open the repository is named" \
+    "sed -i.bak '/does not open the repository/d' backup-files.sh"
 
 capability_discriminates "the dumps looked for where they are not" \
     "the database leaves with them" \
@@ -753,6 +794,34 @@ fi
     install_walk_discriminates "an inference address left pointing at a service nothing starts" \
         "it says the inference address still points at nothing" \
         "sed -i.bak 's|^    if the_inference_url_names_a_service_this_machine_will_not_run; then|    if false; then|' ut-install"
+
+    install_walk_discriminates "a backup destination on the machine's own disk taken for a mounted one" \
+        "one on the machine's own disk stops the install" \
+        "sed -i.bak 's|^    \[\[ \"\$filesystem\" != .*|    true|' ut-install"
+
+    install_walk_discriminates "an SFTP destination left without its way out" \
+        "an S3 or SFTP destination gets its way out" \
+        "sed -i.bak 's|\"\${compose_files}:compose.backup-network.yaml\"|\"\${compose_files}\"|' ut-install"
+
+    install_walk_discriminates "every repository taken for one over the network" \
+        "the default destination adds no way out" \
+        "sed -i.bak 's#^        s3:\*|sftp:\*|.*#        *) return 0 ;;#' ut-install"
+
+    capability_discriminates "a backup that does not work holding the install back" \
+        "does not hold the install back" \
+        "sed -i.bak 's/ \\&\\& \"\\\$1\" != \"backup\"//' ut-install"
+
+    install_walk_discriminates "a destination gone during an update stopping it" \
+        "gone during an update" \
+        "sed -i.bak 's|^                return 0 ;;\$|                : ;;|' ut-install"
+
+    install_walk_discriminates "two destinations checked only after one is written" \
+        "two destinations stops the install, before" \
+        "sed -i.bak '/^    die_on_two_backup_destinations \"\$local_file\"\$/d' ut-install"
+
+    install_walk_discriminates "two backup destinations let through" \
+        "naming two destinations stops the install" \
+        "sed -i.bak '/both say where the backup goes/,/exit 1/ s/exit 1/:/' ut-install"
 fi
 
 if [[ -x "$REPO_ROOT/test/ingress.sh" ]]; then

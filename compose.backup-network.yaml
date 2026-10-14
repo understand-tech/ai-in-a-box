@@ -1,0 +1,21 @@
+name: ${COMPOSE_PROJECT_NAME:-understandtech}
+
+# Overlay for a backup sent over the network, to S3 or SFTP:
+#
+#   BACKUP_FILES_REPOSITORY="sftp:backup@nas.example:/appliance"
+#
+# ut-install adds it to COMPOSE_FILE when BACKUP_FILES_REPOSITORY names one, and
+# only then. Docker cannot narrow a network to one destination: the service that
+# reads every document can reach whatever the host can.
+
+services:
+  files-backup:
+    networks:
+      - ut-backup-network
+    volumes:
+      - ${BACKUP_FILES_SSH_DIR:-/etc/understandtech/backup-ssh}:/root/.ssh:ro
+
+networks:
+  ut-backup-network:
+    name: ${RESOURCE_PREFIX:-ut}-backup-network
+    driver: bridge
