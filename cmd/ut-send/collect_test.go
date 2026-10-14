@@ -155,7 +155,7 @@ func TestADatabaseThatCannotBeCountedIsNamed(t *testing.T) {
 func TestCollectQueuesUtReportsReportWithHealthAndTools(t *testing.T) {
 	b := newBox(t, newFakeReceiver(t))
 	var out bytes.Buffer
-	if code := runOn([]string{"collect"}, b.place, machineAnswering(t, everyAnswer), &out, &out); code != 0 {
+	if code := runOn([]string{"collect", "report"}, b.place, machineAnswering(t, everyAnswer), &out, &out); code != 0 {
 		t.Fatalf("exit %d: %s", code, out.String())
 	}
 	items, _ := listQueue(queueDir(b.place.State))
@@ -182,7 +182,7 @@ func TestCollectQueuesUtReportsReportWithHealthAndTools(t *testing.T) {
 func TestNothingIsCollectedWithoutAYes(t *testing.T) {
 	b := newBox(t, nil)
 	var out bytes.Buffer
-	if code := runOn([]string{"collect"}, b.place, machineAnswering(t, everyAnswer), &out, &out); code == 0 {
+	if code := runOn([]string{"collect", "report"}, b.place, machineAnswering(t, everyAnswer), &out, &out); code == 0 {
 		t.Fatal("collected with no answer given")
 	}
 }

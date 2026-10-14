@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -34,9 +35,11 @@ const usage = `usage: ut-send <command>
               already kept, a no forgets all of them
   enqueue     report|usage <file>
               puts a copy of the file in line to be sent; refused without a yes
-  collect     writes this machine's report — ut-report's, with the health of
-              the stack and the use of each tool — and puts it in line;
-              refused without a yes
+  collect     report: writes this machine's report — ut-report's, with the
+              health of the stack and the use of each tool — and puts it in line
+              usage: exports what the recorder kept since the last export, the
+              customer's domain replaced by the surface it names
+              both refused without a yes
   send        sends what is in line, oldest first; what the receiver does not
               take stays in line for up to 7 days
 `
@@ -126,7 +129,11 @@ func enqueueCommand(args []string, place Place, stderr io.Writer) int {
 	return 0
 }
 
-func collectCommand(place Place, m machine, stderr io.Writer) int {
+func collectCommand(args []string, place Place, m machine, stdout, stderr io.Writer) int {
+	if len(args) != 1 || (args[0] != "report" && args[0] != "usage") {
+		fmt.Fprint(stderr, usage)
+		return 2
+	}
 	settings, _, err := loadSettings(place.Settings)
 	if err != nil {
 		fmt.Fprintln(stderr, "ut-send collect: the settings cannot be read:", err)
@@ -139,6 +146,9 @@ func collectCommand(place Place, m machine, stderr io.Writer) int {
 	if err := os.MkdirAll(place.State, 0o700); err != nil {
 		fmt.Fprintln(stderr, "ut-send collect:", err)
 		return 1
+	}
+	if args[0] == "usage" {
+		return usageCommand(place, m, stdout, stderr)
 	}
 	workDir, err := os.MkdirTemp(place.State, "collect-")
 	if err != nil {
@@ -156,6 +166,19 @@ func collectCommand(place Place, m machine, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+func usageCommand(place Place, m machine, stdout, stderr io.Writer) int {
+	err := collectUsage(place, m)
+	switch {
+	case err == nil:
+		return 0
+	case errors.Is(err, errNoRecorder), errors.Is(err, errBusy):
+		fmt.Fprintln(stdout, "ut-send:", err)
+		return 0
+	}
+	fmt.Fprintln(stderr, "ut-send collect usage:", err)
+	return 1
 }
 
 func sendCommand(place Place, stdout, stderr io.Writer) int {
@@ -195,7 +218,7 @@ func runOn(args []string, place Place, m machine, stdout, stderr io.Writer) int 
 	case "enqueue":
 		return enqueueCommand(args[1:], place, stderr)
 	case "collect":
-		return collectCommand(place, m, stderr)
+		return collectCommand(args[1:], place, m, stdout, stderr)
 	case "send":
 		return sendCommand(place, stdout, stderr)
 	default:
