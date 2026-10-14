@@ -60,7 +60,7 @@ func machineAnswering(t *testing.T, answers map[string]string) machine {
 }
 
 var everyAnswer = map[string]string{
-	"docker ps -aq --filter label=com.docker.compose.project=understandtech": "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\n",
+	"docker ps -aq --filter label=com.docker.compose.project.working_dir=/usr/share/understandtech": "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\n",
 	"docker inspect": inspected,
 	"docker exec eeee redis-cli SMEMBERS rq:queues":      "rq:queue:default\n",
 	"docker exec eeee redis-cli LLEN rq:queue:default":   "3\n",
@@ -116,9 +116,20 @@ func TestTheHealthOfTheStackIsReadTheWayThePrototypeReadIt(t *testing.T) {
 	}
 }
 
+func TestAStackClonedIntoADirectoryOfAnotherNameIsFound(t *testing.T) {
+	m := machineAnswering(t, map[string]string{
+		"docker ps -aq --filter label=com.docker.compose.project.working_dir=/home/ut/understand-tech": "aaaa\n",
+		"docker inspect": "api running healthy 0 false aaaa\n",
+	})
+	m.installDir = "/home/ut/understand-tech"
+	if health, _ := m.health(); len(health.Services) != 1 || health.Services[0].Service != "api" {
+		t.Fatalf("services %+v", health.Services)
+	}
+}
+
 func TestAnUnreadableSourceIsNamedNotGuessed(t *testing.T) {
 	answers := map[string]string{
-		"docker ps -aq --filter label=com.docker.compose.project=understandtech": "ffff\nhhhh\n",
+		"docker ps -aq --filter label=com.docker.compose.project.working_dir=/usr/share/understandtech": "ffff\nhhhh\n",
 		"docker inspect": "nim-llm running healthy 0 false ffff\nmongodb-backup running healthy 0 false hhhh\n",
 	}
 	health, warnings := machineAnswering(t, answers).health()
@@ -145,7 +156,7 @@ func TestToolCountsComeOutSortedAndOnlyAsNumbers(t *testing.T) {
 }
 
 func TestADatabaseThatCannotBeCountedIsNamed(t *testing.T) {
-	answers := map[string]string{"docker ps -aq --filter label=com.docker.compose.project=understandtech": "dddd\n", "docker inspect": "mongodb running healthy 0 false dddd\n"}
+	answers := map[string]string{"docker ps -aq --filter label=com.docker.compose.project.working_dir=/usr/share/understandtech": "dddd\n", "docker inspect": "mongodb running healthy 0 false dddd\n"}
 	tools, warnings := machineAnswering(t, answers).tools(30)
 	if len(tools.RequestsByHour) != 0 || !reflect.DeepEqual(warnings, []string{"tools-unreadable:mongodb"}) {
 		t.Fatalf("tools %+v warnings %v", tools, warnings)
