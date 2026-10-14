@@ -380,13 +380,17 @@ present_dir()  { [ -d "$1" ] && echo present || echo gone; }
 present_file() { [ -f "$1" ] && echo present || echo gone; }
 digest_of()    { sha256sum < "$1" | cut -d' ' -f1; }
 
-say SAME_BYTES_TWICE "$([ "$(digest_of /out/first/understandtech_2026.09.1_all.deb)" \
-    = "$(digest_of /out/second/understandtech_2026.09.1_all.deb)" ] && echo yes || echo no)"
+# Two packages that were never built have the same digest — the empty one — so
+# each comparison first asks whether there is anything to compare.
+first=/out/first/understandtech_2026.09.1_all.deb
+second=/out/second/understandtech_2026.09.1_all.deb
+say SAME_BYTES_TWICE "$([ -f "$first" ] && [ -f "$second" ] \
+    && [ "$(digest_of "$first")" = "$(digest_of "$second")" ] && echo yes || echo no)"
 
 apparent_kib() { find "$1" -type f -exec du -k --apparent-size {} + | awk '{ t += $1 } END { print t + 0 }'; }
 
-sorted_checksums=$(dpkg-deb --ctrl-tarfile /out/understandtech_2026.09.1_all.deb 2>/dev/null \
-    | tar -xO ./md5sums 2>/dev/null | sort -c -k2 >/dev/null 2>&1 && echo yes || echo no)
+checksums=$(dpkg-deb --ctrl-tarfile /out/understandtech_2026.09.1_all.deb 2>/dev/null | tar -xO ./md5sums 2>/dev/null)
+sorted_checksums=$([ -n "$checksums" ] && printf '%s\n' "$checksums" | sort -c -k2 >/dev/null 2>&1 && echo yes || echo no)
 say MD5SUMS_IN_ONE_ORDER "$sorted_checksums"
 
 mkdir -p /unpacked
