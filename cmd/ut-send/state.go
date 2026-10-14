@@ -17,6 +17,7 @@ type State struct {
 	LastProblem  string    `json:"last_problem,omitempty"`
 	RevokedToken string    `json:"revoked_token,omitempty"`
 	GivenUp      int       `json:"given_up,omitempty"`
+	LastExported int64     `json:"last_exported_ms,omitempty"`
 }
 
 func statePath(dir string) string { return filepath.Join(dir, "state.json") }
