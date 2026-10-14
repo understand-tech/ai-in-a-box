@@ -73,3 +73,17 @@ func collectReport(m machine, workDir string) ([]byte, error) {
 	tools, toolsWarnings := m.tools(windowDays(base))
 	return enrich(base, health, tools, append(healthWarnings, toolsWarnings...))
 }
+
+func markReported(place Place) error {
+	unlock, err := lockState(place.State)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	state, err := loadState(place.State)
+	if err != nil {
+		return err
+	}
+	state.LastReported = place.Now()
+	return saveState(place.State, state)
+}

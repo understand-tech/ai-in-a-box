@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -60,17 +61,49 @@ func (r *fakeReceiver) received() []deposit {
 }
 
 type box struct {
-	place Place
-	clock time.Time
+	place   Place
+	clock   time.Time
+	systemd *fakeSystemd
+}
+
+// Answers systemctl as a machine where every unit loads, and remembers what it
+// was asked and which timer is running.
+type fakeSystemd struct {
+	asked   []string
+	running bool
+	broken  bool
+}
+
+func (s *fakeSystemd) run(dir, name string, args ...string) (string, error) {
+	if name != "systemctl" {
+		return "", errors.New("not answered: " + name)
+	}
+	s.asked = append(s.asked, strings.Join(args, " "))
+	if s.broken {
+		return "Failed to connect to bus", errors.New("exit status 1")
+	}
+	switch args[0] {
+	case "restart":
+		s.running = true
+	case "disable":
+		s.running = false
+	case "is-active":
+		if !s.running {
+			return "", errors.New("exit status 3")
+		}
+	}
+	return "", nil
 }
 
 func newBox(t *testing.T, receiver *fakeReceiver) *box {
 	t.Helper()
 	dir := t.TempDir()
-	b := &box{clock: time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)}
+	b := &box{clock: time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC), systemd: &fakeSystemd{}}
 	b.place = Place{
 		Settings: filepath.Join(dir, "etc", "reporting.json"),
 		State:    filepath.Join(dir, "var", "reporting"),
+		Units:    filepath.Join(dir, "etc", "systemd", "system"),
+		Self:     "/usr/lib/understandtech/ut-send-linux-arm64",
 		Now:      func() time.Time { return b.clock },
 		Timeout:  2 * time.Second,
 	}
@@ -88,7 +121,7 @@ func newBox(t *testing.T, receiver *fakeReceiver) *box {
 
 func (b *box) call(args ...string) (int, string) {
 	var out bytes.Buffer
-	code := runIn(args, b.place, &out, &out)
+	code := runOn(args, b.place, machine{run: b.systemd.run}, &out, &out)
 	return code, out.String()
 }
 

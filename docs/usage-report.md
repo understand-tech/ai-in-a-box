@@ -2,10 +2,71 @@
 
 How many people a box really serves decides when a second one is worth adding.
 The box can measure it; we cannot, since we have no access to it. This page is
-for the operator asked to send us a report, and for whoever has to approve what
+for the operator asked to send us reports, and for whoever has to approve what
 leaves the network.
 
-## Writing one
+## Sending them on their own
+
+Nothing leaves the machine until someone answers yes. `ut-install` asks once,
+with no answer preselected; with no terminal and no `--reporting`, the answer is
+no. The same answer can be given, or changed, at any time:
+
+```bash
+sudo ut-send configure --consent yes --receiver https://<receiver>:8444 \
+    --token-file <token file> --receiver-cert <receiver certificate> [--every 15]
+sudo ut-send configure --consent no
+```
+
+`ut-install` takes the same details as `--reporting yes`,
+`--reporting-receiver`, `--reporting-token-file`, `--reporting-receiver-cert`
+and `--reporting-every`. The receiver, token and certificate can come later:
+until they are given, what is written waits on the machine.
+
+A yes installs a systemd timer, `ut-send.timer`. Every 15 minutes — or as many
+minutes as `--every` says, from 1 to 1440 — it:
+
+1. puts in line what the `metrics` service recorded since the last pass, with
+   the platform's address replaced by the name of the surface it serves
+   (`app`, `llms`, …);
+2. once an hour — or at every pass, when passes are more than an hour apart —
+   puts in line the report described below, with the health of the stack and
+   the use of each tool;
+3. sends what is in line to the receiver, over HTTPS, trusting only the
+   receiver's certificate it was given.
+
+What the receiver does not accept stays in line and is tried again on the next
+pass, for up to 7 days or 200 MB, the oldest given up first. A token the
+receiver refuses stops the sending until a new one is given with
+`ut-send configure`.
+
+A no stops and removes the timer, deletes what was waiting to be sent, and
+forgets the receiver and the token.
+Removing the package removes the timer too; an upgrade keeps it.
+
+`sudo ut-status` and `sudo ut-send status` say whether reports go out, where,
+how often, when the receiver last accepted one, and how many wait:
+
+```text
+==> Usage reports
+[ ok ] Reporting: on, to fleet.example.com:8444, every 15 minutes
+[ ok ] last accepted 2026-10-14T12:15:03Z, 0 waiting
+```
+
+What goes out on top of the report below:
+
+- **health**: for each service, how many copies run and whether they are
+  healthy; the background queues and how many jobs wait or failed; space on the
+  disks the platform writes to; for each inference engine, the model it serves
+  and the GPU memory it holds; when the last backup ran; the validity dates of
+  the HTTPS certificates; whether the clock is synchronised;
+- **use of each tool**: requests per hour, and people over the last 7 days, per
+  tool of the platform — counts only, and a tool the platform does not ship is
+  counted as `other`, never by its name;
+- **the recorder's figures**: the engines', the model gateway's and the front
+  door's counters, at the recorder's resolution. Requests are counted per
+  surface, never per address.
+
+## Writing one by hand
 
 ```bash
 sudo ut-report
@@ -13,7 +74,8 @@ sudo ut-report
 
 It writes a directory named `ut-report-<date>` in the current directory, or in
 the one given with `--out`. `--days` shortens the window, which is 30 days by
-default. Nothing is sent: passing the directory on is a step you take yourself.
+default. This one is not sent: passing the directory on is a step you take
+yourself.
 
 ```text
 [ ok ] Report written to ./ut-report-20261005T1120Z

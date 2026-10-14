@@ -18,6 +18,7 @@ type State struct {
 	RevokedToken string    `json:"revoked_token,omitempty"`
 	GivenUp      int       `json:"given_up,omitempty"`
 	LastExported int64     `json:"last_exported_ms,omitempty"`
+	LastReported time.Time `json:"last_reported,omitempty"`
 }
 
 func statePath(dir string) string { return filepath.Join(dir, "state.json") }
@@ -43,7 +44,7 @@ func saveState(dir string, state State) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	return writeWhole(statePath(dir), append(content, '\n'))
+	return writeWhole(statePath(dir), append(content, '\n'), 0o600)
 }
 
 // Only a fingerprint is kept: the state file says which token was refused
@@ -55,13 +56,13 @@ func fingerprint(token string) string {
 
 // Written whole under another name and moved into place: an interrupted write
 // never leaves a half file where the reader expects a whole one.
-func writeWhole(path string, content []byte) error {
+func writeWhole(path string, content []byte, mode os.FileMode) error {
 	temporary, err := os.CreateTemp(filepath.Dir(path), ".partial-*")
 	if err != nil {
 		return err
 	}
 	defer os.Remove(temporary.Name())
-	if err := temporary.Chmod(0o600); err != nil {
+	if err := temporary.Chmod(mode); err != nil {
 		temporary.Close()
 		return err
 	}

@@ -43,6 +43,7 @@ REPORTING="${UT_REPORTING:-}"
 REPORTING_RECEIVER=""
 REPORTING_TOKEN_FILE=""
 REPORTING_RECEIVER_CERT=""
+REPORTING_EVERY=""
 UT_SEND="${UT_SEND:-ut-send}"
 CURRENT_STEP=""
 
@@ -125,6 +126,7 @@ Options
                        Where reports go, this machine's token, and the
                        receiver's certificate. Can come later, through
                        ut-send configure.
+  --reporting-every N  Minutes between two sends (default: 15).
   -h, --help           This message.
 
 Environment
@@ -1412,8 +1414,8 @@ reporting_already_decided() {
 ask_about_reporting() {
     local answer=""
     log_step "Usage reports"
-    log "  This machine can send UnderstandTech, every hour, how loaded it was and how"
-    log "  many people it served — counts, never content, never who. docs/usage-report.md"
+    log "  This machine can send UnderstandTech, every 15 minutes, how loaded it was and"
+    log "  how many people it served — counts, never content, never who. docs/usage-report.md"
     log "  lists every field. The answer can be changed later with ut-send configure."
     log ""
     while [[ "$answer" != "yes" && "$answer" != "no" ]]; do
@@ -1433,6 +1435,7 @@ reporting_configure_arguments() {
     [[ -n "$REPORTING_RECEIVER" ]] && printf '%s\n' --receiver "$REPORTING_RECEIVER"
     [[ -n "$REPORTING_TOKEN_FILE" ]] && printf '%s\n' --token-file "$REPORTING_TOKEN_FILE"
     [[ -n "$REPORTING_RECEIVER_CERT" ]] && printf '%s\n' --receiver-cert "$REPORTING_RECEIVER_CERT"
+    [[ -n "$REPORTING_EVERY" ]] && printf '%s\n' --every "$REPORTING_EVERY"
     return 0
 }
 
@@ -1444,7 +1447,7 @@ step_reporting() {
         log_warn "ut-send is not installed here — usage reports stay off. A package install carries it."
         return 0
     fi
-    if [[ -z "$REPORTING" && -n "${REPORTING_RECEIVER}${REPORTING_TOKEN_FILE}${REPORTING_RECEIVER_CERT}" ]]; then
+    if [[ -z "$REPORTING" && -n "${REPORTING_RECEIVER}${REPORTING_TOKEN_FILE}${REPORTING_RECEIVER_CERT}${REPORTING_EVERY}" ]]; then
         log_warn "Receiver details were given without --reporting yes — they are not taken as a yes, nothing changes"
         return 0
     fi
@@ -1524,6 +1527,7 @@ parse_arguments() {
             --reporting-receiver)      REPORTING_RECEIVER="${2:?--reporting-receiver needs an address}"; shift ;;
             --reporting-token-file)    REPORTING_TOKEN_FILE="${2:?--reporting-token-file needs a path}"; shift ;;
             --reporting-receiver-cert) REPORTING_RECEIVER_CERT="${2:?--reporting-receiver-cert needs a path}"; shift ;;
+            --reporting-every)         REPORTING_EVERY="${2:?--reporting-every needs minutes}"; shift ;;
             -h|--help)        usage; exit 0 ;;
             *)                log_error "Unknown option: $1"; usage; exit 2 ;;
         esac
