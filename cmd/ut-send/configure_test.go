@@ -60,7 +60,8 @@ func send(t *testing.T, config string, args ...string) (int, string) {
 func statusOf(t *testing.T, config string) string {
 	t.Helper()
 	_, out := send(t, config, "status")
-	return strings.TrimSpace(out)
+	decision, _, _ := strings.Cut(out, "\n")
+	return decision
 }
 
 func TestNothingIsDecidedUntilSomeoneAnswers(t *testing.T) {

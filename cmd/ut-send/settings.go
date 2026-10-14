@@ -33,8 +33,6 @@ func loadSettings(path string) (Settings, bool, error) {
 	return settings, true, nil
 }
 
-// The token is in this file: it is written whole under another name and moved
-// into place, so a crash never leaves it half-written or readable by others.
 func saveSettings(path string, settings Settings) error {
 	content, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
@@ -43,25 +41,5 @@ func saveSettings(path string, settings Settings) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".reporting-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(temporary.Name())
-	if err := temporary.Chmod(0o600); err != nil {
-		temporary.Close()
-		return err
-	}
-	if _, err := temporary.Write(append(content, '\n')); err != nil {
-		temporary.Close()
-		return err
-	}
-	if err := temporary.Sync(); err != nil {
-		temporary.Close()
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
-	return os.Rename(temporary.Name(), path)
+	return writeWhole(path, append(content, '\n'))
 }
