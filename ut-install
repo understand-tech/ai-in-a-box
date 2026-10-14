@@ -39,6 +39,11 @@ NO_GPU=false
 TOKEN_FILE=""
 REGISTRY_TOKEN="${UT_REGISTRY_TOKEN:-}"
 HEALTH_TIMEOUT="${UT_HEALTH_TIMEOUT:-3600}"
+REPORTING="${UT_REPORTING:-}"
+REPORTING_RECEIVER=""
+REPORTING_TOKEN_FILE=""
+REPORTING_RECEIVER_CERT=""
+UT_SEND="${UT_SEND:-ut-send}"
 CURRENT_STEP=""
 
 SHIPPED_PLACEHOLDERS=(
@@ -110,12 +115,23 @@ Options
                        answering. A settings file already carrying
                        compose.no-gpu.yaml says the same thing.
   --health-timeout N   Seconds to wait for services (default: 3600).
+  --reporting yes|no   Whether this machine sends its usage reports to
+                       UnderstandTech (docs/usage-report.md says what they hold).
+                       Asked for when it is not given and a terminal is there;
+                       with no terminal and no answer, nothing is sent. Asked
+                       once: a later run keeps the answer unless given again.
+  --reporting-receiver URL, --reporting-token-file PATH,
+  --reporting-receiver-cert PATH
+                       Where reports go, this machine's token, and the
+                       receiver's certificate. Can come later, through
+                       ut-send configure.
   -h, --help           This message.
 
 Environment
   UT_REGISTRY_TOKEN    Registry token, instead of --token-file or the prompt.
   UT_REPO_REF          Branch or tag to install (default: main).
   UT_DOMAIN            Address the platform is served at.
+  UT_REPORTING         yes or no, as --reporting.
 
 The registry token is read from UT_REGISTRY_TOKEN, from --token-file, or from a
 hidden prompt. It is never passed on a command line and never written to the log.
@@ -1386,6 +1402,72 @@ record_this_install() {
         >> "$history" 2>/dev/null || true
 }
 
+reporting_already_decided() {
+    local said
+    said=$("$UT_SEND" status 2>/dev/null) || return 1
+    [[ "$said" != "Reporting: not decided" ]]
+}
+
+# No answer is offered as the default: pressing Enter asks again.
+ask_about_reporting() {
+    local answer=""
+    log_step "Usage reports"
+    log "  This machine can send UnderstandTech, every hour, how loaded it was and how"
+    log "  many people it served — counts, never content, never who. docs/usage-report.md"
+    log "  lists every field. The answer can be changed later with ut-send configure."
+    log ""
+    while [[ "$answer" != "yes" && "$answer" != "no" ]]; do
+        printf '  Send usage reports to UnderstandTech? (yes/no): '
+        read -r answer || return 1
+    done
+    REPORTING=$answer
+    [[ "$REPORTING" == "yes" ]] || return 0
+    log "  Where they go can wait: leave a field empty to give it later."
+    [[ -n "$REPORTING_RECEIVER" ]] || { printf '  Receiver address (https://…): '; read -r REPORTING_RECEIVER || true; }
+    [[ -n "$REPORTING_TOKEN_FILE" ]] || { printf '  File holding this machine'"'"'s token: '; read -r REPORTING_TOKEN_FILE || true; }
+    [[ -n "$REPORTING_RECEIVER_CERT" ]] || { printf '  File holding the receiver'"'"'s certificate: '; read -r REPORTING_RECEIVER_CERT || true; }
+}
+
+reporting_configure_arguments() {
+    printf '%s\n' configure --consent "$REPORTING"
+    [[ -n "$REPORTING_RECEIVER" ]] && printf '%s\n' --receiver "$REPORTING_RECEIVER"
+    [[ -n "$REPORTING_TOKEN_FILE" ]] && printf '%s\n' --token-file "$REPORTING_TOKEN_FILE"
+    [[ -n "$REPORTING_RECEIVER_CERT" ]] && printf '%s\n' --receiver-cert "$REPORTING_RECEIVER_CERT"
+    return 0
+}
+
+# Reporting never holds an install back: the platform serves whether or not this
+# step works, and the operator is told how to finish it.
+step_reporting() {
+    local arguments=() line
+    if ! command -v "$UT_SEND" >/dev/null 2>&1; then
+        log_warn "ut-send is not installed here — usage reports stay off. A package install carries it."
+        return 0
+    fi
+    if [[ -z "$REPORTING" && -n "${REPORTING_RECEIVER}${REPORTING_TOKEN_FILE}${REPORTING_RECEIVER_CERT}" ]]; then
+        log_warn "Receiver details were given without --reporting yes — they are not taken as a yes, nothing changes"
+        return 0
+    fi
+    if [[ -z "$REPORTING" ]]; then
+        if reporting_already_decided; then
+            log_info "$("$UT_SEND" status) — kept from an earlier answer"
+            return 0
+        fi
+        if terminal_is_reachable; then
+            ask_about_reporting < /dev/tty > /dev/tty || REPORTING="no"
+        else
+            REPORTING="no"
+            log_info "No --reporting given and no terminal to ask on — usage reports stay off"
+        fi
+    fi
+    [[ "$REPORTING" == "yes" || "$REPORTING" == "no" ]] || die "--reporting must be yes or no, not '${REPORTING}'"
+    while IFS= read -r line; do arguments+=("$line"); done < <(reporting_configure_arguments)
+    if "$UT_SEND" "${arguments[@]}"; then
+        return 0
+    fi
+    log_warn "Usage reports could not be set up. The platform is unaffected; finish with: sudo ut-send configure --consent yes|no …"
+}
+
 print_summary() {
     local env_file="$INSTALL_DIR/.env"
 
@@ -1438,6 +1520,10 @@ parse_arguments() {
             --from-checkout)  FROM_CHECKOUT="${2:?--from-checkout needs a path}"; shift ;;
             --domain)         DOMAIN="${2:?--domain needs a name}"; shift ;;
             --health-timeout) HEALTH_TIMEOUT="${2:?--health-timeout needs seconds}"; shift ;;
+            --reporting)      REPORTING="${2:?--reporting needs yes or no}"; shift ;;
+            --reporting-receiver)      REPORTING_RECEIVER="${2:?--reporting-receiver needs an address}"; shift ;;
+            --reporting-token-file)    REPORTING_TOKEN_FILE="${2:?--reporting-token-file needs a path}"; shift ;;
+            --reporting-receiver-cert) REPORTING_RECEIVER_CERT="${2:?--reporting-receiver-cert needs a path}"; shift ;;
             -h|--help)        usage; exit 0 ;;
             *)                log_error "Unknown option: $1"; usage; exit 2 ;;
         esac
@@ -1475,6 +1561,7 @@ main() {
     step_wait_healthy
     step_certificate_policy
     step_autostart
+    step_reporting
     print_summary
 }
 

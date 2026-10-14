@@ -491,6 +491,24 @@ if grep -q 'read_domain' "$REPO_ROOT/ut-install"; then
     fi
 fi
 
+if grep -q '^step_reporting()' "$REPO_ROOT/ut-install"; then
+    capability_discriminates "reports switched on when nobody was there to answer" \
+        "with no answer and no terminal to ask on, nothing is sent" \
+        "sed -i.bak 's|^            REPORTING=\"no\"\$|            REPORTING=\"yes\"|' ut-install"
+
+    capability_discriminates "the question asked again on every run" \
+        "an answer given once is not asked for again" \
+        "sed -i.bak 's|^    \\[\\[ \"\\\$said\" != \"Reporting: not decided\" \\]\\]\$|    false|' ut-install"
+
+    capability_discriminates "a prompt that takes Enter for an answer" \
+        "the prompt and the options hand ut-send the same answers" \
+        "sed -i.bak 's|^    while \\[\\[ \"\\\$answer\" != \"yes\" \\&\\& \"\\\$answer\" != \"no\" \\]\\]; do\$|    while false; do|' ut-install"
+
+    capability_discriminates "an install stopped by reports it could not set up" \
+        "reporting that cannot be set up does not stop the install" \
+        "sed -i.bak 's|^    log_warn \"Usage reports could not be set up|    die \"Usage reports could not be set up|' ut-install"
+fi
+
 if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
     capability_discriminates "a command left out of the package" \
         "the release installs as a package" \
