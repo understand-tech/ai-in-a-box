@@ -7,38 +7,42 @@ that stopped halfway is resumed by running the same command again.
 ## What `ut-install` does, in order
 
 <!-- Scope: the order of the installer's steps. Not what each one checks. -->
-<!-- Source of truth: ut-install:1006-1020 -->
-<!-- Date: 2026-09-18 -->
+<!-- Source of truth: ut-install, main() -->
+<!-- Date: 2026-10-15 -->
 <!-- Target: github — status of "flowchart": rendered -->
 
 ```mermaid
 flowchart LR
     PREFLIGHT["preflight - refuses a machine that cannot run it"]
-    LOGIN["sign in to the registry"]
-    FETCH["fetch the release"]
+    ASK["ask the address and the license key, check the key"]
+    FETCH["sign in to the registry, fetch the release"]
     CONFIGURE["write .env and generate every secret"]
     RESOLVE["check the address resolves, and the docker group"]
     CA["prepare the authority, create the networks"]
     PULL["pull the images"]
     START["start, then wait for every service to be healthy"]
-    PERSIST["apply the certificate policy, install the boot service"]
-    PREFLIGHT --> LOGIN --> FETCH --> CONFIGURE --> RESOLVE
+    PERSIST["certificate policy, boot service, usage reports"]
+    PREFLIGHT --> ASK --> FETCH --> CONFIGURE --> RESOLVE
     RESOLVE --> CA --> PULL --> START --> PERSIST
 ```
 
 **Description** — The installer runs nine stages in a fixed order, and stops at
 the first one that fails. It begins with a preflight that refuses a machine
-that cannot run the stack, **before writing anything**. It then signs in to the
-registry, fetches the release, writes `/etc/understandtech/.env` and generates
-every secret, checks that the address resolves and that Docker is usable,
-prepares the certificate authority's directory and the App Builder network,
-pulls the images, starts the stack and waits for every service to report
-healthy, and finally applies the certificate policy and installs the boot
-service. Nothing is left running if an earlier stage failed.
+that cannot run the stack, **before writing anything**. It then asks for the
+address the platform answers on and for the license key, and checks the key
+with no network. It signs in to the registry with the access the key carries —
+skipped with `--skip-pull` — and fetches the release, writes
+`/etc/understandtech/.env` and generates every secret, checks that the address
+resolves and that Docker is usable, prepares the certificate authority's
+directory and the App Builder network, pulls the images, starts the stack and
+waits for every service to report healthy. It ends by applying the certificate
+policy, installing the boot service and asking whether usage reports go out.
+Nothing is left running if an earlier stage failed.
 
-**Gaps** — Nine boxes for thirteen internal steps: checking the address and the
-Docker group are one box, as are the authority and the networks, and as are the
-certificate policy and the boot service. The diagram does not show what each
+**Gaps** — Nine boxes for sixteen internal steps: the address and the license
+are one box, as are the registry sign-in and the fetch, the address check and
+the Docker group, the authority and the networks, and the certificate policy,
+the boot service and the usage reports. The diagram does not show what each
 stage checks or what it does when it finds the work already done. Not verified:
 the diagram has not been seen rendered — no rendering engine is installed here.
 
