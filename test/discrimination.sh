@@ -741,6 +741,30 @@ capability_discriminates "the dumps looked for where they are not" \
 if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
     printf '\n%sA fresh install, seen failing%s\n\n' "$BOLD" "$NC"
 
+    install_walk_discriminates "a login with some other token than the license's" \
+        "logs in with the token it carries" \
+        "sed -i.bak 's|^    REGISTRY_TOKEN=\$(\"\$tool\" field registry_token \"\$key\")|    REGISTRY_TOKEN=some-other-token|' ut-install"
+
+    install_walk_discriminates "a license read without being checked" \
+        "a license that has ended stops the install" \
+        "sed -i.bak 's|^    if ! \"\$tool\" check \"\$key\"; then|    if false; then|' ut-install"
+
+    install_walk_discriminates "a license that is not kept for the next update" \
+        "the license is kept for updates, readable by root alone" \
+        "sed -i.bak 's|^    install -m 600 \"\$key\" \"\$LICENSE_STORE\"|    :|' ut-install"
+
+    install_walk_discriminates "a registry login with the images already here" \
+        "a license needs no registry login" \
+        "sed -i.bak 's|^    if ! \$DO_PULL; then\$|    if false; then|' ut-install"
+
+    install_walk_discriminates "the carried token written to the log" \
+        "the token a license carries never reaches the output" \
+        "sed -i.bak 's|^    REGISTRY_USER=\$(\"\$tool\" field registry_user \"\$key\")|&; log_info \"\$(\"\$tool\" field registry_token \"\$key\")\"|' ut-install"
+
+    install_walk_discriminates "a token alone accepted without a word" \
+        "a registry token alone still installs, and says a license will be needed" \
+        "sed -i.bak 's|is accepted by this version only|works|' ut-install"
+
     install_walk_discriminates "writing through a link whose directory is gone" \
         "it is recreated rather than reported as a broken link" \
         "sed -i.bak 's|^    install -d -m 750 |    : |' ut-install"

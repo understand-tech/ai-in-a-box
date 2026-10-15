@@ -10,6 +10,7 @@ VERSION="${VERSION:-0.0.0-test}"
 
 cleanup() {
     docker run --rm -v "$WORK_DIR":/w "$ALPINE_IMAGE" sh -c 'rm -rf /w/..?* /w/.[!.]* /w/*' >/dev/null 2>&1
+    [[ -n "${WITH_OPENSSL_IMAGE:-}" ]] && docker image rm "$WITH_OPENSSL_IMAGE" >/dev/null 2>&1
     rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
@@ -83,6 +84,7 @@ case "$1 $2" in
     "network inspect")    exit 1 ;;
     "network create")     exit "${NETWORK_CREATE_EXIT:-0}" ;;
     "compose pull")       exit "${PULL_EXIT:-0}" ;;
+    "login "*)            cat > /stub/docker-login-stdin ;;
     *)                    exit 0 ;;
 esac
 DOCKER
@@ -133,6 +135,10 @@ printf 'EXIT=%s\n' "\$?" >> /w/$state/output.txt
 cp /etc/understandtech/.env /w/$state/env 2>/dev/null || : > /w/$state/env
 cp /etc/understandtech/local.env /w/$state/local-env 2>/dev/null || : > /w/$state/local-env
 cp /opt/understandtech/.env /w/$state/checkout-env 2>/dev/null || : > /w/$state/checkout-env
+cp /stub/docker-calls /w/$state/docker-calls 2>/dev/null || : > /w/$state/docker-calls
+cp /stub/docker-login-stdin /w/$state/login-stdin 2>/dev/null || : > /w/$state/login-stdin
+cp /etc/understandtech/license /w/$state/license 2>/dev/null || : > /w/$state/license
+stat -c '%a %U' /etc/understandtech/license > /w/$state/license-mode 2>/dev/null || : > /w/$state/license-mode
 chmod -R a+rw /w/$state
 PROBE
 
@@ -142,7 +148,7 @@ PROBE
         -e NETWORK_CREATE_EXIT="${NETWORK_CREATE_EXIT:-0}" \
         -e PULL_EXIT="${PULL_EXIT:-9}" \
         -e DISK_AVAIL_BYTES="${DISK_AVAIL_BYTES:-}" \
-        "$DEBIAN_IMAGE" bash /w/walk-$state.sh >/dev/null 2>&1
+        "${WALK_IMAGE:-$DEBIAN_IMAGE}" bash /w/walk-$state.sh >/dev/null 2>&1
 }
 
 state_setup() {
@@ -154,6 +160,12 @@ state_setup() {
         launched_from_a_checkout|checkout_but_no_key)
             echo 'install -d /srv/clone && cp -a /usr/share/understandtech/. /srv/clone/ && install -d /srv/clone/.git && cp /usr/bin/ut-install /srv/clone/ut-install' ;;
         empty_settings) echo 'install -m 600 /dev/null /etc/understandtech/.env' ;;
+        # The packaged ut-license carries the real public key; these states swap
+        # in one whose private half the suite holds, the way an issued key is.
+        licensed|license_tampered|license_ended|licensed_offline)
+            echo 'cp /w/licenses/ut-license /usr/bin/ut-license' ;;
+        license_stored)
+            echo 'cp /w/licenses/ut-license /usr/bin/ut-license && install -d -m 750 /etc/understandtech && install -m 600 /w/licenses/valid.lic /etc/understandtech/license' ;;
         already_set)   echo 'install -m 600 /usr/share/understandtech/release.env /etc/understandtech/.env' ;;
         no_settings_dir) echo 'rm -rf /etc/understandtech' ;;
         pools_full)    echo ': # the daemon refuses through the stub' ;;
@@ -548,7 +560,7 @@ a_checkout_under_foot_needs_no_token() {
 a_machine_with_no_credentials_is_still_asked() {
     local output
     output=$(output_of checkout_but_no_key)
-    grep -qE 'Registry token for|registry token is needed|No registry token supplied' <<< "$output" && return 0
+    grep -qE 'License key from|license key is needed|No license key supplied' <<< "$output" && return 0
     echo "it went ahead without ever asking for a key"
     tail -6 <<< "$output"
     return 1
@@ -589,11 +601,127 @@ the_way_back_comes_before_the_way_out() {
     return 1
 }
 
+LICENSE_USER=licensed-user
+LICENSE_TOKEN=license-carried-token-0001
+
+# The walk installs the package with --force-depends, so openssl, which the
+# package declares, is not there; a license check cannot run without it.
+WITH_OPENSSL_IMAGE=""
+
+prepare_licenses() {
+    local work="$WORK_DIR/licenses"
+    mkdir -p "$work"
+    WITH_OPENSSL_IMAGE=$(docker build -q - 2>/dev/null <<DOCKERFILE
+FROM ${DEBIAN_IMAGE}
+RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
+DOCKERFILE
+) || { echo "Could not build the image the license walks run in." >&2; exit 1; }
+    openssl ecparam -name prime256v1 -genkey -noout -out "$work/license.key" 2>/dev/null
+    openssl ec -in "$work/license.key" -pubout -out "$work/license.pub" 2>/dev/null
+    python3 - "$REPO_ROOT/ut-license" "$work/license.pub" "$work/ut-license" <<'SWAP'
+import pathlib, re, sys
+original, pub, out = (pathlib.Path(a) for a in sys.argv[1:4])
+out.write_text(re.sub(r"LICENSE_PUBLIC_KEY='[^']*'",
+                      "LICENSE_PUBLIC_KEY='" + pub.read_text().strip() + "'", original.read_text(), count=1))
+SWAP
+    chmod 755 "$work/ut-license"
+    printf '%s\n' "$LICENSE_TOKEN" > "$work/token"
+    "$REPO_ROOT/packaging/issue-license.sh" --customer "Walk Customer" \
+        --expires "$(( $(date -u +%Y) + 1 ))-12-31" --token-file "$work/token" \
+        --registry-user "$LICENSE_USER" --signing-key "$work/license.key" > "$work/valid.lic"
+    python3 - "$work/valid.lic" "$work/tampered.lic" <<'TAMPER'
+import base64, sys
+fmt, payload, signature = open(sys.argv[1]).read().strip().split(".")
+renamed = base64.b64decode(payload).replace(b"customer=Walk Customer", b"customer=Someone Else", 1)
+open(sys.argv[2], "w").write(".".join([fmt, base64.b64encode(renamed).decode(), signature]) + "\n")
+TAMPER
+    # issue-license.sh refuses an end date in the past, so the ended key is
+    # signed here, the way a key issued last year would have been.
+    printf 'version=1\ncustomer=Walk Customer\nissued=2019-01-01\nexpires=2020-01-01\nrights=platform\nregistry_user=%s\nregistry_token=%s\n' \
+        "$LICENSE_USER" "$LICENSE_TOKEN" > "$work/ended.payload"
+    openssl dgst -sha256 -sign "$work/license.key" -out "$work/ended.sig" "$work/ended.payload"
+    printf 'UT1.%s.%s\n' "$(openssl base64 -A < "$work/ended.payload")" \
+        "$(openssl base64 -A < "$work/ended.sig")" > "$work/ended.lic"
+    chmod 644 "$work"/*.lic
+}
+
+of_state() { cat "$WORK_DIR/$1/$2" 2>/dev/null; }
+
+logged_in_with_the_license() {
+    local state=$1
+    grep -q "^login ghcr.io -u ${LICENSE_USER} --password-stdin" <<< "$(of_state "$state" docker-calls)" \
+        || { echo "no registry login as ${LICENSE_USER}:"; of_state "$state" docker-calls | grep login; output_of "$state" | tail -5; return 1; }
+    [[ "$(of_state "$state" login-stdin)" == "$LICENSE_TOKEN" ]] && return 0
+    echo "the registry login was not given the token the license carries"
+    return 1
+}
+
+never_logged_in() {
+    local state=$1
+    grep -q '^login ' <<< "$(of_state "$state" docker-calls)" || return 0
+    echo "it logged into the registry anyway"
+    return 1
+}
+
+a_license_installs_with_the_token_it_carries() {
+    reached_the_pull licensed && logged_in_with_the_license licensed
+}
+
+the_license_is_kept_for_root_alone() {
+    [[ "$(of_state licensed license-mode)" == "600 root" ]] \
+        || { echo "the stored license is '$(of_state licensed license-mode)', not 600 root"; return 1; }
+    [[ "$(of_state licensed license)" == "$(cat "$WORK_DIR/licenses/valid.lic")" ]] && return 0
+    echo "the stored license is not the key that was given"
+    return 1
+}
+
+an_update_takes_the_license_already_there() {
+    reached_the_pull license_stored && logged_in_with_the_license license_stored
+}
+
+an_altered_license_stops_before_any_login() {
+    grep -q 'not issued by UnderstandTech' <<< "$(output_of license_tampered)" \
+        && grep -q '^EXIT=1$' <<< "$(output_of license_tampered)" \
+        || { echo "an altered key was not refused:"; output_of license_tampered | tail -5; return 1; }
+    never_logged_in license_tampered
+}
+
+an_ended_license_stops_the_install_and_says_when() {
+    grep -q 'ended on 2020-01-01' <<< "$(output_of license_ended)" \
+        && grep -q '^EXIT=1$' <<< "$(output_of license_ended)" \
+        || { echo "an ended license was not refused:"; output_of license_ended | tail -5; return 1; }
+    never_logged_in license_ended
+}
+
+images_already_here_need_no_registry_login() {
+    grep -q 'Licensed to Walk Customer' <<< "$(output_of licensed_offline)" \
+        || { echo "the license was not checked:"; output_of licensed_offline | tail -5; return 1; }
+    never_logged_in licensed_offline
+}
+
+the_carried_token_never_reaches_the_output() {
+    local state
+    for state in licensed license_stored license_tampered license_ended licensed_offline; do
+        grep -qF "$LICENSE_TOKEN" <<< "$(output_of "$state")" \
+            && { echo "the registry token appears in the output of ${state}"; return 1; }
+    done
+    return 0
+}
+
+a_token_alone_still_installs_and_says_so() {
+    reached_the_pull bare \
+        && grep -q 'accepted by this version only' <<< "$(output_of bare)" && return 0
+    echo "a token on its own was refused, or nothing said a license key will be needed"
+    output_of bare | grep -i -E 'token|license' | head -3
+    return 1
+}
+
 printf '%sWalking a fresh install%s %s(the installer, from a machine in a known state)%s\n\n' \
     "$BOLD" "$NC" "$DIM" "$NC"
 
 build_the_package
 write_machine_stubs
+prepare_licenses
 
 run_install_from_state bare
 PULL_EXIT=0 run_install_from_state install_runs_through
@@ -618,6 +746,15 @@ DISK_AVAIL_BYTES=$((91 * 1000 * 1000 * 1000)) \
     run_install_from_state no_accelerator_on_a_smaller_disk
 INSTALL_COMMAND="ut-install --no-gpu" run_install_from_state no_accelerator_by_flag
 INSTALL_COMMAND="ut-install --no-gpu" run_install_from_state no_accelerator_pointed_at_a_real_machine
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --license-file /w/licenses/valid.lic" \
+    run_install_from_state licensed
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --license-file /w/licenses/tampered.lic" \
+    run_install_from_state license_tampered
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --license-file /w/licenses/ended.lic" \
+    run_install_from_state license_ended
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= run_install_from_state license_stored
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --license-file /w/licenses/valid.lic --skip-pull --health-timeout 5" \
+    run_install_from_state licensed_offline
 run_install_from_state backup_destination_mounted
 run_install_from_state backup_destination_not_mounted
 run_install_from_state backup_destination_gone_on_an_update
@@ -702,6 +839,24 @@ property "the secrets can be found afterwards" \
     the_secrets_are_findable_without_a_terminal
 property "and none of them reached the log" \
     no_secret_reaches_the_log
+
+printf '\n%sA license key%s\n' "$BOLD" "$NC"
+property "a license key installs, and logs in with the token it carries" \
+    a_license_installs_with_the_token_it_carries
+property "the license is kept for updates, readable by root alone" \
+    the_license_is_kept_for_root_alone
+property "an update takes the license already on the machine" \
+    an_update_takes_the_license_already_there
+property "an altered license stops the install before any login" \
+    an_altered_license_stops_before_any_login
+property "a license that has ended stops the install, and says when" \
+    an_ended_license_stops_the_install_and_says_when
+property "with the images already here, a license needs no registry login" \
+    images_already_here_need_no_registry_login
+property "the token a license carries never reaches the output" \
+    the_carried_token_never_reaches_the_output
+property "a registry token alone still installs, and says a license will be needed" \
+    a_token_alone_still_installs_and_says_so
 
 printf '\n%sLaunched from a checkout%s\n' "$BOLD" "$NC"
 property "it takes the checkout it is standing in, and asks for no token" \
