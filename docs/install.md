@@ -168,8 +168,9 @@ sudo ut-install --domain box.example.com
 ```
 
 It asks for the license key, or reads it from `--license-file`, or takes it from
-`UT_LICENSE`. The key is checked before anything else, with no network, and kept
-in `/etc/understandtech/license`, readable by root only, so an update does not ask
+`UT_LICENSE`. The key is checked right after the preflight, with no network,
+before anything is written or downloaded, and kept in
+`/etc/understandtech/license`, readable by root only, so an update does not ask
 again. The registry access it carries is never passed on a command line and never
 written to the log.
 
