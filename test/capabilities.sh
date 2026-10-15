@@ -731,6 +731,105 @@ the_shipped_key_is_the_one_the_release_is_signed_with() {
     return 1
 }
 
+# A license key is what a customer types to get the product and its images, so
+# like the package it is only worth what it refuses — and it carries a registry
+# token that must never come back out on a screen or in a log.
+LICENSE_TEST_TOKEN=ghp_licenseTestTokenNeverPrinted0001
+
+license_verdicts() {
+    local work="$WORK_DIR/license"
+    mkdir -p "$work"
+    if [[ ! -s "$work/verdicts.txt" ]]; then
+        openssl ecparam -name prime256v1 -genkey -noout -out "$work/license.key" 2>/dev/null
+        openssl ec -in "$work/license.key" -pubout -out "$work/license.pub" 2>/dev/null
+        openssl ecparam -name prime256v1 -genkey -noout -out "$work/other.key" 2>/dev/null
+        printf '%s\n' "$LICENSE_TEST_TOKEN" > "$work/token"
+
+        python3 - "$REPO_ROOT/ut-license" "$work/license.pub" "$work/ut-license" <<'SWAP'
+import pathlib, re, sys
+original, pub, out = (pathlib.Path(a) for a in sys.argv[1:4])
+text = original.read_text()
+swapped = re.sub(r"LICENSE_PUBLIC_KEY='[^']*'",
+                 "LICENSE_PUBLIC_KEY='" + pub.read_text().strip() + "'", text, count=1)
+out.write_text(swapped)
+SWAP
+        chmod +x "$work/ut-license"
+
+        local issue="$REPO_ROOT/packaging/issue-license.sh" next_year
+        next_year="$(( $(date -u +%Y) + 1 ))-12-31"
+        "$issue" --customer "Test Customer" --expires "$next_year" --token-file "$work/token" \
+            --signing-key "$work/license.key" > "$work/issued.lic" 2>/dev/null
+        "$issue" --customer "Test Customer" --expires "$next_year" --token-file "$work/token" \
+            --signing-key "$work/other.key" > "$work/foreign.lic" 2>/dev/null
+        python3 - "$work/issued.lic" "$work/tampered.lic" <<'TAMPER'
+import base64, sys
+fmt, payload, signature = open(sys.argv[1]).read().strip().split(".")
+renamed = base64.b64decode(payload).replace(b"customer=Test Customer", b"customer=Someone Else", 1)
+open(sys.argv[2], "w").write(".".join([fmt, base64.b64encode(renamed).decode(), signature]) + "\n")
+TAMPER
+        printf 'not a license key\n' > "$work/garbage.lic"
+
+        local name
+        {
+            for name in issued tampered foreign garbage; do
+                printf '%s=%s\n' "$name" \
+                    "$("$work/ut-license" check "$work/$name.lic" >/dev/null 2>&1 && echo accepted || echo refused)"
+            done
+            printf 'issued_without_an_end=%s\n' \
+                "$("$issue" --customer "Test Customer" --token-file "$work/token" \
+                    --signing-key "$work/license.key" >/dev/null 2>&1 && echo issued || echo refused)"
+            printf 'issued_to_nobody=%s\n' \
+                "$("$issue" --expires "$next_year" --token-file "$work/token" \
+                    --signing-key "$work/license.key" >/dev/null 2>&1 && echo issued || echo refused)"
+        } > "$work/verdicts.txt"
+    fi
+    cat "$work/verdicts.txt"
+}
+
+license_verdict_is() {
+    local key=$1 expected=$2 verdicts
+    verdicts=$(license_verdicts)
+    grep -qx "${key}=${expected}" <<< "$verdicts" && return 0
+    echo "expected ${key}=${expected}, verdicts were:"; echo "$verdicts"; return 1
+}
+
+a_license_we_issued_is_accepted() {
+    license_verdict_is issued accepted
+}
+
+a_license_nobody_issued_is_refused() {
+    license_verdict_is tampered refused \
+        && license_verdict_is foreign refused \
+        && license_verdict_is garbage refused
+}
+
+a_license_without_a_customer_or_an_end_is_never_issued() {
+    license_verdict_is issued_without_an_end refused \
+        && license_verdict_is issued_to_nobody refused
+}
+
+checking_a_license_never_prints_its_token() {
+    local work="$WORK_DIR/license" said name
+    license_verdicts >/dev/null
+    for name in issued tampered foreign garbage; do
+        said+=$("$work/ut-license" check "$work/$name.lic" 2>&1)
+        said+=$("$work/ut-license" check - < "$work/$name.lic" 2>&1)
+    done
+    grep -qF "$LICENSE_TEST_TOKEN" <<< "$said" || return 0
+    echo "the registry token came out of ut-license check"
+    return 1
+}
+
+a_license_checks_with_no_network_at_all() {
+    local work="$WORK_DIR/license" said
+    license_verdicts >/dev/null
+    said=$(docker run --rm --network none -v "$work":/w:ro --entrypoint sh "$MONGODB_IMAGE" \
+        -c '/w/ut-license check /w/issued.lic' 2>&1)
+    grep -q 'Licensed to Test Customer' <<< "$said" && return 0
+    echo "with no network at all, ut-license said: ${said:-nothing}"
+    return 1
+}
+
 # GitHub reports an unparseable workflow after the push that broke it, on the
 # run that was supposed to do the work.
 every_workflow_parses() {
@@ -1565,6 +1664,20 @@ if [[ -x "$REPO_ROOT/ut-verify" ]]; then
         the_shipped_key_is_the_one_the_release_is_signed_with
     capability "and it verifies with no network at all" \
         a_package_verifies_with_no_network_at_all
+fi
+
+if [[ -x "$REPO_ROOT/ut-license" ]]; then
+    group "License keys"
+    capability "a license key we issued is accepted" \
+        a_license_we_issued_is_accepted
+    capability "one that was altered, signed by another key, or is not a key at all is refused" \
+        a_license_nobody_issued_is_refused
+    capability "a license with no customer or no end date is never issued" \
+        a_license_without_a_customer_or_an_end_is_never_issued
+    capability "checking a license never prints the registry token it carries" \
+        checking_a_license_never_prints_its_token
+    capability "and a license checks with no network at all" \
+        a_license_checks_with_no_network_at_all
 fi
 
 if [[ -d "$REPO_ROOT/.github/workflows" ]]; then

@@ -31,7 +31,7 @@ fresh_copy() {
     ( cd "$REPO_ROOT" && tar -cf - release.env compose.yaml compose.appbuilder.yaml \
         compose.compute.yaml compose.no-gpu.yaml compose.backup-mount.yaml compose.backup-network.yaml \
         Caddyfile caddy metrics backup-files.sh \
-        setup-autostart.sh ut-logs-archive ut-install ut-certificate ut-verify ut-status ut-report ut-send go.mod cmd appbuilder docs \
+        setup-autostart.sh ut-logs-archive ut-install ut-certificate ut-verify ut-license ut-status ut-report ut-send go.mod cmd appbuilder docs \
         packaging README.md test .github 2>/dev/null ) | tar -xf - -C "$COPY" 2>/dev/null
 }
 
@@ -635,6 +635,24 @@ if [[ -x "$REPO_ROOT/ut-verify" ]]; then
     capability_discriminates "a shipped key that is not the signing key" \
         "the key ut-verify carries is the key the release is signed with" \
         "openssl ecparam -name prime256v1 -genkey -noout -out /tmp/other-\$\$.pem 2>/dev/null && openssl ec -in /tmp/other-\$\$.pem -pubout -out packaging/release.pub 2>/dev/null"
+fi
+
+if [[ -x "$REPO_ROOT/ut-license" ]]; then
+    capability_discriminates "a license check that refuses what we issued" \
+        "a license key we issued is accepted" \
+        "sed -i.bak 's|-signature \"\$signature\"|-signature /dev/null|' ut-license"
+
+    capability_discriminates "a license check that accepts any key that parses" \
+        "is not a key at all is refused" \
+        "sed -i.bak 's|&& openssl dgst -sha256 -verify .*; then$|; then|' ut-license"
+
+    capability_discriminates "a license that quietly defaults to an end date nobody chose" \
+        "a license with no customer or no end date is never issued" \
+        "sed -i.bak 's|^customer=\"\" expires=\"\"|customer=\"\" expires=\"2999-12-31\"|' packaging/issue-license.sh"
+
+    capability_discriminates "a license check that shows what the key carries" \
+        "checking a license never prints the registry token it carries" \
+        "sed -i.bak 's|^    customer=\$(payload_field|    cat \"\$payload\" >\&2; customer=\$(payload_field|' ut-license"
 fi
 
 if [[ -d "$REPO_ROOT/.github/workflows" ]]; then
