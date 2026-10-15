@@ -5,6 +5,8 @@ set -Eeuo pipefail
 # The public half of the license signing key, kept apart from the release key so
 # that a leak of either one forges only what it signs.
 LICENSE_PUBLIC_KEY='-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEr6MNxC17yIdmZ05auhoAJnKSJlaN
+OQTxkUF51gKBJVi9fhFglrm/0oLQkmCj2GiodOirttTScG0bPk748BNtxQ==
 -----END PUBLIC KEY-----'
 
 LICENSE_FORMAT=UT1

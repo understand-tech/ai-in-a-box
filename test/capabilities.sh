@@ -820,6 +820,16 @@ checking_a_license_never_prints_its_token() {
     return 1
 }
 
+the_shipped_key_is_the_one_licenses_are_signed_with() {
+    local embedded versioned
+    embedded=$("$REPO_ROOT/ut-license" --fingerprint)
+    versioned="SHA256: $(openssl pkey -pubin -in "$REPO_ROOT/packaging/license.pub" -outform DER 2>/dev/null \
+        | openssl dgst -sha256 -r | cut -d' ' -f1)"
+    [[ "$embedded" == "$versioned" ]] && return 0
+    echo "ut-license carries ${embedded}, packaging/license.pub is ${versioned}"
+    return 1
+}
+
 a_license_checks_with_no_network_at_all() {
     local work="$WORK_DIR/license" said
     license_verdicts >/dev/null
@@ -1676,6 +1686,8 @@ if [[ -x "$REPO_ROOT/ut-license" ]]; then
         a_license_without_a_customer_or_an_end_is_never_issued
     capability "checking a license never prints the registry token it carries" \
         checking_a_license_never_prints_its_token
+    capability "the key ut-license carries is the key licenses are signed with" \
+        the_shipped_key_is_the_one_licenses_are_signed_with
     capability "and a license checks with no network at all" \
         a_license_checks_with_no_network_at_all
 fi

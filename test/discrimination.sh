@@ -650,6 +650,10 @@ if [[ -x "$REPO_ROOT/ut-license" ]]; then
         "a license with no customer or no end date is never issued" \
         "sed -i.bak 's|^customer=\"\" expires=\"\"|customer=\"\" expires=\"2999-12-31\"|' packaging/issue-license.sh"
 
+    capability_discriminates "a shipped license key that is not the signing key" \
+        "the key ut-license carries is the key licenses are signed with" \
+        "openssl ecparam -name prime256v1 -genkey -noout -out /tmp/other-\$\$.pem 2>/dev/null && openssl ec -in /tmp/other-\$\$.pem -pubout -out packaging/license.pub 2>/dev/null"
+
     capability_discriminates "a license check that shows what the key carries" \
         "checking a license never prints the registry token it carries" \
         "sed -i.bak 's|^    customer=\$(payload_field|    cat \"\$payload\" >\&2; customer=\$(payload_field|' ut-license"
