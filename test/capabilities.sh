@@ -1528,15 +1528,21 @@ a_password_that_does_not_open_the_repository_is_named() {
 # The image starts mongod once to create the root account, stops it, and starts
 # it again: a ping answered during the first start is answered by a server
 # about to go away.
+#
+# Bounded by the clock rather than by a count of tries: on a loaded x86 runner
+# each try is several seconds of mongosh, and sixty of them ran out while two
+# servers were still starting. A server that died is not waited for.
 mongo_ready() {
-    local node=$1 user=$2 password=$3 attempt
-    for attempt in $(seq 1 60); do
+    local node=$1 user=$2 password=$3 started=$SECONDS deadline=$((SECONDS + 180))
+    while (( SECONDS < deadline )); do
+        [[ "$(docker inspect -f '{{.State.Running}}' "$node" 2>/dev/null)" == true ]] || break
         docker logs "$node" 2>&1 | grep -q 'init process complete' \
             && docker exec "$node" mongosh --quiet -u "$user" -p "$password" --authenticationDatabase admin \
                 --eval 'db.runCommand({ping:1}).ok' 2>/dev/null | grep -qx 1 && return 0
         sleep 1
     done
-    echo "$node never came up"
+    echo "$node never came up: $(docker inspect -f 'status={{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}}' "$node" 2>&1), after $((SECONDS - started))s"
+    docker logs --tail 5 "$node" 2>&1 | sed 's/^/    /'
     return 1
 }
 
