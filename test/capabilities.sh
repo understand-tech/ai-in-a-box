@@ -707,6 +707,23 @@ a_package_nobody_signed_is_refused() {
         && verdict_is NO_SIGNATURE_AT_ALL refused
 }
 
+# Seen on a machine where mktemp was refused: --fingerprint printed the hash of
+# an empty file and exited 0, which is what a trust anchor must never do.
+a_key_that_cannot_be_read_never_fingerprints_as_nothing() {
+    local tool said
+    for tool in ut-verify ut-license; do
+        [[ -x "$REPO_ROOT/$tool" ]] || continue
+        said=$(docker run --rm -e TMPDIR=/nonexistent -v "$REPO_ROOT":/src:ro "$DEBIAN_IMAGE" \
+            bash "/src/$tool" --fingerprint 2>&1; echo "STATUS=$?")
+        if grep -q 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855' <<< "$said" \
+            || grep -q 'STATUS=0' <<< "$said"; then
+            echo "${tool} --fingerprint with no temporary file said: ${said}"
+            return 1
+        fi
+    done
+    return 0
+}
+
 # ut-verify exists because dpkg verifies nothing on its own and a customer's box
 # has no network. That second half had never been exercised: every run of it so
 # far had one. mongo:8.2 is the only image this suite already pulls that ships
@@ -830,6 +847,21 @@ the_shipped_key_is_the_one_licenses_are_signed_with() {
     return 1
 }
 
+# issue-license.sh refuses an end date in the past, so a license that ended is
+# signed here, the way one issued in 2019 would have been.
+ended_license() {
+    local work="$WORK_DIR/license"
+    license_verdicts >/dev/null
+    if [[ ! -s "$work/ended.lic" ]]; then
+        printf 'version=1\ncustomer=Test Customer\nissued=2019-01-01\nexpires=2020-01-01\nrights=platform\nregistry_user=u\nregistry_token=%s\n' \
+            "$LICENSE_TEST_TOKEN" > "$work/ended.payload"
+        openssl dgst -sha256 -sign "$work/license.key" -out "$work/ended.sig" "$work/ended.payload"
+        printf 'UT1.%s.%s\n' "$(openssl base64 -A < "$work/ended.payload")" \
+            "$(openssl base64 -A < "$work/ended.sig")" > "$work/ended.lic"
+    fi
+    printf '%s' "$work/ended.lic"
+}
+
 boot_unit() {
     docker run --rm -i -v "$REPO_ROOT":/src:ro "$BASH_IMAGE" bash -s 2>&1 <<'PROBE'
 set -u
@@ -848,12 +880,7 @@ PROBE
 # it has to say so, and it has to let the stack come up.
 an_ended_license_is_said_at_boot_and_never_stops_the_stack() {
     local work="$WORK_DIR/license" line command said status
-    license_verdicts >/dev/null
-    printf 'version=1\ncustomer=Test Customer\nissued=2019-01-01\nexpires=2020-01-01\nrights=platform\nregistry_user=u\nregistry_token=%s\n' \
-        "$LICENSE_TEST_TOKEN" > "$work/ended.payload"
-    openssl dgst -sha256 -sign "$work/license.key" -out "$work/ended.sig" "$work/ended.payload"
-    printf 'UT1.%s.%s\n' "$(openssl base64 -A < "$work/ended.payload")" \
-        "$(openssl base64 -A < "$work/ended.sig")" > "$work/ended.lic"
+    ended_license >/dev/null
 
     line=$(grep '^ExecStartPre=.*ut-license' <<< "$(boot_unit)") \
         || { echo "the boot service does not check the license"; return 1; }
@@ -1715,6 +1742,8 @@ if [[ -x "$REPO_ROOT/ut-verify" ]]; then
         a_package_nobody_signed_is_refused
     capability "the key ut-verify carries is the key the release is signed with" \
         the_shipped_key_is_the_one_the_release_is_signed_with
+    capability "a key that cannot be read never fingerprints as the hash of nothing" \
+        a_key_that_cannot_be_read_never_fingerprints_as_nothing
     capability "and it verifies with no network at all" \
         a_package_verifies_with_no_network_at_all
 fi
@@ -1907,8 +1936,27 @@ ut_status_says_whether_reports_go_out() {
     return 1
 }
 
+ut_status_says_how_the_license_stands() {
+    local work="$WORK_DIR/license" probe current ended
+    ended=$(ended_license)
+    probe=$(history_probe)
+    current=$(UT_LICENSE_STORE="$work/issued.lic" UT_LICENSE_TOOL="$work/ut-license" \
+        "$REPO_ROOT/ut-status" --dir "$probe" 2>&1)
+    grep -q '\[ ok \] Licensed to Test Customer until ' <<< "$current" \
+        || { echo "a current license was not said:"; echo "$current"; return 1; }
+    ended=$(UT_LICENSE_STORE="$ended" UT_LICENSE_TOOL="$work/ut-license" \
+        "$REPO_ROOT/ut-status" --dir "$probe" 2>&1)
+    grep -q '\[warn\] The license of Test Customer ended on 2020-01-01' <<< "$ended" \
+        || { echo "an ended license was not warned about:"; echo "$ended"; return 1; }
+    grep -qF "$LICENSE_TEST_TOKEN" <<< "${current}${ended}" || return 0
+    echo "the registry token came out of ut-status"
+    return 1
+}
+
 if [[ -x "$REPO_ROOT/ut-status" ]]; then
     group "Telling whether an install serves"
+    capability "it says how the license stands, and warns when it has ended" \
+        ut_status_says_how_the_license_stands
     capability "it says whether usage reports go out, and warns when nothing sends them" \
         ut_status_says_whether_reports_go_out
     capability "a directory with no install is refused, not called healthy" \
