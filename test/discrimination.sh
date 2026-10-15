@@ -626,6 +626,10 @@ if [[ -x "$REPO_ROOT/ut-verify" ]]; then
         "not signed at all is refused" \
         "sed -i.bak 's|^    if openssl dgst .*; then$|    if true; then|' ut-verify"
 
+    capability_discriminates "a fingerprint taken of a key file never written" \
+        "never fingerprints as the hash of nothing" \
+        "sed -i.bak -e 's/ || return 1\$//' -e 's/ || fail \"Cannot write the key to a temporary file\"//' -e 's/|| { rm -f \"\$key\"; fail \"openssl could not read the key\"; }/|| true/' ut-verify"
+
     # The regression this guards is a key fetched rather than carried: it
     # passes on a developer's machine and fails on the only machine that counts.
     capability_discriminates "a key fetched instead of carried" \

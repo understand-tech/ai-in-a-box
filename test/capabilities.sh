@@ -707,6 +707,23 @@ a_package_nobody_signed_is_refused() {
         && verdict_is NO_SIGNATURE_AT_ALL refused
 }
 
+# Seen on a machine where mktemp was refused: --fingerprint printed the hash of
+# an empty file and exited 0, which is what a trust anchor must never do.
+a_key_that_cannot_be_read_never_fingerprints_as_nothing() {
+    local tool said
+    for tool in ut-verify ut-license; do
+        [[ -x "$REPO_ROOT/$tool" ]] || continue
+        said=$(docker run --rm -e TMPDIR=/nonexistent -v "$REPO_ROOT":/src:ro "$DEBIAN_IMAGE" \
+            bash "/src/$tool" --fingerprint 2>&1; echo "STATUS=$?")
+        if grep -q 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855' <<< "$said" \
+            || grep -q 'STATUS=0' <<< "$said"; then
+            echo "${tool} --fingerprint with no temporary file said: ${said}"
+            return 1
+        fi
+    done
+    return 0
+}
+
 # ut-verify exists because dpkg verifies nothing on its own and a customer's box
 # has no network. That second half had never been exercised: every run of it so
 # far had one. mongo:8.2 is the only image this suite already pulls that ships
@@ -1715,6 +1732,8 @@ if [[ -x "$REPO_ROOT/ut-verify" ]]; then
         a_package_nobody_signed_is_refused
     capability "the key ut-verify carries is the key the release is signed with" \
         the_shipped_key_is_the_one_the_release_is_signed_with
+    capability "a key that cannot be read never fingerprints as the hash of nothing" \
+        a_key_that_cannot_be_read_never_fingerprints_as_nothing
     capability "and it verifies with no network at all" \
         a_package_verifies_with_no_network_at_all
 fi

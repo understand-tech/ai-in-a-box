@@ -37,18 +37,22 @@ EOF
 
 fail() { printf '%s[fail]%s %s\n' "$RED" "$NC" "$*" >&2; exit 1; }
 
+# A command substitution does not inherit set -e: without the explicit checks, a
+# key file that could not be written fingerprints as the hash of nothing.
 key_file() {
     local file
-    file=$(mktemp)
-    printf '%s\n' "$RELEASE_PUBLIC_KEY" > "$file"
+    file=$(mktemp) || return 1
+    printf '%s\n' "$RELEASE_PUBLIC_KEY" > "$file" || return 1
     printf '%s' "$file"
 }
 
 print_fingerprint() {
-    local key; key=$(key_file)
-    printf 'SHA256: %s\n' \
-        "$(openssl pkey -pubin -in "$key" -outform DER | openssl dgst -sha256 -r | cut -d' ' -f1)"
+    local key fingerprint
+    key=$(key_file) || fail "Cannot write the key to a temporary file"
+    fingerprint=$(openssl pkey -pubin -in "$key" -outform DER | openssl dgst -sha256 -r | cut -d' ' -f1) \
+        || { rm -f "$key"; fail "openssl could not read the key"; }
     rm -f "$key"
+    printf 'SHA256: %s\n' "$fingerprint"
 }
 
 verify() {
@@ -58,7 +62,7 @@ verify() {
     [[ -f "$signature" ]] || fail "No signature beside it: ${signature}"
     command -v openssl >/dev/null 2>&1 || fail "openssl is required"
 
-    key=$(key_file)
+    key=$(key_file) || fail "Cannot write the key to a temporary file"
     if openssl dgst -sha256 -verify "$key" -signature "$signature" "$package" >/dev/null 2>&1; then
         rm -f "$key"
         printf '%s[ ok ]%s %s\n' "$GREEN" "$NC" "$(basename "$package") is signed by UnderstandTech"
