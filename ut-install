@@ -38,6 +38,9 @@ DO_PULL=true
 NO_GPU=false
 TOKEN_FILE=""
 REGISTRY_TOKEN="${UT_REGISTRY_TOKEN:-}"
+LICENSE_FILE=""
+LICENSE="${UT_LICENSE:-}"
+LICENSE_STORE="/etc/understandtech/license"
 HEALTH_TIMEOUT="${UT_HEALTH_TIMEOUT:-3600}"
 REPORTING="${UT_REPORTING:-}"
 REPORTING_RECEIVER=""
@@ -96,7 +99,10 @@ Options
   --update             Fast-forward an existing checkout to the target ref.
                        Off by default so a support fix applied on the machine
                        is not silently discarded.
-  --token-file PATH    Read the registry token from a file instead of a prompt.
+  --license-file PATH  The license key UnderstandTech issued for this machine.
+                       Asked for when it is not given and none is stored yet.
+  --token-file PATH    A registry token instead of a license key. Accepted by
+                       this version only.
   --dir PATH           Install directory. Defaults to /usr/share/understandtech
   --from-checkout PATH Take the settings from an install that lives in a git
                        checkout. Found on its own when there is exactly one;
@@ -130,13 +136,17 @@ Options
   -h, --help           This message.
 
 Environment
-  UT_REGISTRY_TOKEN    Registry token, instead of --token-file or the prompt.
+  UT_LICENSE           License key, instead of --license-file or the prompt.
+  UT_REGISTRY_TOKEN    Registry token, instead of --token-file.
   UT_REPO_REF          Branch or tag to install (default: main).
   UT_DOMAIN            Address the platform is served at.
   UT_REPORTING         yes or no, as --reporting.
 
-The registry token is read from UT_REGISTRY_TOKEN, from --token-file, or from a
-hidden prompt. It is never passed on a command line and never written to the log.
+The license key is read from UT_LICENSE, from --license-file, from the key stored
+by an earlier install, or from a hidden prompt. It is checked before anything
+else, kept in /etc/understandtech/license, and the registry token it carries is
+never passed on a command line nor written to the log. A license that has ended
+stops an install or an update, never a platform that is running.
 EOF
 }
 
@@ -575,7 +585,65 @@ read_token() {
     [[ -n "$REGISTRY_TOKEN" ]] || die "No registry token supplied."
 }
 
+license_tool() {
+    local beside
+    beside="$(dirname "${BASH_SOURCE[0]}")/ut-license"
+    if [[ -x "$beside" ]]; then printf '%s' "$beside"; else printf 'ut-license'; fi
+}
+
+ask_for_license() {
+    terminal_is_reachable \
+        || die "A license key is needed and there is no terminal to ask on. Pass --license-file, or set UT_LICENSE."
+    printf 'License key from UnderstandTech (input hidden): ' > /dev/tty
+    read -rs LICENSE < /dev/tty
+    printf '\n' > /dev/tty
+    [[ -n "$LICENSE" ]] || die "No license key supplied."
+}
+
+take_license() {
+    local tool key
+    tool=$(license_tool)
+    key=$(mktemp)
+    chmod 600 "$key"
+    if [[ -n "$LICENSE" ]]; then
+        printf '%s\n' "$LICENSE" > "$key"
+    else
+        [[ -r "$LICENSE_FILE" ]] || { rm -f "$key"; die "License file not readable: ${LICENSE_FILE}"; }
+        cat "$LICENSE_FILE" > "$key"
+    fi
+    if ! "$tool" check "$key"; then
+        rm -f "$key"
+        die "The license key was refused. Nothing was changed on this machine."
+    fi
+    REGISTRY_USER=$("$tool" field registry_user "$key")
+    REGISTRY_TOKEN=$("$tool" field registry_token "$key")
+    [[ -d "$(dirname "$LICENSE_STORE")" ]] || mkdir -p -m 750 "$(dirname "$LICENSE_STORE")"
+    install -m 600 "$key" "$LICENSE_STORE"
+    rm -f "$key"
+}
+
+read_credentials() {
+    if [[ -n "$LICENSE" || -n "$LICENSE_FILE" ]]; then
+        take_license
+    elif [[ -n "$REGISTRY_TOKEN" || -n "$TOKEN_FILE" ]]; then
+        log_warn "A registry token on its own is accepted by this version only. Ask UnderstandTech for a license key, and pass it with --license-file."
+        read_token
+    elif [[ -s "$LICENSE_STORE" ]]; then
+        LICENSE_FILE=$LICENSE_STORE
+        take_license
+    elif token_required; then
+        ask_for_license
+        take_license
+    else
+        log_warn "No license key on this machine. The next version will ask for one: ask UnderstandTech for it."
+    fi
+}
+
 step_registry_login() {
+    if ! $DO_PULL; then
+        log_step "Images are already here (--skip-pull): no registry login"
+        return 0
+    fi
     if [[ -z "$REGISTRY_TOKEN" ]]; then
         log_step "Registry credentials already stored"
         return 0
@@ -1518,6 +1586,7 @@ parse_arguments() {
             --update)         DO_UPDATE=true ;;
             --no-autostart)   DO_AUTOSTART=false ;;
             --skip-pull)      DO_PULL=false ;;
+            --license-file)   LICENSE_FILE="${2:?--license-file needs a path}"; shift ;;
             --token-file)     TOKEN_FILE="${2:?--token-file needs a path}"; shift ;;
             --dir)            INSTALL_DIR="${2:?--dir needs a path}"; shift ;;
             --from-checkout)  FROM_CHECKOUT="${2:?--from-checkout needs a path}"; shift ;;
@@ -1551,7 +1620,7 @@ main() {
     trap record_this_install EXIT
     preflight
     read_domain
-    read_token
+    read_credentials
     step_registry_login
     step_fetch_repo
     step_configure

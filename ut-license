@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+# The public half of the license signing key, kept apart from the release key so
+# that a leak of either one forges only what it signs.
+LICENSE_PUBLIC_KEY='-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEr6MNxC17yIdmZ05auhoAJnKSJlaN
+OQTxkUF51gKBJVi9fhFglrm/0oLQkmCj2GiodOirttTScG0bPk748BNtxQ==
+-----END PUBLIC KEY-----'
+
+LICENSE_FORMAT=UT1
+
+if [[ -t 1 ]]; then
+    RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; NC=$'\033[0m'
+else
+    RED=""; GREEN=""; NC=""
+fi
+
+usage() {
+    cat <<'EOF'
+ut-license — checks a license key issued by UnderstandTech.
+
+  ut-license check license.key       who it was issued to, and until when
+  ut-license check -                 the same, reading the key from stdin
+  ut-license field NAME license.key  one field of a valid key, for ut-install
+  ut-license --fingerprint           print the license key's fingerprint
+
+Needs nothing but openssl, and no network. check never prints the registry token
+the key carries; field registry_token does, and only to whoever asked for it.
+EOF
+}
+
+fail() { printf '%s[fail]%s %s\n' "$RED" "$NC" "$*" >&2; exit 1; }
+
+key_file() {
+    local file
+    file=$(mktemp)
+    printf '%s\n' "$LICENSE_PUBLIC_KEY" > "$file"
+    printf '%s' "$file"
+}
+
+print_fingerprint() {
+    local key; key=$(key_file)
+    printf 'SHA256: %s\n' \
+        "$(openssl pkey -pubin -in "$key" -outform DER | openssl dgst -sha256 -r | cut -d' ' -f1)"
+    rm -f "$key"
+}
+
+read_license() {
+    local source=$1
+    if [[ "$source" == "-" ]]; then
+        tr -d ' \t\r\n'
+    else
+        [[ -f "$source" ]] || fail "No such license file: ${source}"
+        tr -d ' \t\r\n' < "$source"
+    fi
+}
+
+verified_payload() {
+    local license=$1 payload=$2 format encoded_payload encoded_signature rest signature key verdict
+    IFS=. read -r format encoded_payload encoded_signature rest <<< "$license"
+    [[ "$format" == "$LICENSE_FORMAT" && -n "$encoded_payload" && -n "$encoded_signature" && -z "$rest" ]] \
+        || return 1
+
+    signature=$(mktemp)
+    key=$(key_file)
+    verdict=1
+    if printf '%s' "$encoded_payload" | openssl base64 -d -A > "$payload" 2>/dev/null \
+        && printf '%s' "$encoded_signature" | openssl base64 -d -A > "$signature" 2>/dev/null \
+        && openssl dgst -sha256 -verify "$key" -signature "$signature" "$payload" >/dev/null 2>&1; then
+        verdict=0
+    fi
+    rm -f "$signature" "$key"
+    return "$verdict"
+}
+
+payload_field() {
+    local payload=$1 wanted=$2 name value
+    while IFS='=' read -r name value; do
+        [[ "$name" == "$wanted" ]] && { printf '%s' "$value"; return 0; }
+    done < "$payload"
+    return 1
+}
+
+valid_payload() {
+    local source=$1 payload=$2 license
+    command -v openssl >/dev/null 2>&1 || fail "openssl is required"
+    license=$(read_license "$source")
+    verified_payload "$license" "$payload" \
+        || fail "This license key was not issued by UnderstandTech, or was altered since"
+}
+
+check() {
+    local payload customer expires
+    payload=$(mktemp)
+    trap "rm -f '$payload'" EXIT
+    valid_payload "$1" "$payload"
+    customer=$(payload_field "$payload" customer || true)
+    expires=$(payload_field "$payload" expires || true)
+    [[ -n "$customer" && "$expires" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] \
+        || fail "This license key is signed but incomplete; ask UnderstandTech for a new one"
+    [[ "$expires" < "$(date -u +%F)" ]] \
+        && fail "The license of ${customer} ended on ${expires}; ask UnderstandTech for a new one"
+    printf '%s[ ok ]%s Licensed to %s until %s\n' "$GREEN" "$NC" "$customer" "$expires"
+}
+
+field() {
+    local name=$1 payload value
+    [[ "$name" =~ ^(customer|expires|rights|registry_user|registry_token)$ ]] \
+        || fail "No such field: ${name}"
+    payload=$(mktemp)
+    trap "rm -f '$payload'" EXIT
+    valid_payload "$2" "$payload"
+    value=$(payload_field "$payload" "$name" || true)
+    [[ -n "$value" ]] || fail "This license key has no ${name}"
+    printf '%s\n' "$value"
+}
+
+main() {
+    case "${1:-}" in
+        ""|-h|--help)  usage; [[ -z "${1:-}" ]] && exit 1 || exit 0 ;;
+        --fingerprint) print_fingerprint ;;
+        check)         [[ -n "${2:-}" ]] || { usage; exit 1; }; check "$2" ;;
+        field)         [[ -n "${2:-}" && -n "${3:-}" ]] || { usage; exit 1; }; field "$2" "$3" ;;
+        *)             usage; exit 1 ;;
+    esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

@@ -45,7 +45,7 @@ the diagram has not been seen rendered — no rendering engine is installed here
 ## What you need first
 
 - A machine with Docker 24 or newer and Compose v2, 250 GB free, 24 GB of RAM.
-- A registry token for `ghcr.io`.
+- The license key UnderstandTech issued for the machine.
 - The address the appliance will answer on. Not `understand.local` unless the
   machine really is on a flat local network — see
   [certificates and DNS](certificates-and-dns.md).
@@ -167,9 +167,25 @@ it is kept in the install log.
 sudo ut-install --domain box.example.com
 ```
 
-It asks for the registry token, or reads it from `--token-file`, or takes it
-from `UT_REGISTRY_TOKEN`. It is never passed on a command line and never written
-to the log.
+It asks for the license key, or reads it from `--license-file`, or takes it from
+`UT_LICENSE`. The key is checked right after the preflight, with no network,
+before anything is written or downloaded, and kept in
+`/etc/understandtech/license`, readable by root only, so an update does not ask
+again. The registry access it carries is never passed on a command line and never
+written to the log.
+
+A license that has ended stops an install or an update, and says on which day.
+It never stops a platform that is running: at every boot the service writes the
+end date to the journal (`journalctl -u understandtech`) and starts the stack
+anyway. To see what a key says without installing:
+
+```bash
+ut-license check license.key
+```
+
+A registry token on its own, with `--token-file` or `UT_REGISTRY_TOKEN`, is still
+accepted by this version, with a warning. The next version asks for a license
+key.
 
 **Leave `--domain` out and it asks.** Answering nothing on a first install takes
 `understand.local`, which resolves over mDNS on one flat network and nowhere
@@ -267,8 +283,9 @@ reinstallable in a minute.
 |---|---|
 | `--check` | Before anything. Changes nothing. |
 | `--domain NAME` | The address the platform answers on. Asked for when omitted. |
-| `--token-file PATH` | Read the registry token from a file instead of a prompt. |
-| `--skip-pull` | Images are already on the machine — an air-gapped install. |
+| `--license-file PATH` | Read the license key from a file instead of a prompt. |
+| `--token-file PATH` | A registry token instead of a license key. This version only. |
+| `--skip-pull` | Images are already on the machine — an air-gapped install. The license key is still checked; the registry is not contacted. |
 | `--no-autostart` | Do not install the boot service. |
 | `--dir PATH` | Another release directory. Defaults to `/usr/share/understandtech`. |
 | `--health-timeout N` | Longer than 3600 s if the machine is slow to load models. |

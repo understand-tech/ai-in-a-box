@@ -31,7 +31,7 @@ fresh_copy() {
     ( cd "$REPO_ROOT" && tar -cf - release.env compose.yaml compose.appbuilder.yaml \
         compose.compute.yaml compose.no-gpu.yaml compose.backup-mount.yaml compose.backup-network.yaml \
         Caddyfile caddy metrics backup-files.sh \
-        setup-autostart.sh ut-logs-archive ut-install ut-certificate ut-verify ut-status ut-report ut-send go.mod cmd appbuilder docs \
+        setup-autostart.sh ut-logs-archive ut-install ut-certificate ut-verify ut-license ut-status ut-report ut-send go.mod cmd appbuilder docs \
         packaging README.md test .github 2>/dev/null ) | tar -xf - -C "$COPY" 2>/dev/null
 }
 
@@ -637,6 +637,40 @@ if [[ -x "$REPO_ROOT/ut-verify" ]]; then
         "openssl ecparam -name prime256v1 -genkey -noout -out /tmp/other-\$\$.pem 2>/dev/null && openssl ec -in /tmp/other-\$\$.pem -pubout -out packaging/release.pub 2>/dev/null"
 fi
 
+if [[ -x "$REPO_ROOT/ut-license" ]]; then
+    capability_discriminates "a license check that refuses what we issued" \
+        "a license key we issued is accepted" \
+        "sed -i.bak 's|-signature \"\$signature\"|-signature /dev/null|' ut-license"
+
+    capability_discriminates "a license check that accepts any key that parses" \
+        "is not a key at all is refused" \
+        "sed -i.bak 's|&& openssl dgst -sha256 -verify .*; then$|; then|' ut-license"
+
+    capability_discriminates "a license that quietly defaults to an end date nobody chose" \
+        "a license with no customer or no end date is never issued" \
+        "sed -i.bak 's|^customer=\"\" expires=\"\"|customer=\"\" expires=\"2999-12-31\"|' packaging/issue-license.sh"
+
+    capability_discriminates "a shipped license key that is not the signing key" \
+        "the key ut-license carries is the key licenses are signed with" \
+        "openssl ecparam -name prime256v1 -genkey -noout -out /tmp/other-\$\$.pem 2>/dev/null && openssl ec -in /tmp/other-\$\$.pem -pubout -out packaging/license.pub 2>/dev/null"
+
+    capability_discriminates "a boot that no longer says the license ended" \
+        "at boot, a license that has ended is said" \
+        "sed -i.bak '/ut-license check/d' setup-autostart.sh"
+
+    capability_discriminates "a boot that stops on a license that ended" \
+        "at boot, a license that has ended is said" \
+        "sed -i.bak 's|^ExecStartPre=-/bin/sh|ExecStartPre=/bin/sh|' setup-autostart.sh"
+
+    capability_discriminates "a boot line that fails when the license ended" \
+        "at boot, a license that has ended is said" \
+        "sed -i.bak 's|/etc/understandtech/license; exit 0|/etc/understandtech/license|' setup-autostart.sh"
+
+    capability_discriminates "a license check that shows what the key carries" \
+        "checking a license never prints the registry token it carries" \
+        "sed -i.bak 's|^    customer=\$(payload_field|    cat \"\$payload\" >\&2; customer=\$(payload_field|' ut-license"
+fi
+
 if [[ -d "$REPO_ROOT/.github/workflows" ]]; then
     capability_discriminates "a workflow GitHub cannot read" \
         "every workflow is one GitHub can read" \
@@ -718,6 +752,30 @@ capability_discriminates "the dumps looked for where they are not" \
 
 if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
     printf '\n%sA fresh install, seen failing%s\n\n' "$BOLD" "$NC"
+
+    install_walk_discriminates "a login with some other token than the license's" \
+        "logs in with the token it carries" \
+        "sed -i.bak 's|^    REGISTRY_TOKEN=\$(\"\$tool\" field registry_token \"\$key\")|    REGISTRY_TOKEN=some-other-token|' ut-install"
+
+    install_walk_discriminates "a license read without being checked" \
+        "a license that has ended stops the install" \
+        "sed -i.bak 's|^    if ! \"\$tool\" check \"\$key\"; then|    if false; then|' ut-install"
+
+    install_walk_discriminates "a license that is not kept for the next update" \
+        "the license is kept for updates, readable by root alone" \
+        "sed -i.bak 's|^    install -m 600 \"\$key\" \"\$LICENSE_STORE\"|    :|' ut-install"
+
+    install_walk_discriminates "a registry login with the images already here" \
+        "a license needs no registry login" \
+        "sed -i.bak 's|^    if ! \$DO_PULL; then\$|    if false; then|' ut-install"
+
+    install_walk_discriminates "the carried token written to the log" \
+        "the token a license carries never reaches the output" \
+        "sed -i.bak 's|^    REGISTRY_USER=\$(\"\$tool\" field registry_user \"\$key\")|&; log_info \"\$(\"\$tool\" field registry_token \"\$key\")\"|' ut-install"
+
+    install_walk_discriminates "a token alone accepted without a word" \
+        "a registry token alone still installs, and says a license will be needed" \
+        "sed -i.bak 's|is accepted by this version only|works|' ut-install"
 
     install_walk_discriminates "writing through a link whose directory is gone" \
         "it is recreated rather than reported as a broken link" \

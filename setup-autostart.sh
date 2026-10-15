@@ -733,6 +733,10 @@ ExecStartPre=/bin/sh -c 'until @DOCKER@ info >/dev/null 2>&1; do sleep 2; done'
 # guide runs that without sudo. Images are installed with `docker compose pull`
 # before this unit ever runs.
 
+# A license that has ended is said here, at every boot, in the journal. It
+# never stops the stack: the box may be offline, with a clock nobody set.
+ExecStartPre=-/bin/sh -c 'test -f /etc/understandtech/license && ut-license check /etc/understandtech/license; exit 0'
+
 ExecStart=@DOCKER@ compose up -d --pull never --remove-orphans
 ExecStop=@DOCKER@ compose down
 
