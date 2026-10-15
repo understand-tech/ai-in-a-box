@@ -654,6 +654,18 @@ if [[ -x "$REPO_ROOT/ut-license" ]]; then
         "the key ut-license carries is the key licenses are signed with" \
         "openssl ecparam -name prime256v1 -genkey -noout -out /tmp/other-\$\$.pem 2>/dev/null && openssl ec -in /tmp/other-\$\$.pem -pubout -out packaging/license.pub 2>/dev/null"
 
+    capability_discriminates "a boot that no longer says the license ended" \
+        "at boot, a license that has ended is said" \
+        "sed -i.bak '/ut-license check/d' setup-autostart.sh"
+
+    capability_discriminates "a boot that stops on a license that ended" \
+        "at boot, a license that has ended is said" \
+        "sed -i.bak 's|^ExecStartPre=-/bin/sh|ExecStartPre=/bin/sh|' setup-autostart.sh"
+
+    capability_discriminates "a boot line that fails when the license ended" \
+        "at boot, a license that has ended is said" \
+        "sed -i.bak 's|/etc/understandtech/license; exit 0|/etc/understandtech/license|' setup-autostart.sh"
+
     capability_discriminates "a license check that shows what the key carries" \
         "checking a license never prints the registry token it carries" \
         "sed -i.bak 's|^    customer=\$(payload_field|    cat \"\$payload\" >\&2; customer=\$(payload_field|' ut-license"

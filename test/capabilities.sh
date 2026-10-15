@@ -830,6 +830,49 @@ the_shipped_key_is_the_one_licenses_are_signed_with() {
     return 1
 }
 
+boot_unit() {
+    docker run --rm -i -v "$REPO_ROOT":/src:ro "$BASH_IMAGE" bash -s 2>&1 <<'PROBE'
+set -u
+mkdir -p /fix /stub
+cp /src/compose.yaml /fix/
+printf 'UT_DOMAIN="box.example.com"\n' > /fix/.env
+printf '#!/bin/sh\nexit 0\n' > /stub/docker
+printf '#!/bin/sh\nexit 0\n' > /stub/systemctl
+chmod +x /stub/docker /stub/systemctl
+PATH=/stub:$PATH bash /src/setup-autostart.sh --install --dir /fix >/dev/null 2>&1
+cat /etc/systemd/system/understandtech.service
+PROBE
+}
+
+# The boot line is run as systemd would, against a license that ended in 2020:
+# it has to say so, and it has to let the stack come up.
+an_ended_license_is_said_at_boot_and_never_stops_the_stack() {
+    local work="$WORK_DIR/license" line command said status
+    license_verdicts >/dev/null
+    printf 'version=1\ncustomer=Test Customer\nissued=2019-01-01\nexpires=2020-01-01\nrights=platform\nregistry_user=u\nregistry_token=%s\n' \
+        "$LICENSE_TEST_TOKEN" > "$work/ended.payload"
+    openssl dgst -sha256 -sign "$work/license.key" -out "$work/ended.sig" "$work/ended.payload"
+    printf 'UT1.%s.%s\n' "$(openssl base64 -A < "$work/ended.payload")" \
+        "$(openssl base64 -A < "$work/ended.sig")" > "$work/ended.lic"
+
+    line=$(grep '^ExecStartPre=.*ut-license' <<< "$(boot_unit)") \
+        || { echo "the boot service does not check the license"; return 1; }
+    [[ "$line" == ExecStartPre=-* ]] \
+        || { echo "a failing license check would stop the boot: ${line}"; return 1; }
+    command=${line#ExecStartPre=-}
+    command=${command//\/etc\/understandtech\/license/\/w\/ended.lic}
+    command=${command//ut-license check/\/w\/ut-license check}
+    command=${command#/bin/sh -c \'}
+    command=${command%\'}
+    said=$(docker run --rm --network none -v "$work":/w:ro --entrypoint sh "$MONGODB_IMAGE" \
+        -c "$command" 2>&1; echo "STATUS=$?")
+    grep -q 'ended on 2020-01-01' <<< "$said" \
+        || { echo "nothing said the license ended: ${said}"; return 1; }
+    grep -q 'STATUS=0' <<< "$said" && return 0
+    echo "the boot line failed: ${said}"
+    return 1
+}
+
 a_license_checks_with_no_network_at_all() {
     local work="$WORK_DIR/license" said
     license_verdicts >/dev/null
@@ -1690,6 +1733,8 @@ if [[ -x "$REPO_ROOT/ut-license" ]]; then
         the_shipped_key_is_the_one_licenses_are_signed_with
     capability "and a license checks with no network at all" \
         a_license_checks_with_no_network_at_all
+    capability "at boot, a license that has ended is said, and the stack still starts" \
+        an_ended_license_is_said_at_boot_and_never_stops_the_stack
 fi
 
 if [[ -d "$REPO_ROOT/.github/workflows" ]]; then
