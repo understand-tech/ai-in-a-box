@@ -847,6 +847,21 @@ the_shipped_key_is_the_one_licenses_are_signed_with() {
     return 1
 }
 
+# issue-license.sh refuses an end date in the past, so a license that ended is
+# signed here, the way one issued in 2019 would have been.
+ended_license() {
+    local work="$WORK_DIR/license"
+    license_verdicts >/dev/null
+    if [[ ! -s "$work/ended.lic" ]]; then
+        printf 'version=1\ncustomer=Test Customer\nissued=2019-01-01\nexpires=2020-01-01\nrights=platform\nregistry_user=u\nregistry_token=%s\n' \
+            "$LICENSE_TEST_TOKEN" > "$work/ended.payload"
+        openssl dgst -sha256 -sign "$work/license.key" -out "$work/ended.sig" "$work/ended.payload"
+        printf 'UT1.%s.%s\n' "$(openssl base64 -A < "$work/ended.payload")" \
+            "$(openssl base64 -A < "$work/ended.sig")" > "$work/ended.lic"
+    fi
+    printf '%s' "$work/ended.lic"
+}
+
 boot_unit() {
     docker run --rm -i -v "$REPO_ROOT":/src:ro "$BASH_IMAGE" bash -s 2>&1 <<'PROBE'
 set -u
@@ -865,12 +880,7 @@ PROBE
 # it has to say so, and it has to let the stack come up.
 an_ended_license_is_said_at_boot_and_never_stops_the_stack() {
     local work="$WORK_DIR/license" line command said status
-    license_verdicts >/dev/null
-    printf 'version=1\ncustomer=Test Customer\nissued=2019-01-01\nexpires=2020-01-01\nrights=platform\nregistry_user=u\nregistry_token=%s\n' \
-        "$LICENSE_TEST_TOKEN" > "$work/ended.payload"
-    openssl dgst -sha256 -sign "$work/license.key" -out "$work/ended.sig" "$work/ended.payload"
-    printf 'UT1.%s.%s\n' "$(openssl base64 -A < "$work/ended.payload")" \
-        "$(openssl base64 -A < "$work/ended.sig")" > "$work/ended.lic"
+    ended_license >/dev/null
 
     line=$(grep '^ExecStartPre=.*ut-license' <<< "$(boot_unit)") \
         || { echo "the boot service does not check the license"; return 1; }
@@ -1926,8 +1936,27 @@ ut_status_says_whether_reports_go_out() {
     return 1
 }
 
+ut_status_says_how_the_license_stands() {
+    local work="$WORK_DIR/license" probe current ended
+    ended=$(ended_license)
+    probe=$(history_probe)
+    current=$(UT_LICENSE_STORE="$work/issued.lic" UT_LICENSE_TOOL="$work/ut-license" \
+        "$REPO_ROOT/ut-status" --dir "$probe" 2>&1)
+    grep -q '\[ ok \] Licensed to Test Customer until ' <<< "$current" \
+        || { echo "a current license was not said:"; echo "$current"; return 1; }
+    ended=$(UT_LICENSE_STORE="$ended" UT_LICENSE_TOOL="$work/ut-license" \
+        "$REPO_ROOT/ut-status" --dir "$probe" 2>&1)
+    grep -q '\[warn\] The license of Test Customer ended on 2020-01-01' <<< "$ended" \
+        || { echo "an ended license was not warned about:"; echo "$ended"; return 1; }
+    grep -qF "$LICENSE_TEST_TOKEN" <<< "${current}${ended}" || return 0
+    echo "the registry token came out of ut-status"
+    return 1
+}
+
 if [[ -x "$REPO_ROOT/ut-status" ]]; then
     group "Telling whether an install serves"
+    capability "it says how the license stands, and warns when it has ended" \
+        ut_status_says_how_the_license_stands
     capability "it says whether usage reports go out, and warns when nothing sends them" \
         ut_status_says_whether_reports_go_out
     capability "a directory with no install is refused, not called healthy" \

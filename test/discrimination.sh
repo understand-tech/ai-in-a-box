@@ -670,6 +670,14 @@ if [[ -x "$REPO_ROOT/ut-license" ]]; then
         "at boot, a license that has ended is said" \
         "sed -i.bak 's|/etc/understandtech/license; exit 0|/etc/understandtech/license|' setup-autostart.sh"
 
+    capability_discriminates "a status that never mentions the license" \
+        "it says how the license stands" \
+        "sed -i.bak '/^    say_how_the_license_stands\$/d' ut-status"
+
+    capability_discriminates "a status that calls an ended license fine" \
+        "it says how the license stands" \
+        "sed -i.bak 's|^        log_warn \"\${said#\*\] } Updates|        log_info \"\${said#*] } Updates|' ut-status"
+
     capability_discriminates "a license check that shows what the key carries" \
         "checking a license never prints the registry token it carries" \
         "sed -i.bak 's|^    customer=\$(payload_field|    cat \"\$payload\" >\&2; customer=\$(payload_field|' ut-license"

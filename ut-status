@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_SHARE_DIR="/usr/share/understandtech"
 INSTALL_DIR="${UT_INSTALL_DIR:-}"
 UT_SEND="${UT_SEND:-ut-send}"
+LICENSE_STORE="${UT_LICENSE_STORE:-/etc/understandtech/license}"
 
 if [[ -t 1 ]]; then
     RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'; BOLD=$'\033[1m'; NC=$'\033[0m'
@@ -103,6 +104,36 @@ say_how_reports_go() {
     done < <("$UT_SEND" status 2>&1)
 }
 
+license_tool() {
+    if [[ -n "${UT_LICENSE_TOOL:-}" ]]; then printf '%s' "$UT_LICENSE_TOOL"
+    elif [[ -x "$SCRIPT_DIR/ut-license" ]]; then printf '%s' "$SCRIPT_DIR/ut-license"
+    else printf 'ut-license'; fi
+}
+
+# Said, never counted against the install: a license that has ended refuses the
+# next update, and the platform keeps serving until then.
+say_how_the_license_stands() {
+    local tool said
+    if [[ ! -e "$LICENSE_STORE" ]]; then
+        log_warn "no license key on this machine — the next update will ask for one"
+        return 0
+    fi
+    if [[ ! -r "$LICENSE_STORE" ]]; then
+        log_warn "${LICENSE_STORE} is readable by root only — run with sudo to see the license"
+        return 0
+    fi
+    tool=$(license_tool)
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        log_warn "ut-license is not installed here — the license cannot be read"
+        return 0
+    fi
+    if said=$("$tool" check "$LICENSE_STORE" 2>&1); then
+        log_info "${said#*] }"
+    else
+        log_warn "${said#*] } Updates are refused until a new key is installed."
+    fi
+}
+
 keep_the_verdict() {
     local verdict=$1 data_root history
     data_root=$(env_get "$INSTALL_DIR/.env" DATA_ROOT || true)
@@ -170,6 +201,9 @@ main() {
 
     log_step "Usage reports"
     say_how_reports_go
+
+    log_step "License"
+    say_how_the_license_stands
 
     printf '\n'
     if (( failing )); then
