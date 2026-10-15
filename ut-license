@@ -33,18 +33,22 @@ EOF
 
 fail() { printf '%s[fail]%s %s\n' "$RED" "$NC" "$*" >&2; exit 1; }
 
+# A command substitution does not inherit set -e: without the explicit checks, a
+# key file that could not be written fingerprints as the hash of nothing.
 key_file() {
     local file
-    file=$(mktemp)
-    printf '%s\n' "$LICENSE_PUBLIC_KEY" > "$file"
+    file=$(mktemp) || return 1
+    printf '%s\n' "$LICENSE_PUBLIC_KEY" > "$file" || return 1
     printf '%s' "$file"
 }
 
 print_fingerprint() {
-    local key; key=$(key_file)
-    printf 'SHA256: %s\n' \
-        "$(openssl pkey -pubin -in "$key" -outform DER | openssl dgst -sha256 -r | cut -d' ' -f1)"
+    local key fingerprint
+    key=$(key_file) || fail "Cannot write the key to a temporary file"
+    fingerprint=$(openssl pkey -pubin -in "$key" -outform DER | openssl dgst -sha256 -r | cut -d' ' -f1) \
+        || { rm -f "$key"; fail "openssl could not read the key"; }
     rm -f "$key"
+    printf 'SHA256: %s\n' "$fingerprint"
 }
 
 read_license() {
@@ -63,8 +67,8 @@ verified_payload() {
     [[ "$format" == "$LICENSE_FORMAT" && -n "$encoded_payload" && -n "$encoded_signature" && -z "$rest" ]] \
         || return 1
 
-    signature=$(mktemp)
-    key=$(key_file)
+    signature=$(mktemp) || return 1
+    key=$(key_file) || { rm -f "$signature"; return 1; }
     verdict=1
     if printf '%s' "$encoded_payload" | openssl base64 -d -A > "$payload" 2>/dev/null \
         && printf '%s' "$encoded_signature" | openssl base64 -d -A > "$signature" 2>/dev/null \

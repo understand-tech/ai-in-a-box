@@ -626,6 +626,10 @@ if [[ -x "$REPO_ROOT/ut-verify" ]]; then
         "not signed at all is refused" \
         "sed -i.bak 's|^    if openssl dgst .*; then$|    if true; then|' ut-verify"
 
+    capability_discriminates "a fingerprint taken of a key file never written" \
+        "never fingerprints as the hash of nothing" \
+        "sed -i.bak -e 's/ || return 1\$//' -e 's/ || fail \"Cannot write the key to a temporary file\"//' -e 's/|| { rm -f \"\$key\"; fail \"openssl could not read the key\"; }/|| true/' ut-verify"
+
     # The regression this guards is a key fetched rather than carried: it
     # passes on a developer's machine and fails on the only machine that counts.
     capability_discriminates "a key fetched instead of carried" \
@@ -665,6 +669,14 @@ if [[ -x "$REPO_ROOT/ut-license" ]]; then
     capability_discriminates "a boot line that fails when the license ended" \
         "at boot, a license that has ended is said" \
         "sed -i.bak 's|/etc/understandtech/license; exit 0|/etc/understandtech/license|' setup-autostart.sh"
+
+    capability_discriminates "a status that never mentions the license" \
+        "it says how the license stands" \
+        "sed -i.bak '/^    say_how_the_license_stands\$/d' ut-status"
+
+    capability_discriminates "a status that calls an ended license fine" \
+        "it says how the license stands" \
+        "sed -i.bak 's|^        log_warn \"\${said#\*\] } Updates|        log_info \"\${said#*] } Updates|' ut-status"
 
     capability_discriminates "a license check that shows what the key carries" \
         "checking a license never prints the registry token it carries" \
