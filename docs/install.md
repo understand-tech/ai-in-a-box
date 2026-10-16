@@ -178,6 +178,11 @@ before anything is written or downloaded, and kept in
 again. The registry access it carries is never passed on a command line and never
 written to the log.
 
+The license also names the registry the images come from. For any registry but
+`ghcr.io`, every image of the release is pulled from it — ours and the third-party
+ones alike — under the path it has upstream (`library/caddy` for Docker Hub's
+`caddy`), with the same digest.
+
 A license that has ended stops an install or an update, and says on which day.
 It never stops a platform that is running: at every boot the service writes the
 end date to the journal (`journalctl -u understandtech`) and starts the stack

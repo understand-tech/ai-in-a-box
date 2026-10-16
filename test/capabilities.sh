@@ -793,6 +793,10 @@ class Answer(http.server.BaseHTTPRequestHandler):
                 return self.answer(401)
             return self.answer(200, [("Content-Type", "application/json")],
                                json.dumps({"token": "pull-" + scenario}).encode())
+        if rest.startswith("v2/") and scenario.startswith("zot"):
+            if sent != basic or scenario == "zotblind":
+                return self.answer(403)
+            return self.answer(200)
         if rest.startswith("v2/"):
             if sent != "Bearer pull-" + scenario or scenario == "blind":
                 return self.answer(403)
@@ -818,7 +822,7 @@ FAKE
 
 issued_against() {
     local scenario=$1; shift
-    UT_GITHUB_API="$FAKE_GITHUB/$scenario" UT_GHCR="$FAKE_GITHUB/$scenario" \
+    UT_GITHUB_API="$FAKE_GITHUB/$scenario" UT_GHCR="$FAKE_GITHUB/$scenario" UT_REGISTRY_URL="$FAKE_GITHUB/$scenario" \
         "$REPO_ROOT/packaging/issue-license.sh" --ledger "$WORK_DIR/license/ledger.tsv" "$@"
 }
 
@@ -868,6 +872,12 @@ TAMPER
             printf 'issued_to_nobody=%s\n' \
                 "$("$issue" --expires "$next_year" --token-file "$work/token" \
                     --signing-key "$work/license.key" >/dev/null 2>&1 && echo issued || echo refused)"
+            issued_against zot --registry registry.example.test --customer "Test Customer" --expires "$next_year" \
+                --token-file "$work/token" --signing-key "$work/license.key" > "$work/zot.lic" 2>/dev/null
+            printf 'zot_issued=%s\n' "$("$work/ut-license" field registry "$work/zot.lic" 2>/dev/null || echo none)"
+            printf 'zot_blind=%s\n' \
+                "$(issued_against zotblind --registry registry.example.test --customer "Test Customer" --expires "$next_year" \
+                    --token-file "$work/token" --signing-key "$work/license.key" >/dev/null 2>&1 && echo issued || echo refused)"
             for scenario in broad forever short blind refused; do
                 printf 'token_%s=%s\n' "$scenario" \
                     "$(issued_against "$scenario" --customer "Test Customer" --expires "$next_year" \
@@ -912,9 +922,34 @@ every_license_issued_is_written_down_never_its_token() {
     fingerprint=$(printf '%s' "$LICENSE_TEST_TOKEN" | openssl dgst -sha256 -r | cut -c1-16)
     grep -qF "$LICENSE_TEST_TOKEN" "$ledger" 2>/dev/null \
         && { echo "the ledger holds the token itself"; return 1; }
-    [[ $(grep -c "	Test Customer	.*	${fingerprint}	" "$ledger" 2>/dev/null) -eq 2 ]] && return 0
-    echo "expected the two licenses issued, and only those, in the ledger:"
+    [[ $(grep -c "	Test Customer	.*	${fingerprint}	" "$ledger" 2>/dev/null) -eq 3 ]] && return 0
+    echo "expected the three licenses issued, and only those, in the ledger:"
     cat "$ledger" 2>/dev/null || echo "no ledger"
+    return 1
+}
+
+a_license_for_another_registry_names_it_and_is_checked_there() {
+    license_verdict_is zot_issued registry.example.test \
+        && license_verdict_is zot_blind refused
+}
+
+# ut-install pulls under the names image_in_registry gives, and issue-license.sh
+# checks the account against the names its own copy gives: they have to agree.
+both_tools_name_every_image_alike() {
+    local reference installer issuer differ=""
+    eval "$(sed -n '/^image_in_registry() {/,/^}/p' "$REPO_ROOT/ut-install" | sed 's/^image_in_registry()/installer_names()/')"
+    eval "$(sed -n '/^image_in_registry() {/,/^}/p' "$REPO_ROOT/packaging/issue-license.sh" | sed 's/^image_in_registry()/issuer_names()/')"
+    while IFS= read -r reference; do
+        installer=$(REGISTRY=reg.example.test installer_names "$reference")
+        issuer=$(registry=reg.example.test issuer_names "$reference")
+        [[ "$installer" == "$issuer" ]] || differ="${differ} ${reference}: ${installer} / ${issuer};"
+    done < <(grep -oE '^[A-Z0-9_]+_IMAGE="[^"]+"' "$REPO_ROOT/release.env" | cut -d'"' -f2)
+    [[ -z "$differ" ]] || { echo "the two tools name images differently:${differ}"; return 1; }
+    [[ "$(REGISTRY=reg.example.test installer_names 'caddy:2-alpine@sha256:ab')" == "reg.example.test/library/caddy:2-alpine@sha256:ab" ]] \
+        && [[ "$(REGISTRY=reg.example.test installer_names 'ghcr.io/understand-tech/ut-api-customer:2.1@sha256:ab')" == "reg.example.test/understand-tech/ut-api-customer:2.1@sha256:ab" ]] \
+        && [[ "$(REGISTRY=reg.example.test installer_names 'smallstep/step-ca:0.30.2@sha256:ab')" == "reg.example.test/smallstep/step-ca:0.30.2@sha256:ab" ]] \
+        && return 0
+    echo "the mapping does not keep each image under its own path"
     return 1
 }
 
@@ -1864,6 +1899,10 @@ if [[ -x "$REPO_ROOT/ut-license" ]]; then
         a_license_is_issued_only_for_a_narrow_token_that_outlives_it
     capability "every license issued is written down, and never its token" \
         every_license_issued_is_written_down_never_its_token
+    capability "a license for another registry names it, and is checked against it" \
+        a_license_for_another_registry_names_it_and_is_checked_there
+    capability "the installer and the issuer name every image of the release alike" \
+        both_tools_name_every_image_alike
     capability "checking a license never prints the registry token it carries" \
         checking_a_license_never_prints_its_token
     capability "the key ut-license carries is the key licenses are signed with" \

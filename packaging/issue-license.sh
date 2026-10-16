@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RELEASE_ENV="${RELEASE_ENV:-$SCRIPT_DIR/../release.env}"
 GITHUB_API="${UT_GITHUB_API:-https://api.github.com}"
 GHCR="${UT_GHCR:-https://ghcr.io}"
+REGISTRY_URL="${UT_REGISTRY_URL:-}"
 
 usage() {
     cat <<'EOF'
@@ -18,6 +19,7 @@ issue-license.sh — issues the license key a customer types into ut-install.
   --expires YYYY-MM-DD   last day it is valid, in UTC
   --token-file PATH      the customer's own registry token
   --signing-key PATH     the private half of the license key
+  --registry HOST        registry the customer pulls from (default ghcr.io)
   --registry-user NAME   registry account the token belongs to (default dgx-access)
   --rights LIST          what the license covers (default platform)
   --ledger PATH          where issued licenses are written down (default: beside
@@ -25,7 +27,9 @@ issue-license.sh — issues the license key a customer types into ut-install.
 
 Before signing, it asks GitHub about the token, and refuses one that carries more
 than read:packages, never expires, ends before the license, or cannot pull every
-image of release.env. It then writes the license down in the ledger — customer,
+image of release.env. For any other registry, the account has to pull every image
+of release.env from it, ours and the third-party ones alike, under the names
+ut-install will ask for. It then writes the license down in the ledger — customer,
 dates, and the token's fingerprint, never the token — and prints the key, one
 line, on stdout. The signing key never leaves the machine that issues licenses:
 it is not in this repository, and not in CI.
@@ -34,7 +38,7 @@ EOF
 
 fail() { printf '[fail] %s\n' "$*" >&2; exit 1; }
 
-customer="" expires="" token_file="" signing_key="" registry_user="dgx-access" rights="platform" ledger=""
+customer="" expires="" token_file="" signing_key="" registry="ghcr.io" registry_user="dgx-access" rights="platform" ledger=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -42,6 +46,7 @@ while [[ $# -gt 0 ]]; do
         --expires)       expires=${2:-};       shift 2 ;;
         --token-file)    token_file=${2:-};    shift 2 ;;
         --signing-key)   signing_key=${2:-};   shift 2 ;;
+        --registry)      registry=${2:-};      shift 2 ;;
         --registry-user) registry_user=${2:-}; shift 2 ;;
         --rights)        rights=${2:-};        shift 2 ;;
         --ledger)        ledger=${2:-};        shift 2 ;;
@@ -55,6 +60,7 @@ done
 [[ "$expires" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] \
     || fail "--expires is required, as YYYY-MM-DD: a license that never ends is not one we issue"
 [[ "$expires" > "$(date -u +%F)" ]] || fail "--expires ${expires} is not in the future"
+[[ "$registry" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]+)?$ ]] || fail "--registry is not a registry host"
 [[ "$registry_user" =~ ^[A-Za-z0-9._-]+$ ]] || fail "--registry-user is not a registry account name"
 [[ "$rights" =~ ^[a-z0-9,_-]+$ ]] || fail "--rights is a comma-separated list of lowercase names"
 [[ -s "$token_file" ]] || fail "--token-file is required and must not be empty"
@@ -113,6 +119,37 @@ check_the_token_pulls_the_release() {
     [[ -z "$unreadable" ]] || fail "the token cannot pull:${unreadable}"
 }
 
+# The same mapping as image_in_registry in ut-install: a capability holds them equal.
+image_in_registry() {
+    local reference=$1 first
+    if [[ "$reference" == */* ]]; then
+        first=${reference%%/*}
+        case "$first" in
+            *.*|*:*|localhost) reference=${reference#*/} ;;
+        esac
+    else
+        reference="library/${reference}"
+    fi
+    printf '%s/%s' "$registry" "$reference"
+}
+
+check_the_account_pulls_the_release_from() {
+    local base=$1 reference located repository object code unreadable=""
+    while IFS= read -r reference; do
+        located=$(image_in_registry "$reference")
+        repository=${located#"$registry"/}
+        repository=${repository%@*}
+        repository=${repository%:*}
+        object=${located##*@}
+        [[ "$object" == "$located" ]] && object=${located##*:}
+        code=$(curl_with "user = \"${registry_user}:${token}\"" -o /dev/null -w '%{http_code}' -I \
+            -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+            "${base}/v2/${repository}/manifests/${object}" 2>/dev/null) || code=""
+        [[ "$code" == 200 ]] || unreadable="${unreadable} ${repository}"
+    done < <(grep -oE '^[A-Z0-9_]+_IMAGE="[^"]+"' "$RELEASE_ENV" | cut -d'"' -f2)
+    [[ -z "$unreadable" ]] || fail "the account cannot pull from ${registry}:${unreadable}"
+}
+
 write_it_down() {
     local fingerprint
     fingerprint=$(printf '%s' "$token" | openssl dgst -sha256 -r | cut -c1-16)
@@ -121,14 +158,19 @@ write_it_down() {
         "$registry_user" "$fingerprint" "$token_ends" >> "$ledger"
 }
 
-check_the_token_with_github
-check_the_token_pulls_the_release
+if [[ "$registry" == "ghcr.io" ]]; then
+    check_the_token_with_github
+    check_the_token_pulls_the_release
+else
+    token_ends="never"
+    check_the_account_pulls_the_release_from "${REGISTRY_URL:-https://${registry}}"
+fi
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-printf 'version=1\ncustomer=%s\nissued=%s\nexpires=%s\nrights=%s\nregistry_user=%s\nregistry_token=%s\n' \
-    "$customer" "$(date -u +%F)" "$expires" "$rights" "$registry_user" "$token" > "$work/payload"
+printf 'version=1\ncustomer=%s\nissued=%s\nexpires=%s\nrights=%s\nregistry=%s\nregistry_user=%s\nregistry_token=%s\n' \
+    "$customer" "$(date -u +%F)" "$expires" "$rights" "$registry" "$registry_user" "$token" > "$work/payload"
 openssl dgst -sha256 -sign "$signing_key" -out "$work/signature" "$work/payload" 2>/dev/null \
     || fail "${signing_key} cannot sign: not an EC private key, or not readable"
 
