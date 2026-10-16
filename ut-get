@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+# The same key as ut-verify, carried rather than read from the release it is
+# about to trust: a capability holds the two equal.
+RELEASE_PUBLIC_KEY='-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEIeeiLHqWayycgLe6biw7lXXcdsMO
+62Aggan6cqsWHSgzZiJavGHBySYn+I1uzEOn8paEHBZkBtNO4gUDVhv3Sw==
+-----END PUBLIC KEY-----'
+
+if [[ -t 1 ]]; then
+    RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; CYAN=$'\033[0;36m'; BOLD=$'\033[1m'; NC=$'\033[0m'
+else
+    RED=""; GREEN=""; CYAN=""; BOLD=""; NC=""
+fi
+
+RELEASES_URL="${UT_RELEASES_URL:-https://github.com/understand-tech/ai-in-a-box/releases}"
+DOWNLOAD_DIR="/var/cache/understandtech/releases"
+RELEASE_DIR=""
+VERSION=""
+INSTALL_ARGUMENTS=()
+
+usage() {
+    cat <<'EOF'
+ut-get — installs UnderstandTech AI in a Box from a release, then runs ut-install.
+
+  sudo ./ut-get [--version <version>] [ut-install options]
+  sudo ./ut-get --from <directory> [ut-install options]
+
+  --version <version>  the release to install, 2026.09.1 for example.
+                       Without it, the latest one.
+  --from <directory>   the release, carried in by hand: the package and its
+                       .sig beside it. Nothing is downloaded.
+
+A download that stopped resumes when the same command is run again.
+
+Every other option goes to ut-install unchanged, for example --domain.
+Nothing is installed unless the package is signed by UnderstandTech.
+EOF
+}
+
+log_info() { printf '%s[ ok ]%s %s\n' "$GREEN" "$NC" "$*"; }
+log_step() { printf '\n%s==>%s %s%s%s\n' "$CYAN" "$NC" "$BOLD" "$*" "$NC"; }
+fail()     { printf '%s[fail]%s %s\n' "$RED" "$NC" "$*" >&2; exit 1; }
+
+parse_arguments() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --from)    RELEASE_DIR="${2:?--from needs a directory}"; shift ;;
+            --version) VERSION="${2:?--version needs a version}"; shift ;;
+            -h|--help) usage; exit 0 ;;
+            *)         INSTALL_ARGUMENTS+=("$1") ;;
+        esac
+        shift
+    done
+}
+
+is_a_release_version() { [[ "$1" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]+(-rc[0-9]+)?$ ]]; }
+
+fetch() {
+    curl --fail --silent --show-error --proto '=https' --connect-timeout 20 --max-time 900 --retry 3 "$@"
+}
+
+latest_version() {
+    local tag_url
+    tag_url=$(fetch --output /dev/null --write-out '%{redirect_url}' "$RELEASES_URL/latest") \
+        || fail "Cannot reach ${RELEASES_URL} — check the network, or carry the release in and use --from"
+    [[ "$tag_url" == */releases/tag/v* ]] \
+        || fail "${RELEASES_URL} has published no release yet, only pre-releases — name one with --version"
+    printf '%s' "${tag_url##*/tag/v}"
+}
+
+download_release() {
+    local version=$1 dir="$DOWNLOAD_DIR/$1" name
+    mkdir -p "$dir"
+    for name in "understandtech_${version}_all.deb" "understandtech_${version}_all.deb.sig"; do
+        [[ -f "$dir/$name" ]] && continue
+        fetch --location --continue-at - --output "$dir/$name.part" "$RELEASES_URL/download/v${version}/$name" \
+            || fail "Could not download ${name} — run the same command again to resume"
+        mv "$dir/$name.part" "$dir/$name"
+    done
+    printf '%s' "$dir"
+}
+
+the_only_package_in() {
+    local dir=$1 packages
+    packages=("$dir"/understandtech_*_all.deb)
+    [[ -f "${packages[0]}" ]] || fail "No understandtech_<version>_all.deb in ${dir}"
+    (( ${#packages[@]} == 1 )) || fail "${#packages[@]} packages in ${dir} — leave only the one to install"
+    printf '%s' "${packages[0]}"
+}
+
+# A command substitution does not inherit set -e: without the explicit checks, a
+# key file that could not be written verifies against nothing.
+key_file() {
+    local file
+    file=$(mktemp) || return 1
+    printf '%s\n' "$RELEASE_PUBLIC_KEY" > "$file" || return 1
+    printf '%s' "$file"
+}
+
+verify_signature() {
+    local package=$1 key
+    [[ -f "${package}.sig" ]] || fail "No signature beside it: $(basename "$package").sig — do not install it"
+    command -v openssl >/dev/null 2>&1 || fail "openssl is required: sudo apt-get install openssl"
+
+    key=$(key_file) || fail "Cannot write the key to a temporary file"
+    if openssl dgst -sha256 -verify "$key" -signature "${package}.sig" "$package" >/dev/null 2>&1; then
+        rm -f "$key"
+        log_info "$(basename "$package") is signed by UnderstandTech"
+        return 0
+    fi
+    rm -f "$key"
+    return 1
+}
+
+install_package() {
+    local package=$1
+    log_step "Installing $(basename "$package")"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y "$package" \
+        || fail "apt-get could not install $(basename "$package")"
+}
+
+main() {
+    parse_arguments "$@"
+    [[ $EUID -eq 0 ]] || fail "Run with sudo: sudo $0 $*"
+
+    if [[ -z "$RELEASE_DIR" ]]; then
+        [[ -n "$VERSION" ]] || VERSION=$(latest_version) || exit 1
+        is_a_release_version "$VERSION" \
+            || fail "${VERSION:-nothing} is not a release version — expected one like 2026.09.1"
+        log_step "Downloading UnderstandTech AI in a Box ${VERSION}"
+        RELEASE_DIR=$(download_release "$VERSION") || exit 1
+    fi
+
+    [[ -d "$RELEASE_DIR" ]] || fail "No such directory: ${RELEASE_DIR}"
+    local package
+    package=$(the_only_package_in "$(cd "$RELEASE_DIR" && pwd)") || exit 1
+    log_step "Checking $(basename "$package")"
+    verify_signature "$package" \
+        || fail "$(basename "$package") is NOT signed by UnderstandTech — nothing was installed. If it was downloaded, delete ${RELEASE_DIR} and run again"
+    install_package "$package"
+    exec ut-install ${INSTALL_ARGUMENTS[@]+"${INSTALL_ARGUMENTS[@]}"}
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

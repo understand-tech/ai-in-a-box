@@ -31,7 +31,7 @@ fresh_copy() {
     ( cd "$REPO_ROOT" && tar -cf - release.env compose.yaml compose.appbuilder.yaml \
         compose.compute.yaml compose.no-gpu.yaml compose.backup-mount.yaml compose.backup-network.yaml \
         Caddyfile caddy metrics backup-files.sh \
-        setup-autostart.sh ut-logs-archive ut-install ut-certificate ut-verify ut-license ut-status ut-report ut-send go.mod cmd appbuilder docs \
+        setup-autostart.sh ut-logs-archive ut-install ut-certificate ut-verify ut-get ut-license ut-status ut-report ut-send go.mod cmd appbuilder docs \
         packaging README.md test .github 2>/dev/null ) | tar -xf - -C "$COPY" 2>/dev/null
 }
 
@@ -639,6 +639,48 @@ if [[ -x "$REPO_ROOT/ut-verify" ]]; then
     capability_discriminates "a shipped key that is not the signing key" \
         "the key ut-verify carries is the key the release is signed with" \
         "openssl ecparam -name prime256v1 -genkey -noout -out /tmp/other-\$\$.pem 2>/dev/null && openssl ec -in /tmp/other-\$\$.pem -pubout -out packaging/release.pub 2>/dev/null"
+fi
+
+if [[ -x "$REPO_ROOT/ut-get" ]]; then
+    capability_discriminates "a launcher that installs whatever it is given" \
+        "nothing is installed from a release that was altered" \
+        "sed -i.bak 's|^    if openssl dgst .*; then$|    if true; then|' ut-get"
+
+    capability_discriminates "a launcher that installs before it checks" \
+        "nothing is installed from a release that was altered" \
+        "sed -i.bak 's|^    verify_signature \"\$package\" \\\\$|    true \\\\|' ut-get"
+
+    capability_discriminates "a launcher that drops what it was asked to pass on" \
+        "a release we signed is installed, then handed to ut-install" \
+        "sed -i.bak 's|^    exec ut-install .*|    exec ut-install|' ut-get"
+
+    capability_discriminates "a launcher that carries another key than ut-verify" \
+        "the key ut-get carries is the key ut-verify carries" \
+        "sed -i.bak 's|^62Aggan6|62Aggan7|' ut-get"
+
+    capability_discriminates "a launcher that always takes the latest" \
+        "a release named by --version is installed rather than the latest" \
+        "sed -i.bak 's|^            --version) VERSION=.*|            --version) shift ;;|' ut-get"
+
+    capability_discriminates "a launcher that downloads again what it has" \
+        "a release already downloaded installs again with its server gone" \
+        "sed -i.bak '/^        \[\[ -f \"\$dir\/\$name\" \]\] \&\& continue$/d' ut-get"
+
+    capability_discriminates "a launcher that takes any version it is given" \
+        "nothing is fetched and the reason is said" \
+        "sed -i.bak 's|^is_a_release_version() {.*|is_a_release_version() { return 0; }|' ut-get"
+
+    capability_discriminates "a release that does not publish the launcher" \
+        "every release publishes ut-get beside the package" \
+        "sed -i.bak '/^            dist\/ut-get \\\\$/d' .github/workflows/release.yml"
+
+    capability_discriminates "an install page that skips a file the sums list" \
+        "the manual install downloads every file SHA256SUMS lists" \
+        "sed -i.bak 's| ut-verify ut-get release.pub SHA256SUMS; do| ut-verify release.pub SHA256SUMS; do|' docs/install.md"
+
+    capability_discriminates "a launcher that reads a version where GitHub names none" \
+        "nothing is fetched and the reason is said" \
+        "sed -i.bak 's|^    \[\[ \"\$tag_url\" == \*/releases/tag/v\* \]\] \\\\$|    true \\\\|' ut-get"
 fi
 
 if [[ -x "$REPO_ROOT/ut-license" ]]; then
