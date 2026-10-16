@@ -748,6 +748,75 @@ the_shipped_key_is_the_one_the_release_is_signed_with() {
     return 1
 }
 
+# ut-get is the first thing a customer runs, as root, on a release fetched or
+# carried in — so like ut-verify it is only worth what it refuses to install.
+# apt-get and ut-install are stubs that write down how they were called.
+launcher_verdicts() {
+    local work="$WORK_DIR/launcher" signing="$WORK_DIR/signing" case package
+    mkdir -p "$work/bin"
+    if [[ ! -s "$work/verdicts.txt" ]]; then
+        signature_verdicts >/dev/null
+        python3 - "$REPO_ROOT/ut-get" "$signing/release.pub" "$work/ut-get" <<'SWAP'
+import pathlib, re, sys
+original, pub, out = (pathlib.Path(a) for a in sys.argv[1:4])
+text = original.read_text()
+swapped = re.sub(r"RELEASE_PUBLIC_KEY='[^']*'",
+                 "RELEASE_PUBLIC_KEY='" + pub.read_text().strip() + "'", text, count=1)
+out.write_text(swapped)
+SWAP
+        chmod +x "$work/ut-get"
+        for stub in apt-get ut-install; do
+            printf '#!/bin/sh\necho "%s $*" >> "/w/calls-$CASE"\n' "$stub" > "$work/bin/$stub"
+            chmod +x "$work/bin/$stub"
+        done
+
+        package=understandtech_9.9.9_all.deb
+        mkdir -p "$work/signed" "$work/tampered" "$work/foreign" "$work/unsigned"
+        cp "$signing/package.deb" "$work/signed/$package"
+        cp "$signing/package.deb.sig" "$work/signed/$package.sig"
+        cp "$signing/package.deb" "$work/tampered/$package"
+        printf 'x' >> "$work/tampered/$package"
+        cp "$signing/package.deb.sig" "$work/tampered/$package.sig"
+        cp "$signing/package.deb" "$work/foreign/$package"
+        cp "$signing/foreign.deb.sig" "$work/foreign/$package.sig"
+        cp "$signing/package.deb" "$work/unsigned/$package"
+
+        for case in signed tampered foreign unsigned; do
+            docker run --rm --network none -v "$work":/w -e CASE="$case" -e PATH=/w/bin:/usr/bin:/bin \
+                --entrypoint bash "$MONGODB_IMAGE" /w/ut-get --from "/w/$case" --domain box.test >/dev/null 2>&1
+            printf '%s=%s\n' "$case" "$(tr '\n' ';' < "$work/calls-$case" 2>/dev/null || echo nothing)"
+        done > "$work/verdicts.txt"
+    fi
+    cat "$work/verdicts.txt"
+}
+
+launcher_verdict_is() {
+    local key=$1 expected=$2 verdicts
+    verdicts=$(launcher_verdicts)
+    grep -qxF "${key}=${expected}" <<< "$verdicts" && return 0
+    echo "expected ${key}=${expected}, verdicts were:"; echo "$verdicts"; return 1
+}
+
+a_signed_release_is_installed_then_handed_to_ut_install() {
+    launcher_verdict_is signed \
+        "apt-get install -y /w/signed/understandtech_9.9.9_all.deb;ut-install --domain box.test;"
+}
+
+the_launcher_installs_nothing_unsigned() {
+    launcher_verdict_is tampered nothing \
+        && launcher_verdict_is foreign nothing \
+        && launcher_verdict_is unsigned nothing
+}
+
+the_launcher_carries_the_key_ut_verify_carries() {
+    local in_launcher in_verify
+    in_launcher=$(sed -n "/^RELEASE_PUBLIC_KEY='/,/'\$/p" "$REPO_ROOT/ut-get")
+    in_verify=$(sed -n "/^RELEASE_PUBLIC_KEY='/,/'\$/p" "$REPO_ROOT/ut-verify")
+    [[ -n "$in_launcher" && "$in_launcher" == "$in_verify" ]] && return 0
+    echo "ut-get carries:"; echo "$in_launcher"; echo "ut-verify carries:"; echo "$in_verify"
+    return 1
+}
+
 # A license key is what a customer types to get the product and its images, so
 # like the package it is only worth what it refuses — and it carries a registry
 # token that must never come back out on a screen or in a log.
@@ -1885,6 +1954,16 @@ if [[ -x "$REPO_ROOT/ut-verify" ]]; then
         a_key_that_cannot_be_read_never_fingerprints_as_nothing
     capability "and it verifies with no network at all" \
         a_package_verifies_with_no_network_at_all
+fi
+
+if [[ -x "$REPO_ROOT/ut-get" ]]; then
+    group "Installing from a release"
+    capability "with no network at all, a release we signed is installed, then handed to ut-install" \
+        a_signed_release_is_installed_then_handed_to_ut_install
+    capability "nothing is installed from a release that was altered, signed by another key, or not signed at all" \
+        the_launcher_installs_nothing_unsigned
+    capability "the key ut-get carries is the key ut-verify carries" \
+        the_launcher_carries_the_key_ut_verify_carries
 fi
 
 if [[ -x "$REPO_ROOT/ut-license" ]]; then

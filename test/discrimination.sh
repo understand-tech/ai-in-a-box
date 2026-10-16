@@ -31,7 +31,7 @@ fresh_copy() {
     ( cd "$REPO_ROOT" && tar -cf - release.env compose.yaml compose.appbuilder.yaml \
         compose.compute.yaml compose.no-gpu.yaml compose.backup-mount.yaml compose.backup-network.yaml \
         Caddyfile caddy metrics backup-files.sh \
-        setup-autostart.sh ut-logs-archive ut-install ut-certificate ut-verify ut-license ut-status ut-report ut-send go.mod cmd appbuilder docs \
+        setup-autostart.sh ut-logs-archive ut-install ut-certificate ut-verify ut-get ut-license ut-status ut-report ut-send go.mod cmd appbuilder docs \
         packaging README.md test .github 2>/dev/null ) | tar -xf - -C "$COPY" 2>/dev/null
 }
 
@@ -639,6 +639,24 @@ if [[ -x "$REPO_ROOT/ut-verify" ]]; then
     capability_discriminates "a shipped key that is not the signing key" \
         "the key ut-verify carries is the key the release is signed with" \
         "openssl ecparam -name prime256v1 -genkey -noout -out /tmp/other-\$\$.pem 2>/dev/null && openssl ec -in /tmp/other-\$\$.pem -pubout -out packaging/release.pub 2>/dev/null"
+fi
+
+if [[ -x "$REPO_ROOT/ut-get" ]]; then
+    capability_discriminates "a launcher that installs whatever it is given" \
+        "nothing is installed from a release that was altered" \
+        "sed -i.bak 's|^    if openssl dgst .*; then$|    if true; then|' ut-get"
+
+    capability_discriminates "a launcher that installs before it checks" \
+        "nothing is installed from a release that was altered" \
+        "sed -i.bak '/^    verify_signature \"\$package\"$/d' ut-get"
+
+    capability_discriminates "a launcher that drops what it was asked to pass on" \
+        "a release we signed is installed, then handed to ut-install" \
+        "sed -i.bak 's|^    exec ut-install .*|    exec ut-install|' ut-get"
+
+    capability_discriminates "a launcher that carries another key than ut-verify" \
+        "the key ut-get carries is the key ut-verify carries" \
+        "sed -i.bak 's|^62Aggan6|62Aggan7|' ut-get"
 fi
 
 if [[ -x "$REPO_ROOT/ut-license" ]]; then
