@@ -15,17 +15,25 @@ else
     RED=""; GREEN=""; CYAN=""; BOLD=""; NC=""
 fi
 
+RELEASES_URL="${UT_RELEASES_URL:-https://github.com/understand-tech/ai-in-a-box/releases}"
+DOWNLOAD_DIR="/var/cache/understandtech/releases"
 RELEASE_DIR=""
+VERSION=""
 INSTALL_ARGUMENTS=()
 
 usage() {
     cat <<'EOF'
 ut-get — installs UnderstandTech AI in a Box from a release, then runs ut-install.
 
+  sudo ./ut-get [--version <version>] [ut-install options]
   sudo ./ut-get --from <directory> [ut-install options]
 
+  --version <version>  the release to install, 2026.09.1 for example.
+                       Without it, the latest one.
   --from <directory>   the release, carried in by hand: the package and its
                        .sig beside it. Nothing is downloaded.
+
+A download that stopped resumes when the same command is run again.
 
 Every other option goes to ut-install unchanged, for example --domain.
 Nothing is installed unless the package is signed by UnderstandTech.
@@ -40,12 +48,39 @@ parse_arguments() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --from)    RELEASE_DIR="${2:?--from needs a directory}"; shift ;;
+            --version) VERSION="${2:?--version needs a version}"; shift ;;
             -h|--help) usage; exit 0 ;;
             *)         INSTALL_ARGUMENTS+=("$1") ;;
         esac
         shift
     done
-    [[ -n "$RELEASE_DIR" ]] || { usage >&2; exit 2; }
+}
+
+is_a_release_version() { [[ "$1" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]+(-rc[0-9]+)?$ ]]; }
+
+fetch() {
+    curl --fail --silent --show-error --proto '=https' --connect-timeout 20 --max-time 900 --retry 3 "$@"
+}
+
+latest_version() {
+    local tag_url
+    tag_url=$(fetch --output /dev/null --write-out '%{redirect_url}' "$RELEASES_URL/latest") \
+        || fail "Cannot reach ${RELEASES_URL} — check the network, or carry the release in and use --from"
+    [[ "$tag_url" == */releases/tag/v* ]] \
+        || fail "${RELEASES_URL} has published no release yet, only pre-releases — name one with --version"
+    printf '%s' "${tag_url##*/tag/v}"
+}
+
+download_release() {
+    local version=$1 dir="$DOWNLOAD_DIR/$1" name
+    mkdir -p "$dir"
+    for name in "understandtech_${version}_all.deb" "understandtech_${version}_all.deb.sig"; do
+        [[ -f "$dir/$name" ]] && continue
+        fetch --location --continue-at - --output "$dir/$name.part" "$RELEASES_URL/download/v${version}/$name" \
+            || fail "Could not download ${name} — run the same command again to resume"
+        mv "$dir/$name.part" "$dir/$name"
+    done
+    printf '%s' "$dir"
 }
 
 the_only_package_in() {
@@ -77,7 +112,7 @@ verify_signature() {
         return 0
     fi
     rm -f "$key"
-    fail "$(basename "$package") is NOT signed by UnderstandTech — nothing was installed"
+    return 1
 }
 
 install_package() {
@@ -91,11 +126,20 @@ main() {
     parse_arguments "$@"
     [[ $EUID -eq 0 ]] || fail "Run with sudo: sudo $0 $*"
 
+    if [[ -z "$RELEASE_DIR" ]]; then
+        [[ -n "$VERSION" ]] || VERSION=$(latest_version) || exit 1
+        is_a_release_version "$VERSION" \
+            || fail "${VERSION:-nothing} is not a release version — expected one like 2026.09.1"
+        log_step "Downloading UnderstandTech AI in a Box ${VERSION}"
+        RELEASE_DIR=$(download_release "$VERSION") || exit 1
+    fi
+
     [[ -d "$RELEASE_DIR" ]] || fail "No such directory: ${RELEASE_DIR}"
     local package
     package=$(the_only_package_in "$(cd "$RELEASE_DIR" && pwd)") || exit 1
     log_step "Checking $(basename "$package")"
-    verify_signature "$package"
+    verify_signature "$package" \
+        || fail "$(basename "$package") is NOT signed by UnderstandTech — nothing was installed. If it was downloaded, delete ${RELEASE_DIR} and run again"
     install_package "$package"
     exec ut-install ${INSTALL_ARGUMENTS[@]+"${INSTALL_ARGUMENTS[@]}"}
 }

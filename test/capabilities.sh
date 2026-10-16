@@ -808,6 +808,129 @@ the_launcher_installs_nothing_unsigned() {
         && launcher_verdict_is unsigned nothing
 }
 
+# The same launcher, fetching from a local HTTPS server laid out like GitHub's
+# releases: /latest redirects to the tag, assets sit under /download/<tag>/.
+# The client is Debian with curl, which the image the offline probe uses lacks.
+download_verdicts() {
+    local work="$WORK_DIR/download" signing="$WORK_DIR/signing" net="ut-get-download-$$"
+    local client="ut-get-client-$$" server="ut-get-server-$$" version dir
+    mkdir -p "$work/bin" "$work/tls"
+    if [[ ! -s "$work/verdicts.txt" ]]; then
+        launcher_verdicts >/dev/null
+        cp "$WORK_DIR/launcher/ut-get" "$work/ut-get"
+        cp "$WORK_DIR/launcher/bin/apt-get" "$WORK_DIR/launcher/bin/ut-install" "$work/bin/"
+
+        for version in 2026.99.1 2026.98.1 2026.97.1; do
+            dir="$work/site/releases/download/v${version}"
+            mkdir -p "$dir"
+            cp "$signing/package.deb" "$dir/understandtech_${version}_all.deb"
+            cp "$signing/package.deb.sig" "$dir/understandtech_${version}_all.deb.sig"
+        done
+        printf 'x' >> "$work/site/releases/download/v2026.97.1/understandtech_2026.97.1_all.deb"
+        printf 'v2026.99.1' > "$work/latest"
+
+        cat > "$work/serve.py" <<'SERVE'
+import http.server, pathlib, ssl
+class Releases(http.server.SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory="/w/site", **kwargs)
+    def do_GET(self):
+        if self.path == "/releases/latest":
+            tag = pathlib.Path("/w/latest").read_text().strip()
+            self.send_response(302)
+            self.send_header("Location", "https://releases.test/releases" + ("/tag/" + tag if tag else ""))
+            self.end_headers()
+            return
+        super().do_GET()
+    def log_message(self, *args):
+        pass
+server = http.server.ThreadingHTTPServer(("", 443), Releases)
+context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+context.load_cert_chain("/w/tls/server.pem", "/w/tls/server.key")
+server.socket = context.wrap_socket(server.socket, server_side=True)
+server.serve_forever()
+SERVE
+
+        docker network create "$net" >/dev/null
+        docker run -d --name "$client" --network "$net" -v "$work":/w "$DEBIAN_IMAGE" sleep 600 >/dev/null
+        docker exec "$client" bash -c '
+            for attempt in 1 2 3; do
+                apt-get update -qq && apt-get install -y -qq --no-install-recommends curl openssl ca-certificates && break
+                sleep 5
+            done >/dev/null 2>&1
+            cd /w/tls
+            openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 2 \
+                -subj /CN=test-releases-ca -keyout ca.key -out ca.pem
+            openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+                -subj /CN=releases.test -keyout server.key -out server.csr
+            openssl x509 -req -in server.csr -CA ca.pem -CAkey ca.key -CAcreateserial -days 2 \
+                -extfile <(printf "subjectAltName=DNS:releases.test") -out server.pem
+            chmod 644 server.key' >/dev/null 2>&1
+        docker run -d --name "$server" --network "$net" --network-alias releases.test -v "$work":/w:ro \
+            "$PYTHON_IMAGE" python3 /w/serve.py >/dev/null
+        sleep 2
+
+        launch() {
+            local case=$1; shift
+            docker exec -e CASE="$case" -e PATH=/w/bin:/usr/bin:/bin \
+                -e UT_RELEASES_URL=https://releases.test/releases -e CURL_CA_BUNDLE=/w/tls/ca.pem \
+                "$client" /w/ut-get "$@" > "$work/said-$case" 2>&1
+            printf '%s=%s\n' "$case" "$(tr '\n' ';' < "$work/calls-$case" 2>/dev/null || echo nothing)"
+        }
+        {
+            launch latest --domain box.test
+            launch pinned --version 2026.98.1 --domain box.test
+            launch tampered --version 2026.97.1 --domain box.test
+            printf '' > "$work/latest"
+            launch unpublished --domain box.test
+            launch notaversion --version ../2026.98.1 --domain box.test
+            docker rm -f "$server" >/dev/null 2>&1
+            launch offline --version 2026.98.1 --domain box.test
+            grep -q 'has published no release yet' "$work/said-unpublished" && echo 'unpublished_said=no release yet'
+            grep -q 'is not a release version' "$work/said-notaversion" && echo 'notaversion_said=not a version'
+        } > "$work/verdicts.txt"
+        docker rm -f "$client" "$server" >/dev/null 2>&1
+        docker network rm "$net" >/dev/null 2>&1
+    fi
+    cat "$work/verdicts.txt"
+}
+
+download_verdict_is() {
+    local key=$1 expected=$2 verdicts
+    verdicts=$(download_verdicts)
+    grep -qxF "${key}=${expected}" <<< "$verdicts" && return 0
+    echo "expected ${key}=${expected}, verdicts were:"; echo "$verdicts"
+    return 1
+}
+
+DOWNLOADED=/var/cache/understandtech/releases
+
+the_latest_release_is_downloaded_checked_and_installed() {
+    download_verdict_is latest \
+        "apt-get install -y ${DOWNLOADED}/2026.99.1/understandtech_2026.99.1_all.deb;ut-install --domain box.test;"
+}
+
+a_named_version_is_installed_rather_than_the_latest() {
+    download_verdict_is pinned \
+        "apt-get install -y ${DOWNLOADED}/2026.98.1/understandtech_2026.98.1_all.deb;ut-install --domain box.test;"
+}
+
+a_downloaded_release_that_was_altered_installs_nothing() {
+    download_verdict_is tampered nothing
+}
+
+with_no_release_published_or_no_version_nothing_is_fetched() {
+    download_verdict_is unpublished nothing \
+        && download_verdict_is unpublished_said "no release yet" \
+        && download_verdict_is notaversion nothing \
+        && download_verdict_is notaversion_said "not a version"
+}
+
+a_release_already_downloaded_installs_again_offline() {
+    download_verdict_is offline \
+        "apt-get install -y ${DOWNLOADED}/2026.98.1/understandtech_2026.98.1_all.deb;ut-install --domain box.test;"
+}
+
 the_launcher_carries_the_key_ut_verify_carries() {
     local in_launcher in_verify
     in_launcher=$(sed -n "/^RELEASE_PUBLIC_KEY='/,/'\$/p" "$REPO_ROOT/ut-get")
@@ -1964,6 +2087,16 @@ if [[ -x "$REPO_ROOT/ut-get" ]]; then
         the_launcher_installs_nothing_unsigned
     capability "the key ut-get carries is the key ut-verify carries" \
         the_launcher_carries_the_key_ut_verify_carries
+    capability "the latest release is downloaded, checked, installed, then handed to ut-install" \
+        the_latest_release_is_downloaded_checked_and_installed
+    capability "--version installs that release rather than the latest" \
+        a_named_version_is_installed_rather_than_the_latest
+    capability "a downloaded release that was altered installs nothing" \
+        a_downloaded_release_that_was_altered_installs_nothing
+    capability "with no release published, or a version that is not one, nothing is fetched and the reason is said" \
+        with_no_release_published_or_no_version_nothing_is_fetched
+    capability "a release already downloaded installs again with its server gone" \
+        a_release_already_downloaded_installs_again_offline
 fi
 
 if [[ -x "$REPO_ROOT/ut-license" ]]; then

@@ -648,7 +648,7 @@ if [[ -x "$REPO_ROOT/ut-get" ]]; then
 
     capability_discriminates "a launcher that installs before it checks" \
         "nothing is installed from a release that was altered" \
-        "sed -i.bak '/^    verify_signature \"\$package\"$/d' ut-get"
+        "sed -i.bak 's|^    verify_signature \"\$package\" \\\\$|    true \\\\|' ut-get"
 
     capability_discriminates "a launcher that drops what it was asked to pass on" \
         "a release we signed is installed, then handed to ut-install" \
@@ -657,6 +657,22 @@ if [[ -x "$REPO_ROOT/ut-get" ]]; then
     capability_discriminates "a launcher that carries another key than ut-verify" \
         "the key ut-get carries is the key ut-verify carries" \
         "sed -i.bak 's|^62Aggan6|62Aggan7|' ut-get"
+
+    capability_discriminates "a launcher that always takes the latest" \
+        "--version installs that release rather than the latest" \
+        "sed -i.bak 's|^            --version) VERSION=.*|            --version) shift ;;|' ut-get"
+
+    capability_discriminates "a launcher that downloads again what it has" \
+        "a release already downloaded installs again with its server gone" \
+        "sed -i.bak '/^        \[\[ -f \"\$dir\/\$name\" \]\] \&\& continue$/d' ut-get"
+
+    capability_discriminates "a launcher that takes any version it is given" \
+        "nothing is fetched and the reason is said" \
+        "sed -i.bak 's|^is_a_release_version() {.*|is_a_release_version() { return 0; }|' ut-get"
+
+    capability_discriminates "a launcher that reads a version where GitHub names none" \
+        "nothing is fetched and the reason is said" \
+        "sed -i.bak 's|^    \[\[ \"\$tag_url\" == \*/releases/tag/v\* \]\] \\\\$|    true \\\\|' ut-get"
 fi
 
 if [[ -x "$REPO_ROOT/ut-license" ]]; then
