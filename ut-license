@@ -111,7 +111,7 @@ check() {
 
 field() {
     local name=$1 payload value
-    [[ "$name" =~ ^(customer|expires|rights|registry_user|registry_token)$ ]] \
+    [[ "$name" =~ ^(customer|expires|rights|registry|registry_user|registry_token)$ ]] \
         || fail "No such field: ${name}"
     payload=$(mktemp)
     trap "rm -f '$payload'" EXIT

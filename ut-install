@@ -601,7 +601,7 @@ ask_for_license() {
 }
 
 take_license() {
-    local tool key
+    local tool key licensed_registry
     tool=$(license_tool)
     key=$(mktemp)
     chmod 600 "$key"
@@ -617,6 +617,11 @@ take_license() {
     fi
     REGISTRY_USER=$("$tool" field registry_user "$key")
     REGISTRY_TOKEN=$("$tool" field registry_token "$key")
+    licensed_registry=$("$tool" field registry "$key" 2>/dev/null || true)
+    if [[ -n "$licensed_registry" && -z "${UT_REGISTRY:-}" ]]; then
+        REGISTRY=$licensed_registry
+        log_info "Images come from ${REGISTRY}, the registry this license names"
+    fi
     [[ -d "$(dirname "$LICENSE_STORE")" ]] || mkdir -p -m 750 "$(dirname "$LICENSE_STORE")"
     install -m 600 "$key" "$LICENSE_STORE"
     rm -f "$key"
@@ -1074,6 +1079,22 @@ the_inference_url_names_a_service_this_machine_will_not_run() {
 
 # Compose reads .env from the project directory and interpolates ${} from it, so
 # it has to stay one flat file — a list of sources would not be read at all.
+# The registry keeps every image under the path it has on its own registry,
+# Docker Hub's short names under library/, so a byte-for-byte copy keeps the
+# digest release.env pins.
+image_in_registry() {
+    local reference=$1 first
+    if [[ "$reference" == */* ]]; then
+        first=${reference%%/*}
+        case "$first" in
+            *.*|*:*|localhost) reference=${reference#*/} ;;
+        esac
+    else
+        reference="library/${reference}"
+    fi
+    printf '%s/%s' "$REGISTRY" "$reference"
+}
+
 render_settings() {
     local target=$1 local_file=$2 release key line overridden tmp
     release="$INSTALL_DIR/release.env"
@@ -1086,6 +1107,9 @@ render_settings() {
             [A-Za-z_]*=*)
                 key=${line%%=*}
                 if key_is_overridden_locally "$key" "$overridden"; then continue; fi
+                if [[ "$REGISTRY" != "ghcr.io" && "$line" =~ ^[A-Z0-9_]+_IMAGE=\"(.+)\"$ ]]; then
+                    line="${key}=\"$(image_in_registry "${BASH_REMATCH[1]}")\""
+                fi
                 ;;
         esac
         printf '%s\n' "$line" >> "$tmp"
