@@ -678,6 +678,34 @@ if [[ -x "$REPO_ROOT/ut-license" ]]; then
         "it says how the license stands" \
         "sed -i.bak 's|^        log_warn \"\${said#\*\] } Updates|        log_info \"\${said#*] } Updates|' ut-status"
 
+    capability_discriminates "a token that can write is taken for one that reads" \
+        "a read-only token that pulls the release and outlives it" \
+        "sed -i.bak 's|\[\[ \"\$scopes\" == \"read:packages\" \]\]|true|' packaging/issue-license.sh"
+
+    capability_discriminates "a license that outlives its token" \
+        "a read-only token that pulls the release and outlives it" \
+        "sed -i.bak 's|\[\[ \"\$token_ends\" < \"\$expires\" \]\] \\\\|false \\\\|' packaging/issue-license.sh"
+
+    capability_discriminates "a token never tried against the release" \
+        "a read-only token that pulls the release and outlives it" \
+        "sed -i.bak '/^check_the_token_pulls_the_release\$/d' packaging/issue-license.sh"
+
+    capability_discriminates "a ledger that keeps the token" \
+        "every license issued is written down, and never its token" \
+        "sed -i.bak 's|\"\$registry_user\" \"\$fingerprint\"|\"\$registry_user\" \"\$token\"|' packaging/issue-license.sh"
+
+    capability_discriminates "a license issued and never written down" \
+        "every license issued is written down, and never its token" \
+        "sed -i.bak 's|^write_it_down |: |' packaging/issue-license.sh"
+
+    capability_discriminates "an installer that drops library/ from Docker Hub's short names" \
+        "the installer and the issuer name every image of the release alike" \
+        "sed -i.bak 's|reference=\"library/\${reference}\"|reference=\"\${reference}\"|' ut-install"
+
+    capability_discriminates "a license for another registry issued without trying it" \
+        "a license for another registry names it, and is checked against it" \
+        "sed -i.bak '/^    check_the_account_pulls_the_release_from /d' packaging/issue-license.sh"
+
     capability_discriminates "a license check that shows what the key carries" \
         "checking a license never prints the registry token it carries" \
         "sed -i.bak 's|^    customer=\$(payload_field|    cat \"\$payload\" >\&2; customer=\$(payload_field|' ut-license"
@@ -788,6 +816,14 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
     install_walk_discriminates "a token alone accepted without a word" \
         "a registry token alone still installs, and says a license will be needed" \
         "sed -i.bak 's|is accepted by this version only|works|' ut-install"
+
+    install_walk_discriminates "a registry the license names, then ignored" \
+        "a license that names a registry pulls every image from it" \
+        "sed -i.bak '/^        REGISTRY=\$licensed_registry\$/d' ut-install"
+
+    install_walk_discriminates "a login to the licensed registry, and images still named elsewhere" \
+        "a license that names a registry pulls every image from it" \
+        "sed -i.bak 's|\"\$REGISTRY\" != \"ghcr.io\" \&\& \"\$line\"|\"\$REGISTRY\" == \"never\" \&\& \"\$line\"|' ut-install"
 
     install_walk_discriminates "writing through a link whose directory is gone" \
         "it is recreated rather than reported as a broken link" \

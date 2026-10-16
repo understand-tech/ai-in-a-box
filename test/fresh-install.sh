@@ -162,7 +162,7 @@ state_setup() {
         empty_settings) echo 'install -m 600 /dev/null /etc/understandtech/.env' ;;
         # The packaged ut-license carries the real public key; these states swap
         # in one whose private half the suite holds, the way an issued key is.
-        licensed|license_tampered|license_ended|licensed_offline)
+        licensed|license_tampered|license_ended|licensed_offline|licensed_elsewhere)
             echo 'cp /w/licenses/ut-license /usr/bin/ut-license' ;;
         license_stored)
             echo 'cp /w/licenses/ut-license /usr/bin/ut-license && install -d -m 750 /etc/understandtech && install -m 600 /w/licenses/valid.lic /etc/understandtech/license' ;;
@@ -626,17 +626,25 @@ out.write_text(re.sub(r"LICENSE_PUBLIC_KEY='[^']*'",
 SWAP
     chmod 755 "$work/ut-license"
     printf '%s\n' "$LICENSE_TOKEN" > "$work/token"
-    "$REPO_ROOT/packaging/issue-license.sh" --customer "Walk Customer" \
-        --expires "$(( $(date -u +%Y) + 1 ))-12-31" --token-file "$work/token" \
-        --registry-user "$LICENSE_USER" --signing-key "$work/license.key" > "$work/valid.lic"
+    # Signed here rather than by issue-license.sh, which asks GitHub about the
+    # token first: the walk is about the installer, and runs with no network.
+    printf 'version=1\ncustomer=Walk Customer\nissued=%s\nexpires=%s\nrights=platform\nregistry_user=%s\nregistry_token=%s\n' \
+        "$(date -u +%F)" "$(( $(date -u +%Y) + 1 ))-12-31" "$LICENSE_USER" "$LICENSE_TOKEN" > "$work/valid.payload"
+    openssl dgst -sha256 -sign "$work/license.key" -out "$work/valid.sig" "$work/valid.payload"
+    printf 'UT1.%s.%s\n' "$(openssl base64 -A < "$work/valid.payload")" \
+        "$(openssl base64 -A < "$work/valid.sig")" > "$work/valid.lic"
     python3 - "$work/valid.lic" "$work/tampered.lic" <<'TAMPER'
 import base64, sys
 fmt, payload, signature = open(sys.argv[1]).read().strip().split(".")
 renamed = base64.b64decode(payload).replace(b"customer=Walk Customer", b"customer=Someone Else", 1)
 open(sys.argv[2], "w").write(".".join([fmt, base64.b64encode(renamed).decode(), signature]) + "\n")
 TAMPER
-    # issue-license.sh refuses an end date in the past, so the ended key is
-    # signed here, the way a key issued last year would have been.
+    printf 'version=1\ncustomer=Walk Customer\nissued=%s\nexpires=%s\nrights=platform\nregistry=registry.example.test\nregistry_user=%s\nregistry_token=%s\n' \
+        "$(date -u +%F)" "$(( $(date -u +%Y) + 1 ))-12-31" "$LICENSE_USER" "$LICENSE_TOKEN" > "$work/elsewhere.payload"
+    openssl dgst -sha256 -sign "$work/license.key" -out "$work/elsewhere.sig" "$work/elsewhere.payload"
+    printf 'UT1.%s.%s\n' "$(openssl base64 -A < "$work/elsewhere.payload")" \
+        "$(openssl base64 -A < "$work/elsewhere.sig")" > "$work/elsewhere.lic"
+    # And an ended one, as a key issued last year would have been.
     printf 'version=1\ncustomer=Walk Customer\nissued=2019-01-01\nexpires=2020-01-01\nrights=platform\nregistry_user=%s\nregistry_token=%s\n' \
         "$LICENSE_USER" "$LICENSE_TOKEN" > "$work/ended.payload"
     openssl dgst -sha256 -sign "$work/license.key" -out "$work/ended.sig" "$work/ended.payload"
@@ -701,11 +709,38 @@ images_already_here_need_no_registry_login() {
 
 the_carried_token_never_reaches_the_output() {
     local state
-    for state in licensed license_stored license_tampered license_ended licensed_offline; do
+    for state in licensed license_stored license_tampered license_ended licensed_offline licensed_elsewhere; do
         grep -qF "$LICENSE_TOKEN" <<< "$(output_of "$state")" \
             && { echo "the registry token appears in the output of ${state}"; return 1; }
     done
     return 0
+}
+
+image_lines() { grep -E '^[A-Z0-9_]+_IMAGE=' | sort; }
+
+a_license_naming_a_registry_pulls_every_image_from_it() {
+    local written release line wrong=""
+    written=$(settings_of licensed_elsewhere | image_lines)
+    release=$(image_lines < "$REPO_ROOT/release.env")
+    [[ -n "$written" ]] || { echo "no image was written:"; output_of licensed_elsewhere | tail -5; return 1; }
+    while IFS= read -r line; do
+        [[ "$line" == *'="registry.example.test/'* ]] || wrong="${wrong} ${line%%=*}"
+    done <<< "$written"
+    [[ -z "$wrong" ]] || { echo "still pulled from elsewhere:${wrong}"; return 1; }
+    [[ "$(sed 's/.*@//' <<< "$written")" == "$(sed 's/.*@//' <<< "$release")" ]] \
+        || { echo "an image lost the digest release.env pins"; return 1; }
+    grep -q '^CADDY_IMAGE="registry.example.test/library/caddy:' <<< "$written" \
+        && grep -q '^API_IMAGE="registry.example.test/understand-tech/ut-api-customer:' <<< "$written" \
+        || { echo "an image is not under its own path:"; echo "$written" | head -4; return 1; }
+    grep -q '^login registry.example.test ' <<< "$(of_state licensed_elsewhere docker-calls)" && return 0
+    echo "it did not sign in to the registry the license names"
+    return 1
+}
+
+a_license_naming_no_registry_leaves_the_images_where_they_are() {
+    [[ "$(settings_of licensed | image_lines)" == "$(image_lines < "$REPO_ROOT/release.env")" ]] && return 0
+    echo "the image names changed with a license that names no registry"
+    return 1
 }
 
 a_token_alone_still_installs_and_says_so() {
@@ -753,6 +788,8 @@ WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --lice
 WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --license-file /w/licenses/ended.lic" \
     run_install_from_state license_ended
 WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= run_install_from_state license_stored
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --license-file /w/licenses/elsewhere.lic" \
+    run_install_from_state licensed_elsewhere
 WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --license-file /w/licenses/valid.lic --skip-pull --health-timeout 5" \
     run_install_from_state licensed_offline
 run_install_from_state backup_destination_mounted
@@ -853,6 +890,10 @@ property "a license that has ended stops the install, and says when" \
     an_ended_license_stops_the_install_and_says_when
 property "with the images already here, a license needs no registry login" \
     images_already_here_need_no_registry_login
+property "a license that names a registry pulls every image from it, digests kept" \
+    a_license_naming_a_registry_pulls_every_image_from_it
+property "a license that names no registry leaves the images where they are" \
+    a_license_naming_no_registry_leaves_the_images_where_they_are
 property "the token a license carries never reaches the output" \
     the_carried_token_never_reaches_the_output
 property "a registry token alone still installs, and says a license will be needed" \
