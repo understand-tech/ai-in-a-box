@@ -2116,7 +2116,7 @@ if [[ -x "$REPO_ROOT/ut-get" ]]; then
         the_launcher_carries_the_key_ut_verify_carries
     capability "the latest release is downloaded, checked, installed, then handed to ut-install" \
         the_latest_release_is_downloaded_checked_and_installed
-    capability "--version installs that release rather than the latest" \
+    capability "a release named by --version is installed rather than the latest" \
         a_named_version_is_installed_rather_than_the_latest
     capability "a downloaded release that was altered installs nothing" \
         a_downloaded_release_that_was_altered_installs_nothing

@@ -659,7 +659,7 @@ if [[ -x "$REPO_ROOT/ut-get" ]]; then
         "sed -i.bak 's|^62Aggan6|62Aggan7|' ut-get"
 
     capability_discriminates "a launcher that always takes the latest" \
-        "--version installs that release rather than the latest" \
+        "a release named by --version is installed rather than the latest" \
         "sed -i.bak 's|^            --version) VERSION=.*|            --version) shift ;;|' ut-get"
 
     capability_discriminates "a launcher that downloads again what it has" \
