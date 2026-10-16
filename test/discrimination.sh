@@ -674,6 +674,10 @@ if [[ -x "$REPO_ROOT/ut-get" ]]; then
         "every release publishes ut-get beside the package" \
         "sed -i.bak '/^            dist\/ut-get \\\\$/d' .github/workflows/release.yml"
 
+    capability_discriminates "an install page that skips a file the sums list" \
+        "the manual install downloads every file SHA256SUMS lists" \
+        "sed -i.bak 's| ut-verify ut-get release.pub SHA256SUMS; do| ut-verify release.pub SHA256SUMS; do|' docs/install.md"
+
     capability_discriminates "a launcher that reads a version where GitHub names none" \
         "nothing is fetched and the reason is said" \
         "sed -i.bak 's|^    \[\[ \"\$tag_url\" == \*/releases/tag/v\* \]\] \\\\$|    true \\\\|' ut-get"

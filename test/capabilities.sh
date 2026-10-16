@@ -941,6 +941,23 @@ the_release_publishes_the_launcher() {
     return 1
 }
 
+# The manual install checks SHA256SUMS, which fails on a sound release as soon
+# as it lists a file the page does not download — ut-get once did exactly that.
+release_file_kinds() {
+    tr ' ' '\n' | grep -vE '^(SHA256SUMS)?$' | sed -e 's/^understandtech_[^.]*//' -e 's/^_all//' | sort -u
+}
+
+the_install_page_downloads_every_file_the_sums_list() {
+    local listed downloaded
+    listed=$(sed -n 's/.*sha256sum \(.*\) > SHA256SUMS.*/\1/p' "$REPO_ROOT/.github/workflows/release.yml" \
+        | release_file_kinds)
+    downloaded=$(sed -n '/^for f in understandtech_/,/; do$/p' "$REPO_ROOT/docs/install.md" \
+        | sed -e 's/^for f in//' -e 's/; do$//' -e 's/\\$//' | tr -s ' \n' ' ' | release_file_kinds)
+    [[ -n "$listed" && "$listed" == "$downloaded" ]] && return 0
+    echo "SHA256SUMS lists:"; echo "$listed"; echo "docs/install.md downloads:"; echo "$downloaded"
+    return 1
+}
+
 the_launcher_carries_the_key_ut_verify_carries() {
     local in_launcher in_verify
     in_launcher=$(sed -n "/^RELEASE_PUBLIC_KEY='/,/'\$/p" "$REPO_ROOT/ut-get")
@@ -2109,6 +2126,8 @@ if [[ -x "$REPO_ROOT/ut-get" ]]; then
         a_release_already_downloaded_installs_again_offline
     capability "every release publishes ut-get beside the package" \
         the_release_publishes_the_launcher
+    capability "the manual install downloads every file SHA256SUMS lists" \
+        the_install_page_downloads_every_file_the_sums_list
 fi
 
 if [[ -x "$REPO_ROOT/ut-license" ]]; then
