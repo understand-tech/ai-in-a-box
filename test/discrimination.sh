@@ -678,6 +678,26 @@ if [[ -x "$REPO_ROOT/ut-license" ]]; then
         "it says how the license stands" \
         "sed -i.bak 's|^        log_warn \"\${said#\*\] } Updates|        log_info \"\${said#*] } Updates|' ut-status"
 
+    capability_discriminates "a token that can write is taken for one that reads" \
+        "a read-only token that pulls the release and outlives it" \
+        "sed -i.bak 's|\[\[ \"\$scopes\" == \"read:packages\" \]\]|true|' packaging/issue-license.sh"
+
+    capability_discriminates "a license that outlives its token" \
+        "a read-only token that pulls the release and outlives it" \
+        "sed -i.bak 's|\[\[ \"\$token_ends\" < \"\$expires\" \]\] \\\\|false \\\\|' packaging/issue-license.sh"
+
+    capability_discriminates "a token never tried against the release" \
+        "a read-only token that pulls the release and outlives it" \
+        "sed -i.bak '/^check_the_token_pulls_the_release\$/d' packaging/issue-license.sh"
+
+    capability_discriminates "a ledger that keeps the token" \
+        "every license issued is written down, and never its token" \
+        "sed -i.bak 's|\"\$registry_user\" \"\$fingerprint\"|\"\$registry_user\" \"\$token\"|' packaging/issue-license.sh"
+
+    capability_discriminates "a license issued and never written down" \
+        "every license issued is written down, and never its token" \
+        "sed -i.bak 's|^write_it_down |: |' packaging/issue-license.sh"
+
     capability_discriminates "a license check that shows what the key carries" \
         "checking a license never prints the registry token it carries" \
         "sed -i.bak 's|^    customer=\$(payload_field|    cat \"\$payload\" >\&2; customer=\$(payload_field|' ut-license"

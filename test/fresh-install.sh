@@ -626,17 +626,20 @@ out.write_text(re.sub(r"LICENSE_PUBLIC_KEY='[^']*'",
 SWAP
     chmod 755 "$work/ut-license"
     printf '%s\n' "$LICENSE_TOKEN" > "$work/token"
-    "$REPO_ROOT/packaging/issue-license.sh" --customer "Walk Customer" \
-        --expires "$(( $(date -u +%Y) + 1 ))-12-31" --token-file "$work/token" \
-        --registry-user "$LICENSE_USER" --signing-key "$work/license.key" > "$work/valid.lic"
+    # Signed here rather than by issue-license.sh, which asks GitHub about the
+    # token first: the walk is about the installer, and runs with no network.
+    printf 'version=1\ncustomer=Walk Customer\nissued=%s\nexpires=%s\nrights=platform\nregistry_user=%s\nregistry_token=%s\n' \
+        "$(date -u +%F)" "$(( $(date -u +%Y) + 1 ))-12-31" "$LICENSE_USER" "$LICENSE_TOKEN" > "$work/valid.payload"
+    openssl dgst -sha256 -sign "$work/license.key" -out "$work/valid.sig" "$work/valid.payload"
+    printf 'UT1.%s.%s\n' "$(openssl base64 -A < "$work/valid.payload")" \
+        "$(openssl base64 -A < "$work/valid.sig")" > "$work/valid.lic"
     python3 - "$work/valid.lic" "$work/tampered.lic" <<'TAMPER'
 import base64, sys
 fmt, payload, signature = open(sys.argv[1]).read().strip().split(".")
 renamed = base64.b64decode(payload).replace(b"customer=Walk Customer", b"customer=Someone Else", 1)
 open(sys.argv[2], "w").write(".".join([fmt, base64.b64encode(renamed).decode(), signature]) + "\n")
 TAMPER
-    # issue-license.sh refuses an end date in the past, so the ended key is
-    # signed here, the way a key issued last year would have been.
+    # And an ended one, as a key issued last year would have been.
     printf 'version=1\ncustomer=Walk Customer\nissued=2019-01-01\nexpires=2020-01-01\nrights=platform\nregistry_user=%s\nregistry_token=%s\n' \
         "$LICENSE_USER" "$LICENSE_TOKEN" > "$work/ended.payload"
     openssl dgst -sha256 -sign "$work/license.key" -out "$work/ended.sig" "$work/ended.payload"

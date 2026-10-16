@@ -753,6 +753,75 @@ the_shipped_key_is_the_one_the_release_is_signed_with() {
 # token that must never come back out on a screen or in a log.
 LICENSE_TEST_TOKEN=ghp_licenseTestTokenNeverPrinted0001
 
+# GitHub and ghcr stand-ins on the loopback, one scenario per path prefix:
+# good, broad (more than read:packages), forever (no end), short (ends before
+# the license), blind (cannot pull), refused (401). Each answers only when it is
+# sent the credential the real one would expect.
+start_a_fake_github() {
+    local work=$1 next_year=$2
+    cat > "$work/fake-github.py" <<'FAKE'
+import base64, http.server, json, sys
+token, user, year, portfile = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
+basic = "Basic " + base64.b64encode(f"{user}:{token}".encode()).decode()
+
+class Answer(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def answer(self, code, headers=(), body=b""):
+        self.send_response(code)
+        for name, value in headers:
+            self.send_header(name, value)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    def route(self):
+        scenario, _, rest = self.path.lstrip("/").partition("/")
+        sent = self.headers.get("Authorization", "")
+        if rest == "user":
+            if sent != "Bearer " + token or scenario == "refused":
+                return self.answer(401)
+            headers = [("X-OAuth-Scopes", "read:packages, repo" if scenario == "broad" else "read:packages")]
+            if scenario != "forever":
+                end = f"{year}-01-01" if scenario == "short" else f"{year + 1}-12-31"
+                headers.append(("GitHub-Authentication-Token-Expiration", end + " 00:00:00 UTC"))
+            return self.answer(200, headers)
+        if rest.startswith("token"):
+            if sent != basic:
+                return self.answer(401)
+            return self.answer(200, [("Content-Type", "application/json")],
+                               json.dumps({"token": "pull-" + scenario}).encode())
+        if rest.startswith("v2/"):
+            if sent != "Bearer pull-" + scenario or scenario == "blind":
+                return self.answer(403)
+            return self.answer(200)
+        return self.answer(404)
+
+    do_GET = route
+    do_HEAD = route
+
+server = http.server.HTTPServer(("127.0.0.1", 0), Answer)
+open(portfile, "w").write(str(server.server_port))
+server.serve_forever()
+FAKE
+    python3 "$work/fake-github.py" "$LICENSE_TEST_TOKEN" dgx-access "${next_year%%-*}" "$work/fake-port" &
+    FAKE_GITHUB_PID=$!
+    local waited=0
+    until [[ -s "$work/fake-port" ]]; do
+        sleep 0.2; waited=$((waited + 1))
+        (( waited < 50 )) || { echo "the fake GitHub never started" >&2; return 1; }
+    done
+    FAKE_GITHUB="http://127.0.0.1:$(cat "$work/fake-port")"
+}
+
+issued_against() {
+    local scenario=$1; shift
+    UT_GITHUB_API="$FAKE_GITHUB/$scenario" UT_GHCR="$FAKE_GITHUB/$scenario" \
+        "$REPO_ROOT/packaging/issue-license.sh" --ledger "$WORK_DIR/license/ledger.tsv" "$@"
+}
+
 license_verdicts() {
     local work="$WORK_DIR/license"
     mkdir -p "$work"
@@ -772,11 +841,12 @@ out.write_text(swapped)
 SWAP
         chmod +x "$work/ut-license"
 
-        local issue="$REPO_ROOT/packaging/issue-license.sh" next_year
+        local issue="$REPO_ROOT/packaging/issue-license.sh" next_year scenario
         next_year="$(( $(date -u +%Y) + 1 ))-12-31"
-        "$issue" --customer "Test Customer" --expires "$next_year" --token-file "$work/token" \
+        start_a_fake_github "$work" "$next_year" || return 1
+        issued_against good --customer "Test Customer" --expires "$next_year" --token-file "$work/token" \
             --signing-key "$work/license.key" > "$work/issued.lic" 2>/dev/null
-        "$issue" --customer "Test Customer" --expires "$next_year" --token-file "$work/token" \
+        issued_against good --customer "Test Customer" --expires "$next_year" --token-file "$work/token" \
             --signing-key "$work/other.key" > "$work/foreign.lic" 2>/dev/null
         python3 - "$work/issued.lic" "$work/tampered.lic" <<'TAMPER'
 import base64, sys
@@ -798,7 +868,14 @@ TAMPER
             printf 'issued_to_nobody=%s\n' \
                 "$("$issue" --expires "$next_year" --token-file "$work/token" \
                     --signing-key "$work/license.key" >/dev/null 2>&1 && echo issued || echo refused)"
+            for scenario in broad forever short blind refused; do
+                printf 'token_%s=%s\n' "$scenario" \
+                    "$(issued_against "$scenario" --customer "Test Customer" --expires "$next_year" \
+                        --token-file "$work/token" --signing-key "$work/license.key" >/dev/null 2>&1 \
+                        && echo issued || echo refused)"
+            done
         } > "$work/verdicts.txt"
+        kill "$FAKE_GITHUB_PID" 2>/dev/null
     fi
     cat "$work/verdicts.txt"
 }
@@ -818,6 +895,27 @@ a_license_nobody_issued_is_refused() {
     license_verdict_is tampered refused \
         && license_verdict_is foreign refused \
         && license_verdict_is garbage refused
+}
+
+a_license_is_issued_only_for_a_narrow_token_that_outlives_it() {
+    license_verdict_is issued accepted \
+        && license_verdict_is token_broad refused \
+        && license_verdict_is token_forever refused \
+        && license_verdict_is token_short refused \
+        && license_verdict_is token_blind refused \
+        && license_verdict_is token_refused refused
+}
+
+every_license_issued_is_written_down_never_its_token() {
+    local ledger="$WORK_DIR/license/ledger.tsv" fingerprint
+    license_verdicts >/dev/null
+    fingerprint=$(printf '%s' "$LICENSE_TEST_TOKEN" | openssl dgst -sha256 -r | cut -c1-16)
+    grep -qF "$LICENSE_TEST_TOKEN" "$ledger" 2>/dev/null \
+        && { echo "the ledger holds the token itself"; return 1; }
+    [[ $(grep -c "	Test Customer	.*	${fingerprint}	" "$ledger" 2>/dev/null) -eq 2 ]] && return 0
+    echo "expected the two licenses issued, and only those, in the ledger:"
+    cat "$ledger" 2>/dev/null || echo "no ledger"
+    return 1
 }
 
 a_license_without_a_customer_or_an_end_is_never_issued() {
@@ -1762,6 +1860,10 @@ if [[ -x "$REPO_ROOT/ut-license" ]]; then
         a_license_nobody_issued_is_refused
     capability "a license with no customer or no end date is never issued" \
         a_license_without_a_customer_or_an_end_is_never_issued
+    capability "a license is issued only for a read-only token that pulls the release and outlives it" \
+        a_license_is_issued_only_for_a_narrow_token_that_outlives_it
+    capability "every license issued is written down, and never its token" \
+        every_license_issued_is_written_down_never_its_token
     capability "checking a license never prints the registry token it carries" \
         checking_a_license_never_prints_its_token
     capability "the key ut-license carries is the key licenses are signed with" \

@@ -2,6 +2,11 @@
 
 set -Eeuo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RELEASE_ENV="${RELEASE_ENV:-$SCRIPT_DIR/../release.env}"
+GITHUB_API="${UT_GITHUB_API:-https://api.github.com}"
+GHCR="${UT_GHCR:-https://ghcr.io}"
+
 usage() {
     cat <<'EOF'
 issue-license.sh — issues the license key a customer types into ut-install.
@@ -15,15 +20,21 @@ issue-license.sh — issues the license key a customer types into ut-install.
   --signing-key PATH     the private half of the license key
   --registry-user NAME   registry account the token belongs to (default dgx-access)
   --rights LIST          what the license covers (default platform)
+  --ledger PATH          where issued licenses are written down (default: beside
+                         the signing key, licenses-issued.tsv)
 
-Prints the key, one line, on stdout. The signing key never leaves the machine
-that issues licenses: it is not in this repository, and not in CI.
+Before signing, it asks GitHub about the token, and refuses one that carries more
+than read:packages, never expires, ends before the license, or cannot pull every
+image of release.env. It then writes the license down in the ledger — customer,
+dates, and the token's fingerprint, never the token — and prints the key, one
+line, on stdout. The signing key never leaves the machine that issues licenses:
+it is not in this repository, and not in CI.
 EOF
 }
 
 fail() { printf '[fail] %s\n' "$*" >&2; exit 1; }
 
-customer="" expires="" token_file="" signing_key="" registry_user="dgx-access" rights="platform"
+customer="" expires="" token_file="" signing_key="" registry_user="dgx-access" rights="platform" ledger=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -33,6 +44,7 @@ while [[ $# -gt 0 ]]; do
         --signing-key)   signing_key=${2:-};   shift 2 ;;
         --registry-user) registry_user=${2:-}; shift 2 ;;
         --rights)        rights=${2:-};        shift 2 ;;
+        --ledger)        ledger=${2:-};        shift 2 ;;
         -h|--help)       usage; exit 0 ;;
         *)               usage >&2; exit 1 ;;
     esac
@@ -50,6 +62,67 @@ done
 
 token=$(tr -d '\r\n' < "$token_file")
 [[ "$token" =~ ^[A-Za-z0-9_.-]+$ ]] || fail "the token in ${token_file} is not a single registry token"
+[[ -f "$RELEASE_ENV" ]] || fail "No release.env at ${RELEASE_ENV} to check the token against"
+ledger=${ledger:-"$(dirname "$signing_key")/licenses-issued.tsv"}
+
+# curl reads its credentials from stdin, so the token never sits on a command line.
+curl_with() {
+    local credential=$1; shift
+    printf '%s\n' "$credential" | curl -sS --max-time 15 -K - "$@"
+}
+
+header_of() {
+    local headers=$1 name=$2
+    grep -i "^${name}:" <<< "$headers" | head -1 | cut -d: -f2- | tr -d '\r' | sed 's/^ *//; s/ *$//'
+}
+
+token_ends=""
+check_the_token_with_github() {
+    local headers scopes
+    headers=$(curl_with "header = \"Authorization: Bearer ${token}\"" -o /dev/null -D - \
+        -w 'status=%{http_code}\n' "${GITHUB_API}/user") \
+        || fail "GitHub could not be reached to check the token; nothing was issued"
+    grep -q '^status=200$' <<< "$headers" || fail "GitHub refuses this token"
+    scopes=$(header_of "$headers" x-oauth-scopes | tr -d ' ')
+    [[ "$scopes" == "read:packages" ]] \
+        || fail "the token carries '${scopes:-no scope}': issue one with read:packages and nothing else"
+    token_ends=$(header_of "$headers" github-authentication-token-expiration | cut -c1-10)
+    [[ "$token_ends" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] \
+        || fail "the token never expires: give it an end no earlier than ${expires}"
+    [[ "$token_ends" < "$expires" ]] \
+        && fail "the token ends on ${token_ends}, before the license would (${expires})"
+    return 0
+}
+
+check_the_token_pulls_the_release() {
+    local reference repository object pull_token code unreadable=""
+    while IFS= read -r reference; do
+        repository=${reference#ghcr.io/}
+        repository=${repository%@*}
+        repository=${repository%:*}
+        object=${reference##*@}
+        [[ "$object" == "$reference" ]] && object=${reference##*:}
+        pull_token=$(curl_with "user = \"${registry_user}:${token}\"" \
+            "${GHCR}/token?scope=repository:${repository}:pull&service=ghcr.io" 2>/dev/null \
+            | sed -n 's/.*"token" *: *"\([^"]*\)".*/\1/p')
+        code=$(curl_with "header = \"Authorization: Bearer ${pull_token}\"" -o /dev/null -w '%{http_code}' -I \
+            -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+            "${GHCR}/v2/${repository}/manifests/${object}" 2>/dev/null) || code=""
+        [[ "$code" == 200 ]] || unreadable="${unreadable} ${repository}"
+    done < <(grep -oE '"ghcr\.io/understand-tech/[^"]+"' "$RELEASE_ENV" | tr -d '"')
+    [[ -z "$unreadable" ]] || fail "the token cannot pull:${unreadable}"
+}
+
+write_it_down() {
+    local fingerprint
+    fingerprint=$(printf '%s' "$token" | openssl dgst -sha256 -r | cut -c1-16)
+    [[ -s "$ledger" ]] || printf 'issued\tcustomer\texpires\trights\tregistry_user\ttoken_sha256\ttoken_ends\n' > "$ledger"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -u +%F)" "$customer" "$expires" "$rights" \
+        "$registry_user" "$fingerprint" "$token_ends" >> "$ledger"
+}
+
+check_the_token_with_github
+check_the_token_pulls_the_release
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -59,4 +132,6 @@ printf 'version=1\ncustomer=%s\nissued=%s\nexpires=%s\nrights=%s\nregistry_user=
 openssl dgst -sha256 -sign "$signing_key" -out "$work/signature" "$work/payload" 2>/dev/null \
     || fail "${signing_key} cannot sign: not an EC private key, or not readable"
 
-printf 'UT1.%s.%s\n' "$(openssl base64 -A < "$work/payload")" "$(openssl base64 -A < "$work/signature")"
+printf 'UT1.%s.%s\n' "$(openssl base64 -A < "$work/payload")" "$(openssl base64 -A < "$work/signature")" > "$work/license"
+write_it_down || fail "the ledger ${ledger} cannot be written; nothing was issued"
+cat "$work/license"
