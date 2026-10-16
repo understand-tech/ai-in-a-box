@@ -415,6 +415,98 @@ the_wait_names_what_is_late() {
     return 1
 }
 
+# The pull is never reached by fresh-install.sh either. compose_in_dir is
+# replaced by one that answers as Compose v5.0.2 did on .40: JSON on stderr.
+installer_pull_over() {
+    local probe
+    probe=$(mktemp -d "$WORK_DIR/pull.XXXXXX")
+    cat > "$probe/run.sh" <<'EOF'
+set +u
+UT_INSTALL_DIR="$PROBE" source "$REPO_ROOT/ut-install" >/dev/null 2>&1
+set +eE
+trap - ERR
+compose_in_dir() {
+    case "$*" in
+        "--progress json version") return "${JSON_REFUSED:-0}" ;;
+        "config --images")         printf 'ghcr.io/x/api:1\nghcr.io/x/caddy:2\nghcr.io/x/mongo:3\n' ;;
+        "--progress json pull")
+            printf '%s\n' >&2 \
+                '{"id":"Image ghcr.io/x/api:1","status":"Working","text":"Pulling"}' \
+                '{"id":"159d7ed29e1f","parent_id":"Image ghcr.io/x/api:1","status":"Done","text":"Download complete","details":"0B","percent":100}' \
+                '{"id":"Image ghcr.io/x/api:1","status":"Done","text":"Pulled"}' \
+                '{"id":"Image ghcr.io/x/caddy:2","status":"Done","text":"Pulled"}'
+            [[ -z "${PULL_FAILS:-}" ]] || { echo "Error response from daemon: denied" >&2; return 1; }
+            return 0 ;;
+        "pull") echo "COMPOSE'S OWN OUTPUT" ;;
+    esac
+}
+( step_pull )
+printf 'EXIT=%s\n' "$?"
+EOF
+    PROBE="$probe" REPO_ROOT="$REPO_ROOT" bash "$probe/run.sh" 2>&1
+}
+
+the_pull_says_each_image_as_it_lands() {
+    local report
+    report=$(installer_pull_over)
+    grep -q '1/3  ghcr.io/x/api:1  (0 min)' <<< "$report" \
+        && grep -q '2/3  ghcr.io/x/caddy:2' <<< "$report" \
+        && ! grep -q '159d7ed29e1f' <<< "$report" \
+        && ! grep -q '"status"' <<< "$report" \
+        && ! grep -q $'\033' <<< "$report" \
+        && grep -q 'EXIT=0' <<< "$report" && return 0
+    echo "$report"
+    return 1
+}
+
+a_pull_that_fails_still_stops_the_install() {
+    local report
+    report=$(PULL_FAILS=1 installer_pull_over)
+    grep -q 'Image pull failed' <<< "$report" \
+        && grep -q 'Error response from daemon: denied' <<< "$report" \
+        && ! grep -q 'EXIT=0' <<< "$report" && return 0
+    echo "$report"
+    return 1
+}
+
+a_compose_without_json_progress_pulls_as_before() {
+    local report
+    report=$(JSON_REFUSED=1 installer_pull_over)
+    grep -q "COMPOSE'S OWN OUTPUT" <<< "$report" && grep -q 'EXIT=0' <<< "$report" && return 0
+    echo "$report"
+    return 1
+}
+
+installer_summary_with() {
+    local loading=$1 probe
+    probe=$(mktemp -d "$WORK_DIR/summary.XXXXXX")
+    cat > "$probe/run.sh" <<'EOF'
+set +u
+UT_INSTALL_DIR="$PROBE" source "$REPO_ROOT/ut-install" >/dev/null 2>&1
+set +eE
+trap - ERR
+DOMAIN=box.test
+INFERENCE_STILL_LOADING="$LOADING"
+LOG_FILE=/dev/null
+SECONDS=1530
+print_summary
+EOF
+    PROBE="$probe" REPO_ROOT="$REPO_ROOT" LOADING="$loading" bash "$probe/run.sh" 2>&1
+}
+
+the_last_screen_says_how_long_where_to_go_and_what_still_loads() {
+    local report quiet
+    report=$(installer_summary_with "ut-nim-llm")
+    quiet=$(installer_summary_with "")
+    grep -q 'Installation complete in 25 min' <<< "$report" \
+        && grep -q 'Open https://box.test .*first-run wizard' <<< "$(tr '\n' ' ' <<< "$report")" \
+        && grep -q 'Inference      still loading: ut-nim-llm' <<< "$report" \
+        && ! grep -q 'Inference' <<< "$quiet" \
+        && ! grep -q $'\033' <<< "$report" && return 0
+    echo "$report"
+    return 1
+}
+
 an_answer_at_the_prompt_is_taken() {
     local report
     report=$(installer_domain_answer ia.exemple.fr)
@@ -2015,6 +2107,14 @@ if [[ -x "$REPO_ROOT/ut-install" ]]; then
         the_wait_names_what_is_late
     capability "a backup that does not work yet does not hold the install back, and is named" \
         a_backup_that_does_not_work_does_not_hold_the_install_back
+    capability "the download says each image as it lands, out of how many and since when" \
+        the_pull_says_each_image_as_it_lands
+    capability "a download that fails still stops the install" \
+        a_pull_that_fails_still_stops_the_install
+    capability "a Compose without JSON progress downloads as before" \
+        a_compose_without_json_progress_pulls_as_before
+    capability "the last screen says how long it took, where to go, and what is still loading" \
+        the_last_screen_says_how_long_where_to_go_and_what_still_loads
 
     if command -v python3 >/dev/null 2>&1; then
         capability "the address typed at the prompt is the one it takes" \
