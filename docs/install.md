@@ -54,6 +54,36 @@ the diagram has not been seen rendered — no rendering engine is installed here
   machine really is on a flat local network — see
   [certificates and DNS](certificates-and-dns.md).
 
+## In one command
+
+```bash
+VERSION=2026.09.1
+curl -fsSLO "https://github.com/understand-tech/ai-in-a-box/releases/download/v${VERSION}/ut-get"
+sudo bash ut-get --version "$VERSION" --domain box.example.com
+```
+
+`ut-get` downloads the package and its signature into
+`/var/cache/understandtech/releases/<version>/`, checks the signature with the
+key it carries — the same key as `ut-verify` — installs the package with
+`apt-get`, then runs `ut-install` with every option it does not use itself, here
+`--domain`. `ut-install` runs the checks of step 4 on its own, so what follows is
+step 5. Nothing is installed from a package it cannot verify.
+
+- A download that stops resumes when the same command is run again, and a
+  release already downloaded installs again with no network.
+- Without `--version`, it takes the latest release. A pre-release — a version
+  with a suffix, such as `2026.10.0-rc3` — is never the latest, so installing one
+  takes `--version`.
+- A machine with no network: copy the package and its `.sig` into a directory,
+  then `sudo bash ut-get --from <directory> --domain box.example.com`. Once the
+  package is installed, `ut-get` is also at `/usr/bin/ut-get`.
+- Releases published before `ut-get` existed do not carry it. Install those by
+  the steps below.
+
+`ut-get` itself comes from GitHub over HTTPS and nothing checks it before it
+runs. To check every file before running anything, follow the steps below
+instead.
+
 ## 1 · Get the release
 
 Releases are published at

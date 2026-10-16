@@ -670,6 +670,10 @@ if [[ -x "$REPO_ROOT/ut-get" ]]; then
         "nothing is fetched and the reason is said" \
         "sed -i.bak 's|^is_a_release_version() {.*|is_a_release_version() { return 0; }|' ut-get"
 
+    capability_discriminates "a release that does not publish the launcher" \
+        "every release publishes ut-get beside the package" \
+        "sed -i.bak '/^            dist\/ut-get \\\\$/d' .github/workflows/release.yml"
+
     capability_discriminates "a launcher that reads a version where GitHub names none" \
         "nothing is fetched and the reason is said" \
         "sed -i.bak 's|^    \[\[ \"\$tag_url\" == \*/releases/tag/v\* \]\] \\\\$|    true \\\\|' ut-get"

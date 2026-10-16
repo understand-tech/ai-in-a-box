@@ -931,6 +931,16 @@ a_release_already_downloaded_installs_again_offline() {
         "apt-get install -y ${DOWNLOADED}/2026.98.1/understandtech_2026.98.1_all.deb;ut-install --domain box.test;"
 }
 
+# The install command fetches ut-get from the release itself, so a release
+# that does not carry it breaks the first command a customer types.
+the_release_publishes_the_launcher() {
+    local publish
+    publish=$(sed -n '/gh release create/,/SHA256SUMS$/p' "$REPO_ROOT/.github/workflows/release.yml")
+    grep -q 'dist/ut-get' <<< "$publish" && return 0
+    echo "release.yml does not publish ut-get, which the install command downloads first"
+    return 1
+}
+
 the_launcher_carries_the_key_ut_verify_carries() {
     local in_launcher in_verify
     in_launcher=$(sed -n "/^RELEASE_PUBLIC_KEY='/,/'\$/p" "$REPO_ROOT/ut-get")
@@ -2097,6 +2107,8 @@ if [[ -x "$REPO_ROOT/ut-get" ]]; then
         with_no_release_published_or_no_version_nothing_is_fetched
     capability "a release already downloaded installs again with its server gone" \
         a_release_already_downloaded_installs_again_offline
+    capability "every release publishes ut-get beside the package" \
+        the_release_publishes_the_launcher
 fi
 
 if [[ -x "$REPO_ROOT/ut-license" ]]; then

@@ -1,5 +1,13 @@
-**Check the package before installing it.** `dpkg` ships with `no-debsig`, so
-it installs a local file without verifying any signature:
+**Install in one command.** `ut-get` downloads the package, refuses it unless
+it is signed by UnderstandTech, installs it, then runs `ut-install`:
+
+```bash
+curl -fsSLO https://github.com/understand-tech/ai-in-a-box/releases/download/vVERSION/ut-get
+sudo bash ut-get --version VERSION --domain box.example.com
+```
+
+**Or check the package by hand before installing it.** `dpkg` ships with
+`no-debsig`, so it installs a local file without verifying any signature:
 
 ```bash
 ./ut-verify understandtech_VERSION_all.deb

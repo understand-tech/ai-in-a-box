@@ -31,12 +31,12 @@ Per-container detail — ports, volumes, how to act on a service:
 
 ## Installing
 
-The release is a signed Debian package. Download it, check the signature,
-install it, then run the installer:
+The release is a signed Debian package. `ut-get` downloads it, checks the
+signature, installs it, then runs the installer:
 
 ```bash
-sudo apt-get install ./understandtech_<version>_all.deb
-sudo ut-install --domain box.example.com
+curl -fsSLO https://github.com/understand-tech/ai-in-a-box/releases/download/v<version>/ut-get
+sudo bash ut-get --version <version> --domain box.example.com
 ```
 
 `ut-install` writes `/etc/understandtech/.env`, generates every secret, pulls
