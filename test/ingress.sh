@@ -146,13 +146,18 @@ restart_the_front_door_in() {
     start_the_front_door "$1"
 }
 
+# openssl used to be added on its own with "|| true": when that apk add failed
+# on a runner, every certificate check read nothing while curl still answered.
 start_the_prober() {
-    docker run -d --name ut-ingress-probe --network "$NETWORK" "$PROBE_IMAGE" \
-        sh -c 'apk add --no-cache curl >/dev/null 2>&1; sleep 600' >/dev/null
-    local waited=0
-    until docker exec ut-ingress-probe sh -c 'command -v curl' >/dev/null 2>&1; do
-        sleep 1; waited=$((waited + 1))
-        (( waited < 60 )) || { echo "curl never installed in the prober" >&2; return 1; }
+    local attempt tool
+    docker run -d --name ut-ingress-probe --network "$NETWORK" "$PROBE_IMAGE" sleep 600 >/dev/null
+    for attempt in 1 2 3; do
+        docker exec ut-ingress-probe apk add --no-cache curl openssl >/dev/null 2>&1 && break
+        sleep 5
+    done
+    for tool in curl openssl; do
+        docker exec ut-ingress-probe sh -c "command -v ${tool}" >/dev/null 2>&1 \
+            || { echo "${tool} never installed in the prober, after ${attempt} tries" >&2; return 1; }
     done
 }
 
@@ -365,7 +370,6 @@ start_the_upstreams
 start_the_front_door
 start_the_recorder
 start_the_prober || exit 1
-docker exec ut-ingress-probe sh -c 'apk add --no-cache openssl >/dev/null 2>&1' || true
 
 if ! wait_for_the_front_door; then
     printf '\n%sThe front door never came up — nothing below could be checked.%s\n' "$RED" "$NC"
