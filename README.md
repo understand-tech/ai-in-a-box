@@ -102,6 +102,7 @@ appliance. Change it and all six follow.
 | | When |
 |---|---|
 | [Architecture](docs/architecture.md) | Where a request goes, and what each network can reach. |
+| [Choosing how to install](docs/choosing-how-to-install.md) | Before installing: six questions about your site, and the command or page each answer leads to. |
 | [Installing](docs/install.md) | A new machine. One command, safe to re-run. |
 | [First-run configuration](docs/first-run-configuration.md) | The first visit to a freshly installed box: models, sign-on, data sources. |
 | [The stack](docs/the-stack.md) | What runs, on which network, in which volume, and how to act on it. |
