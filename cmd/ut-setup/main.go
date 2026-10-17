@@ -14,6 +14,9 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -90,13 +93,63 @@ func runInstaller(path string) Installer {
 	}
 }
 
-// sudo keeps neither the desktop session's bus nor its display: the browser is
-// opened as the user who ran sudo, in that user's session.
-func browserCommand(name, uid, address string) []string {
-	runtime := "/run/user/" + uid
-	return []string{"runuser", "-u", name, "--", "env",
-		"XDG_RUNTIME_DIR=" + runtime, "DBUS_SESSION_BUS_ADDRESS=unix:path=" + runtime + "/bus",
-		"DISPLAY=:0", "WAYLAND_DISPLAY=wayland-0", "xdg-open", address}
+var sessionKeys = []string{"DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY", "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR"}
+
+// The variables a browser needs to reach a desktop session, read from the
+// environment of one of its processes. Nothing is the same from one box to the
+// next: on .40 the display was :1 under X11, with GDM's Xauthority.
+func sessionVariables(environ []byte) []string {
+	var kept []string
+	desktop := false
+	for _, entry := range strings.Split(string(environ), "\x00") {
+		for _, key := range sessionKeys {
+			if strings.HasPrefix(entry, key+"=") && len(entry) > len(key)+1 {
+				kept = append(kept, entry)
+				desktop = desktop || key == "DISPLAY" || key == "WAYLAND_DISPLAY"
+			}
+		}
+	}
+	if !desktop {
+		return nil
+	}
+	return kept
+}
+
+// sudo keeps none of the desktop session's variables: the browser is opened as
+// the user who ran sudo, with those of one of that user's graphical processes.
+func browserCommand(name string, session []string, opener, address string) []string {
+	command := append([]string{"runuser", "-u", name, "--", "env"}, session...)
+	return append(command, opener, address)
+}
+
+// xdg-open answered "location is not supported" on .40, where no handler for
+// web links was declared; Debian's x-www-browser named the browser installed.
+func browserOpener() string {
+	if _, err := exec.LookPath("x-www-browser"); err == nil {
+		return "x-www-browser"
+	}
+	return "xdg-open"
+}
+
+func desktopSessionOf(uid string) []string {
+	processes, _ := filepath.Glob("/proc/[0-9]*")
+	for _, process := range processes {
+		info, err := os.Stat(process)
+		if err != nil {
+			continue
+		}
+		if owner, ok := info.Sys().(*syscall.Stat_t); !ok || strconv.FormatUint(uint64(owner.Uid), 10) != uid {
+			continue
+		}
+		environ, err := os.ReadFile(filepath.Join(process, "environ"))
+		if err != nil {
+			continue
+		}
+		if session := sessionVariables(environ); session != nil {
+			return session
+		}
+	}
+	return nil
 }
 
 func openTheDesktopBrowser(address string) {
@@ -104,7 +157,11 @@ func openTheDesktopBrowser(address string) {
 	if err != nil {
 		return
 	}
-	command := browserCommand(desktop.Username, desktop.Uid, address)
+	session := desktopSessionOf(desktop.Uid)
+	if session == nil {
+		return
+	}
+	command := browserCommand(desktop.Username, session, browserOpener(), address)
 	opener := exec.Command(command[0], command[1:]...)
 	if opener.Start() == nil {
 		go opener.Wait()
