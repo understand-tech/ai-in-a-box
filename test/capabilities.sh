@@ -1532,6 +1532,27 @@ names_are_unchanged_by_default() {
         && grep -q '/var/lib/understandtech' <<< "$rendered"
 }
 
+# A compute node is the one role whose engine other machines reach, so it is the
+# one where the engine may only be reached through the surface that checks a key.
+the_compute_engine_is_reached_only_through_its_key() {
+    local config engine
+    if ( cd "$WORK_DIR" && VLLM_API_KEY= docker compose -f compose.yaml -f compose.compute.yaml config >/dev/null 2>&1 ); then
+        echo "a compute node rendered without an engine key"
+        return 1
+    fi
+    config=$(VLLM_API_KEY=k compose_config -f compose.yaml -f compose.compute.yaml)
+    grep -q 'caddy/inference-surface.caddy' <<< "$config" \
+        || { echo "the compute node's Caddy does not mount the inference surface"; return 1; }
+    grep -q 'published: "8444"' <<< "$config" \
+        || { echo "the compute node publishes no inference surface"; return 1; }
+    engine=$(COMPOSE_PROFILES=nim VLLM_API_KEY=k compose_config -f compose.yaml -f compose.compute.yaml \
+        | awk '/^  nim-llm:/ { on = 1; next } on && /^  [a-z]/ { on = 0 } on')
+    grep -q 'host_ip: 127.0.0.1' <<< "$engine" && return 0
+    echo "the engine's own port is not held on loopback on a compute node:"
+    grep -A6 'ports:' <<< "$engine"
+    return 1
+}
+
 overrides_isolate_every_resource() {
     local rendered stray
     rendered=$( cd "$WORK_DIR" && \
@@ -1635,6 +1656,7 @@ the_machine_surface_is_really_served_by_the_authority() {
             -v "$REPO_ROOT/Caddyfile":/etc/caddy/Caddyfile:ro \
             -v "$REPO_ROOT/caddy/ingress-internal.caddy":/etc/caddy/ingress.caddy:ro \
             -v "$REPO_ROOT/caddy/internal-surface.caddy":/etc/caddy/surface.caddy:ro \
+            -v "$REPO_ROOT/caddy/no-inference-surface.caddy":/etc/caddy/inference.caddy:ro \
             -v "$work/ca/certs":/etc/caddy/ca/certs:ro \
             "$CADDY_IMAGE" >/dev/null 2>&1
 
@@ -2340,6 +2362,8 @@ if [[ -f "$REPO_ROOT/compose.compute.yaml" ]]; then
         omits_service mongodb -f compose.yaml -f compose.compute.yaml
     capability "a compute node records the load of what it serves" \
         with_profiles nim lists_service metrics -f compose.yaml -f compose.compute.yaml
+    capability "a compute node lets other machines reach its engine only with its key" \
+        the_compute_engine_is_reached_only_through_its_key
     capability "overriding the prefixes isolates every resource" \
         overrides_isolate_every_resource
 fi

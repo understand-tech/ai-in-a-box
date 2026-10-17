@@ -1,0 +1,2 @@
+# Empty on purpose: only compose.compute.yaml mounts caddy/inference-surface.caddy
+# here. On every other role the engine is reached on the internal network alone.

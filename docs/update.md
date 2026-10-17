@@ -167,8 +167,8 @@ is orphaned and **volumes follow** — the model weights are not downloaded agai
 **Published ports moved to loopback.** MongoDB on 27018 and the inference
 engines on 8001/8002 now listen on `127.0.0.1` only. If something outside the
 machine relied on reaching them, it stops working — deliberately, since the
-inference engines have no authentication. Set `NIM_LLM_BIND_ADDRESS` to open
-one on purpose.
+engines check no key themselves. A compute node serves other machines through
+Caddy, which does.
 
 **The browser warning may change.** If you switch the public certificate over to
 the local authority, every already-paired browser sees a new fingerprint and

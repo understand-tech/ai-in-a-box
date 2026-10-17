@@ -46,7 +46,7 @@ surface() {
     fi
 }
 
-UPSTREAMS="frontend api api-customer app-llms admin-portal app-assistants app-builder app-builder-traefik"
+UPSTREAMS="frontend api api-customer app-llms admin-portal app-assistants app-builder app-builder-traefik nim-llm"
 SURFACES="${DOMAIN} llms.${DOMAIN} admin.${DOMAIN} assistants.${DOMAIN} builder.${DOMAIN} demo.apps.${DOMAIN}"
 
 aliases_for() {
@@ -76,6 +76,9 @@ start_the_upstreams() {
 }
 :8001 {
 	respond "stub 8001" 200
+}
+:8000 {
+	respond "stub 8000" 200
 }
 STUB
     local args=()
@@ -118,9 +121,12 @@ EOF
 
 # bash 3.2 treats "${empty[@]}" as an unbound variable under set -u, so the
 # expansion has to be guarded rather than quoted.
+ENGINE_ADDRESS="engine.${DOMAIN}"
+ENGINE_KEY="ingress-check-key-${RANDOM}${RANDOM}"
+
 start_the_front_door() {
-    local mode=${1:-internal} args=() extra=()
-    while IFS= read -r line; do args+=("$line"); done < <(aliases_for "$SURFACES caddy")
+    local mode=${1:-internal} args=() extra=() inference=no-inference-surface ingress=${1:-internal}
+    while IFS= read -r line; do args+=("$line"); done < <(aliases_for "$SURFACES $ENGINE_ADDRESS caddy")
 
     case "$mode" in
         custom)
@@ -131,13 +137,18 @@ start_the_front_door() {
             # plain HTTP, so a site address left on https:// would listen on
             # 443 with nothing to present. UT_CADDY_SCHEME prefixes it.
             extra=(-e UT_CADDY_SCHEME=http -e UT_TRUSTED_PROXIES=private_ranges) ;;
+        compute)
+            ingress=internal
+            inference=inference-surface
+            extra=(-e UT_INFERENCE_ADDRESS="$ENGINE_ADDRESS" -e VLLM_API_KEY="$ENGINE_KEY") ;;
     esac
 
     docker run -d --name ut-ingress-caddy --network "$NETWORK" "${args[@]}" \
         -e UT_DOMAIN="$DOMAIN" ${extra[@]+"${extra[@]}"} \
         -v "$REPO_ROOT/Caddyfile":/etc/caddy/Caddyfile:ro \
-        -v "$REPO_ROOT/caddy/ingress-${mode}.caddy":/etc/caddy/ingress.caddy:ro \
+        -v "$REPO_ROOT/caddy/ingress-${ingress}.caddy":/etc/caddy/ingress.caddy:ro \
         -v "$REPO_ROOT/caddy/no-internal-surface.caddy":/etc/caddy/surface.caddy:ro \
+        -v "$REPO_ROOT/caddy/${inference}.caddy":/etc/caddy/inference.caddy:ro \
         "$CADDY_IMAGE" >/dev/null
 }
 
@@ -417,6 +428,49 @@ surface "it serves the certificate it was given, not one of its own" \
     the_supplied_certificate_is_the_one_served
 surface "the apex still answers" a_surface_answers "$DOMAIN"
 surface "a generated application still answers" a_surface_answers "demo.apps.${DOMAIN}"
+
+engine_answers() {
+    docker exec ut-ingress-probe curl -sk -o /dev/null -w '%{http_code}' --max-time 10 "$@" \
+        "https://${ENGINE_ADDRESS}:8444/v1/models" 2>/dev/null
+}
+
+wait_for_the_engine_surface() {
+    local waited=0 code
+    while (( waited < 90 )); do
+        code=$(engine_answers)
+        [[ "$code" =~ ^[0-9][0-9][0-9]$ && "$code" != 000 ]] && return 0
+        sleep 2; waited=$((waited + 2))
+    done
+    echo "https://${ENGINE_ADDRESS}:8444 never answered — last code ${code:-none}"
+    docker logs --tail 15 ut-ingress-caddy 2>&1
+    return 1
+}
+
+the_engine_refuses() {
+    local code
+    code=$(engine_answers "$@")
+    [[ "$code" == 401 ]] && return 0
+    echo "the engine surface answered ${code:-nothing} instead of 401"
+    return 1
+}
+
+the_engine_serves_the_bearer_of_the_key() {
+    local body
+    body=$(docker exec ut-ingress-probe curl -sk --max-time 10 -H "Authorization: Bearer ${ENGINE_KEY}" \
+        "https://${ENGINE_ADDRESS}:8444/v1/models" 2>/dev/null)
+    [[ "$body" == "stub 8000" ]] && return 0
+    echo "with the key, the engine surface returned '${body:-nothing}'"
+    return 1
+}
+
+printf '\n%sMode compute — the engine behind its key%s\n' "$BOLD" "$NC"
+restart_the_front_door_in compute
+[[ -n "${DEBUG_ENGINE:-}" ]] && { sleep 10; docker ps -a --format "{{.Names}} {{.Status}}"; docker inspect ut-ingress-caddy --format "{{json .Config.Env}} {{json .NetworkSettings.Networks}}" | cut -c1-900; docker exec ut-ingress-probe sh -c "getent hosts engine.box.example.test; curl -skv --max-time 5 https://engine.box.example.test:8444/v1/models 2>&1 | tail -5"; }
+surface "the engine surface comes up" wait_for_the_engine_surface
+surface "it refuses a request without the key" the_engine_refuses
+surface "it refuses a request with another key" \
+    the_engine_refuses -H "Authorization: Bearer not-${ENGINE_KEY}"
+surface "it serves the bearer of the key" the_engine_serves_the_bearer_of_the_key
 
 printf '\n%sMode edge — TLS is terminated upstream%s\n' "$BOLD" "$NC"
 restart_the_front_door_in edge
