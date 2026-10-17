@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>UnderstandTech AI in a Box — installation</title>
+<link rel="stylesheet" href="/page/style.css">
+<script src="/page/app.js" defer></script>
+</head>
+<body>
+<main>
+<h1>UnderstandTech AI in a Box</h1>
+
+<form id="questions" hidden>
+  <h2>Three answers, then the box installs itself</h2>
+  <label>The address this box answers on
+    <input name="domain" required placeholder="box.example.com" autocomplete="off">
+  </label>
+  <p class="hint">A name from your DNS zone lets browsers trust the box without installing anything on them.</p>
+  <label>The license key UnderstandTech sent
+    <input name="license" type="password" required autocomplete="off">
+  </label>
+  <fieldset>
+    <legend>Send UnderstandTech usage reports — counts, never content, never who?</legend>
+    <label><input type="radio" name="reporting" value="yes" required> Yes</label>
+    <label><input type="radio" name="reporting" value="no"> No</label>
+  </fieldset>
+  <p id="refused" class="failure" hidden></p>
+  <button>Install</button>
+</form>
+
+<section id="running" hidden>
+  <h2 id="step">Starting</h2>
+  <progress id="images" hidden></progress>
+  <p id="count"></p>
+  <p id="failure" class="failure" hidden></p>
+  <button id="again" hidden>Try again</button>
+  <details><summary>What ut-install says</summary><pre id="lines"></pre></details>
+</section>
+
+<section id="done" hidden>
+  <h2>Installed</h2>
+  <p>Two passwords are shown once, here, and nowhere else.</p>
+  <button id="reveal">Show them</button>
+  <dl id="secrets" hidden>
+    <dt>Initial admin password — opens the first-run wizard</dt><dd id="admin"></dd>
+    <dt>Backup password — without it, no backup can ever be read</dt><dd id="backup"></dd>
+  </dl>
+  <label id="noted" hidden><input type="checkbox" id="written"> I wrote both down somewhere other than this box</label>
+  <p><a id="open" hidden>Open the platform</a></p>
+</section>
+</main>
+</body>
+</html>

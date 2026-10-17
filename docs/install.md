@@ -80,6 +80,22 @@ step 5. Nothing is installed from a package it cannot verify.
 - Releases published before `ut-get` existed do not carry it. Install those by
   the steps below.
 
+### From a browser on the box
+
+On a box with a screen and a desktop session, `--browser` hands over to
+`ut-setup` instead of `ut-install`, and the three questions are asked in a page:
+
+```bash
+sudo bash ut-get --version "$VERSION" --browser
+```
+
+`ut-setup` opens the desktop's browser on `http://127.0.0.1:<port>/?code=<code>`
+and prints that address too. It listens on the box only. The code works once,
+for one browser, and five wrong codes stop it. The page runs `ut-install` with
+your answers, shows each step and each image as it lands, then the two
+passwords, once. Then `ut-setup` stops. Give it no `ut-install` option: the page
+asks for them. On a box already installed, `sudo ut-setup` does the same.
+
 `ut-get` itself comes from GitHub over HTTPS and nothing checks it before it
 runs. To check every file before running anything, follow the steps below
 instead.

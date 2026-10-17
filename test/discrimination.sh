@@ -31,7 +31,7 @@ fresh_copy() {
     ( cd "$REPO_ROOT" && tar -cf - release.env compose.yaml compose.appbuilder.yaml \
         compose.compute.yaml compose.no-gpu.yaml compose.backup-mount.yaml compose.backup-network.yaml \
         Caddyfile caddy metrics backup-files.sh \
-        setup-autostart.sh ut-logs-archive ut-install ut-certificate ut-verify ut-get ut-license ut-status ut-report ut-send go.mod cmd appbuilder docs \
+        setup-autostart.sh ut-logs-archive ut-install ut-certificate ut-verify ut-get ut-license ut-status ut-report ut-send ut-setup go.mod cmd appbuilder docs \
         packaging README.md test .github 2>/dev/null ) | tar -xf - -C "$COPY" 2>/dev/null
 }
 
@@ -596,9 +596,13 @@ if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
         "an upgrade keeps the reporting timer" \
         "sed -i.bak 's|^    systemctl disable --now ut-send.timer|    true|' packaging/build-deb.sh"
 
+    capability_discriminates "a package that leaves ut-setup's builds behind" \
+        "it carries ut-setup for both architectures" \
+        "sed -i.bak '/stage_builds_of \"\$root\" ut-setup/d' packaging/build-deb.sh"
+
     capability_discriminates "a package that leaves ut-send's builds behind" \
         "it carries ut-send for both architectures" \
-        "sed -i.bak 's|^    stage_ut_send_builds \"\$root\"\$|    true|' packaging/build-deb.sh"
+        "sed -i.bak '/stage_builds_of \"\$root\" ut-send/d' packaging/build-deb.sh"
 
     capability_discriminates "a size read off the block count" \
         "the installed size does not come from a block count" \
@@ -674,7 +678,11 @@ if [[ -x "$REPO_ROOT/ut-get" ]]; then
 
     capability_discriminates "a launcher that drops what it was asked to pass on" \
         "a release we signed is installed, then handed to ut-install" \
-        "sed -i.bak 's|^    exec ut-install .*|    exec ut-install|' ut-get"
+        "sed -i.bak 's|^    exec \"\$NEXT\" .*|    exec \"\$NEXT\"|' ut-get"
+
+    capability_discriminates "a launcher that ignores --browser" \
+        "with --browser, it hands over to ut-setup" \
+        "sed -i.bak 's|--browser) NEXT=ut-setup ;;|--browser) ;;|' ut-get"
 
     capability_discriminates "a launcher that carries another key than ut-verify" \
         "the key ut-get carries is the key ut-verify carries" \
