@@ -332,6 +332,46 @@ func TestTheSecretsAreShownOnceThenTheWizardStops(t *testing.T) {
 	}
 }
 
+func TestTheWarningsAndTheStepsReachThePage(t *testing.T) {
+	b := newBox(t, &fakeInstall{lines: []string{
+		"==> Writing the configuration",
+		"[warn] OA_KEY has no value. The platform API builds an OpenAI client as it",
+		"==> Starting services",
+		"[fail] Install stopped at line 226 (exit 1).",
+	}, fail: true})
+	b.signIn()
+	b.answer(goodAnswers())
+	progress := b.waitForTheEnd()
+	if strings.Join(progress.Steps, "|") != "Writing the configuration|Starting services" {
+		t.Fatalf("steps read as %q", progress.Steps)
+	}
+	if len(progress.Warnings) != 1 || !strings.HasPrefix(progress.Warnings[0], "OA_KEY has no value") {
+		t.Fatalf("warnings read as %q", progress.Warnings)
+	}
+}
+
+func TestTheBoxIsCheckedOnceWithCheck(t *testing.T) {
+	fake := &fakeInstall{lines: []string{"[ ok ] Docker 29.2.1", "[fail] Disk: 91 GB free, 250 GB needed"}, fail: true}
+	b := newBox(t, fake)
+	if status := b.get("/check").StatusCode; status != http.StatusForbidden {
+		t.Fatalf("the check without the session answered %d", status)
+	}
+	b.signIn()
+	var readiness Readiness
+	for range 2 {
+		response := b.get("/check")
+		json.NewDecoder(response.Body).Decode(&readiness)
+		response.Body.Close()
+	}
+	if readiness.Ready || len(readiness.Lines) != 2 {
+		t.Fatalf("readiness read as %+v", readiness)
+	}
+	calls := fake.called()
+	if len(calls) != 1 || strings.Join(calls[0], " ") != "--check" {
+		t.Fatalf("ut-install was called %v", calls)
+	}
+}
+
 func TestTheWizardListensOnThisMachineOnly(t *testing.T) {
 	listener, err := listen()
 	if err != nil {
