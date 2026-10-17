@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/user"
 	"syscall"
 	"time"
 )
@@ -44,7 +45,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	server := &http.Server{Handler: wizard.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go server.Serve(listener)
 
-	fmt.Fprintf(stdout, "Open this address in a browser on this machine:\n\n  http://127.0.0.1:%d/?code=%s\n\n", port, code)
+	address := fmt.Sprintf("http://127.0.0.1:%d/?code=%s", port, code)
+	fmt.Fprintf(stdout, "Open this address in a browser on this machine:\n\n  %s\n\n", address)
+	openTheDesktopBrowser(address)
 	fmt.Fprintln(stdout, "It works once, for one browser. The install can also run without it: sudo ut-install")
 
 	reason := <-wizard.Stopped()
@@ -84,6 +87,27 @@ func runInstaller(path string) Installer {
 			return fmt.Errorf("ut-install exited with %d", exit.ExitCode())
 		}
 		return err
+	}
+}
+
+// sudo keeps neither the desktop session's bus nor its display: the browser is
+// opened as the user who ran sudo, in that user's session.
+func browserCommand(name, uid, address string) []string {
+	runtime := "/run/user/" + uid
+	return []string{"runuser", "-u", name, "--", "env",
+		"XDG_RUNTIME_DIR=" + runtime, "DBUS_SESSION_BUS_ADDRESS=unix:path=" + runtime + "/bus",
+		"DISPLAY=:0", "WAYLAND_DISPLAY=wayland-0", "xdg-open", address}
+}
+
+func openTheDesktopBrowser(address string) {
+	desktop, err := user.Lookup(os.Getenv("SUDO_USER"))
+	if err != nil {
+		return
+	}
+	command := browserCommand(desktop.Username, desktop.Uid, address)
+	opener := exec.Command(command[0], command[1:]...)
+	if opener.Start() == nil {
+		go opener.Wait()
 	}
 }
 

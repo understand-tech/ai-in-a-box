@@ -544,10 +544,11 @@ set -u
 export OUT_DIR=/out
 # The package is under test here, not the compiler: stand-ins take the place of
 # the two ut-send builds, so this suite needs no Go.
-export UT_SEND_BUILDS=/ut-send-builds
-mkdir -p "$UT_SEND_BUILDS"
+export UT_SEND_BUILDS=/ut-send-builds UT_SETUP_BUILDS=/ut-setup-builds
+mkdir -p "$UT_SEND_BUILDS" "$UT_SETUP_BUILDS"
 for arch in arm64 amd64; do
     printf '#!/bin/sh\necho %s\n' "$arch" > "$UT_SEND_BUILDS/ut-send-linux-$arch"
+    printf '#!/bin/sh\necho %s\n' "$arch" > "$UT_SETUP_BUILDS/ut-setup-linux-$arch"
 done
 /src/packaging/build-deb.sh 2026.09.1 >/dev/null
 /src/packaging/build-deb.sh 2026.09.2 >/dev/null
@@ -588,6 +589,8 @@ say RELEASE_FILE      "$(present_file /usr/share/understandtech/compose.yaml)"
 say COMMAND           "$([ -x /usr/bin/ut-install ] && echo present || echo gone)"
 say UT_SEND           "$([ -x /usr/bin/ut-send ] && [ -x /usr/lib/understandtech/ut-send-linux-arm64 ] \
     && [ -x /usr/lib/understandtech/ut-send-linux-amd64 ] && echo both || echo missing)"
+say UT_SETUP          "$([ -x /usr/bin/ut-setup ] && [ -x /usr/lib/understandtech/ut-setup-linux-arm64 ] \
+    && [ -x /usr/lib/understandtech/ut-setup-linux-amd64 ] && echo both || echo missing)"
 say CONFIG_DIR_MODE   "$(stat -c '%a' /etc/understandtech 2>/dev/null)"
 say DATA_DIR          "$(present_dir /var/lib/understandtech)"
 say SETTINGS_SHIPPED  "$(dpkg -L understandtech | grep -c '^/etc/understandtech/.' || true)"
@@ -857,15 +860,17 @@ swapped = re.sub(r"RELEASE_PUBLIC_KEY='[^']*'",
 out.write_text(swapped)
 SWAP
         chmod +x "$work/ut-get"
-        for stub in apt-get ut-install; do
+        for stub in apt-get ut-install ut-setup; do
             printf '#!/bin/sh\necho "%s $*" >> "/w/calls-$CASE"\n' "$stub" > "$work/bin/$stub"
             chmod +x "$work/bin/$stub"
         done
 
         package=understandtech_9.9.9_all.deb
-        mkdir -p "$work/signed" "$work/tampered" "$work/foreign" "$work/unsigned"
+        mkdir -p "$work/signed" "$work/tampered" "$work/foreign" "$work/unsigned" "$work/browser"
         cp "$signing/package.deb" "$work/signed/$package"
         cp "$signing/package.deb.sig" "$work/signed/$package.sig"
+        cp "$signing/package.deb" "$work/browser/$package"
+        cp "$signing/package.deb.sig" "$work/browser/$package.sig"
         cp "$signing/package.deb" "$work/tampered/$package"
         printf 'x' >> "$work/tampered/$package"
         cp "$signing/package.deb.sig" "$work/tampered/$package.sig"
@@ -878,6 +883,9 @@ SWAP
                 --entrypoint bash "$MONGODB_IMAGE" /w/ut-get --from "/w/$case" --domain box.test >/dev/null 2>&1
             printf '%s=%s\n' "$case" "$(tr '\n' ';' < "$work/calls-$case" 2>/dev/null || echo nothing)"
         done > "$work/verdicts.txt"
+        docker run --rm --network none -v "$work":/w -e CASE=browser -e PATH=/w/bin:/usr/bin:/bin \
+            --entrypoint bash "$MONGODB_IMAGE" /w/ut-get --from /w/browser --browser >/dev/null 2>&1
+        printf 'browser=%s\n' "$(tr '\n' ';' < "$work/calls-browser" 2>/dev/null || echo nothing)" >> "$work/verdicts.txt"
     fi
     cat "$work/verdicts.txt"
 }
@@ -892,6 +900,10 @@ launcher_verdict_is() {
 a_signed_release_is_installed_then_handed_to_ut_install() {
     launcher_verdict_is signed \
         "apt-get install -y /w/signed/understandtech_9.9.9_all.deb;ut-install --domain box.test;"
+}
+
+the_launcher_continues_in_the_browser_when_asked() {
+    launcher_verdict_is browser "apt-get install -y /w/browser/understandtech_9.9.9_all.deb;ut-setup ;"
 }
 
 the_launcher_installs_nothing_unsigned() {
@@ -2174,6 +2186,8 @@ if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
         the_release_installs_to_its_own_place
     capability "it carries ut-send for both architectures it serves" \
         reports UT_SEND both
+    capability "it carries ut-setup for both architectures it serves" \
+        reports UT_SETUP both
     capability "the settings directory is prepared, and the package puts nothing in it" \
         the_settings_directory_is_prepared_but_never_filled
     capability "the settings are read from where the release lives" \
@@ -2214,6 +2228,8 @@ if [[ -x "$REPO_ROOT/ut-get" ]]; then
         the_launcher_installs_nothing_unsigned
     capability "the key ut-get carries is the key ut-verify carries" \
         the_launcher_carries_the_key_ut_verify_carries
+    capability "with --browser, it hands over to ut-setup instead of ut-install" \
+        the_launcher_continues_in_the_browser_when_asked
     capability "the latest release is downloaded, checked, installed, then handed to ut-install" \
         the_latest_release_is_downloaded_checked_and_installed
     capability "a release named by --version is installed rather than the latest" \

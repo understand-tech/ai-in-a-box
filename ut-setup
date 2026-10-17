@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+PACKAGE_LIB_DIR="/usr/lib/understandtech"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+architecture() {
+    case "$(uname -m)" in
+        aarch64|arm64) echo arm64 ;;
+        x86_64|amd64) echo amd64 ;;
+        *) return 1 ;;
+    esac
+}
+
+main() {
+    local arch dir
+    arch=$(architecture) || { echo "ut-setup: no build for $(uname -m)" >&2; exit 1; }
+    for dir in "$PACKAGE_LIB_DIR" "$SCRIPT_DIR/dist/ut-setup"; do
+        [[ -x "$dir/ut-setup-linux-$arch" ]] && exec "$dir/ut-setup-linux-$arch" "$@"
+    done
+    echo "ut-setup: ut-setup-linux-$arch is not installed — run packaging/build-ut-send.sh from a checkout" >&2
+    exit 1
+}
+
+main "$@"

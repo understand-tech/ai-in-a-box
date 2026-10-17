@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -22,6 +23,14 @@ func TestAnAddressIsTakenInLowerCase(t *testing.T) {
 	answers, err := parseAnswers(url.Values{"domain": {" IA.Example.FR "}, "license": {"k"}, "reporting": {"yes"}})
 	if err != nil || answers.Domain != "ia.example.fr" {
 		t.Fatalf("read as %+v, %v", answers, err)
+	}
+}
+
+func TestTheBrowserOpensInTheSessionOfWhoeverRanSudo(t *testing.T) {
+	got := strings.Join(browserCommand("mathieu", "1000", "http://127.0.0.1:4242/?code=x"), " ")
+	want := "runuser -u mathieu -- env XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 xdg-open http://127.0.0.1:4242/?code=x"
+	if got != want {
+		t.Fatalf("opened with %q", got)
 	}
 }
 
