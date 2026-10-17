@@ -84,6 +84,7 @@ case "$1 $2" in
     "network inspect")    exit 1 ;;
     "network create")     exit "${NETWORK_CREATE_EXIT:-0}" ;;
     "compose pull")       exit "${PULL_EXIT:-0}" ;;
+    "compose --progress") case "$*" in *" pull") exit "${PULL_EXIT:-0}" ;; esac ;;
     "login "*)            cat > /stub/docker-login-stdin ;;
     *)                    exit 0 ;;
 esac
@@ -212,6 +213,17 @@ state_setup() {
 
 output_of()   { cat "$WORK_DIR/$1/output.txt" 2>/dev/null; }
 settings_of() { cat "$WORK_DIR/$1/env" 2>/dev/null; }
+
+# Every state but install_runs_through stops at the pull. A pull the stub no
+# longer recognises lets them all run through to the last screen, where the
+# role line repeats what several properties look for.
+the_walk_stops_where_the_images_would_download() {
+    local output
+    output=$(output_of bare)
+    grep -q 'Image pull failed' <<< "$output" && ! grep -q 'Starting services' <<< "$output" && return 0
+    echo "$output"
+    return 1
+}
 
 reached_the_pull() {
     local state=$1
@@ -801,6 +813,8 @@ run_install_from_state backup_in_two_places
 printf '%sA machine with nothing on it%s\n' "$BOLD" "$NC"
 property "the install reaches the point where it pulls images" \
     reached_the_pull bare
+property "the walk stops where the images would download" \
+    the_walk_stops_where_the_images_would_download
 property "every variable the stack requires has a value" \
     every_required_setting_is_filled bare
 property "what it wrote renders a stack" \
