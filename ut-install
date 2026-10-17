@@ -1296,6 +1296,10 @@ say_each_image_as_it_lands() {
     (( total > 0 )) || total="?"
     while IFS= read -r line; do
         [[ "$line" == "{"* ]] || { log "$line"; continue; }
+        if [[ "$line" == *'"error":true'* ]]; then
+            log_error "$(sed -n 's/.*"message":"\(.*\)"}$/\1/p' <<< "$line")"
+            continue
+        fi
         [[ "$line" == *'"id":"Image '* ]] || continue
         image=${line#*\"id\":\"Image }
         image=${image%%\"*}

@@ -348,6 +348,10 @@ if grep -q 'say_each_image_as_it_lands' "$REPO_ROOT/ut-install"; then
         "the download says each image as it lands" \
         "sed -i.bak 's#compose_in_dir --progress json pull 2>\\&1 | #compose_in_dir --progress json pull | #' ut-install"
 
+    capability_discriminates "a project Compose refuses that goes unsaid" \
+        "a project Compose refuses is named" \
+        "sed -i.bak 's#^        if \[\[ \"\$line\" == \*'\"'\"'\"error\":true'\"'\"'\* \]\]; then\$#        if false; then#' ut-install"
+
     capability_discriminates "JSON progress asked of a Compose that refuses it" \
         "a Compose without JSON progress downloads as before" \
         "sed -i.bak 's|^    if compose_reports_progress_as_json; then\$|    if true; then|' ut-install"
@@ -356,6 +360,10 @@ if grep -q 'say_each_image_as_it_lands' "$REPO_ROOT/ut-install"; then
         "the last screen says how long it took" \
         "sed -i.bak 's|Installation complete in \$(( SECONDS / 60 )) min|Installation complete|' ut-install"
 fi
+
+capability_discriminates "a builder that waits for an llm a panel does not run" \
+    "the App Builder renders on a machine without a GPU" \
+    "sed -i.bak '/^        required: false\$/d' compose.appbuilder.yaml"
 
 capability_discriminates "the authority removed from the stack" \
     "the appliance runs its own certificate authority" \
