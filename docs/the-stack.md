@@ -292,9 +292,12 @@ because the host name happens to equal the domain.
 They are independent instances with no shared state, so give each its own
 `JWT_SECRET`, `STATE_SECRET` and MongoDB credentials.
 
-> **One host, two stacks is not supported.** Running two copies of the stack on
-> the same machine needs more than a second domain: the fixed container names,
-> the fixed volume `name:` entries, the published host ports (80, 443, 8001,
-> 8011), the single external `proxy` network, the
-> `/var/lib/understandtech` host paths, `ut-logs-archive`'s `COMPOSE_PROJECT`
-> and the systemd unit names would all collide. Use two boxes.
+> **One host, two stacks works for a test install beside a live one.** The
+> second needs its own project name, prefixes, data root and ports, its own
+> address, and no GPU: the steps are in
+> [installing beside something already running](install.md#installing-beside-something-already-running).
+> Three things stay with the first stack, because their names are fixed: the
+> boot service (`understandtech.service`, hence `--no-autostart`), the App
+> Builder and its `proxy` network, and the log archive (`ut-logs-archive`
+> archives the `understandtech` project only). For two stacks that serve
+> people, use two boxes.
