@@ -96,6 +96,25 @@ your answers, shows each step and each image as it lands, then the two
 passwords, once. Then `ut-setup` stops. Give it no `ut-install` option: the page
 asks for them. On a box already installed, `sudo ut-setup` does the same.
 
+### From your own machine, through SSH
+
+The page listens on the box only, so reach it through an SSH tunnel. On the
+box, over SSH:
+
+```bash
+sudo bash ut-get --version "$VERSION" --browser
+```
+
+On a box already installed, `sudo ut-setup` is enough. Either prints `http://127.0.0.1:<port>/?code=<code>`. On your own machine, in a
+second terminal, with that port:
+
+```bash
+ssh -N -L <port>:127.0.0.1:<port> <user>@<box>
+```
+
+Then open the printed address in your browser and press **Continue**. Keep the
+tunnel open until the page shows the two passwords.
+
 `ut-get` itself comes from GitHub over HTTPS and nothing checks it before it
 runs. To check every file before running anything, follow the steps below
 instead.
