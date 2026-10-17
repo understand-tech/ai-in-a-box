@@ -377,6 +377,14 @@ capability_discriminates "the recorder tied to the engine again" \
     "a machine without a GPU still records what its gateway and front door served" \
     "sed -i.bak 's|^  metrics:\$|  metrics:\n    profiles: [\"nim\", \"nim-llm\"]|' compose.yaml"
 
+capability_discriminates "a compute node that opens its engine port to the network" \
+    "a compute node lets other machines reach its engine only with its key" \
+    "printf '  nim-llm:\\n    ports: !override\\n      - \"0.0.0.0:8001:8000\"\\n' >> compose.compute.yaml"
+
+capability_discriminates "a compute node that starts without an engine key" \
+    "a compute node lets other machines reach its engine only with its key" \
+    "sed -i.bak 's|VLLM_API_KEY: \${VLLM_API_KEY:?ut-install generates it}|VLLM_API_KEY: \${VLLM_API_KEY:-}|' compose.compute.yaml"
+
 if grep -q 'record_this_install' "$REPO_ROOT/ut-install"; then
     capability_discriminates "an install run nobody keeps" \
         "every install run is kept, from its first step" \
@@ -927,6 +935,14 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
         "an OpenAI key already given is never replaced" \
         "sed -i.bak '/^    \\[\\[ -n \"\\\$(env_get \"\\\$env_file\" OA_KEY/d' ut-install"
 
+    install_walk_discriminates "an engine key nobody generates" \
+        "the engine gets a key of its own" \
+        "sed -i.bak 's| VLLM_API_KEY)|)|' ut-install"
+
+    install_walk_discriminates "an engine key an older release shipped, kept as it was" \
+        "an engine key an older release left as EMPTY is replaced" \
+        "sed -i.bak 's| \"EMPTY\"\$||' ut-install"
+
     install_walk_discriminates "a clock nothing compares to anything" \
         "the preflight stops rather than issue certificates nothing will accept" \
         "sed -i.bak 's|^release_declares() {\$|release_declares() { return 1;|' ut-install"
@@ -1088,6 +1104,10 @@ if [[ -x "$REPO_ROOT/test/ingress.sh" ]]; then
     ingress_discriminates "every Host header counted as written" \
         "a forged host is pooled" \
         "sed -i.bak 's|^        per_host\$|        per_host\\n        observe_catchall_hosts|' caddy/ingress-internal.caddy"
+
+    ingress_discriminates "an engine served to anyone" \
+        "it refuses a request without the key" \
+        "sed -i.bak '/respond @without_the_key 401/d' caddy/inference-surface.caddy"
 
     ingress_discriminates "a recorder that filters out the handler Caddy counts under" \
         "the recorder keeps each request to a surface" \

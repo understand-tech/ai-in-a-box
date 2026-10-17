@@ -1,0 +1,17 @@
+# The engine, for the machines a compute node serves.
+#
+# NIM refuses an API key of its own ("authentication should be managed
+# externally", nim_llm 2.0.12), so the key is checked here, whichever image
+# serves the model, and the engine's own port stays on loopback.
+#
+# The certificate comes from Caddy's own authority. A control plane trusts it by
+# its root, /data/caddy/pki/authorities/local/root.crt in this container.
+
+https://{$UT_INFERENCE_ADDRESS}:8444 {
+    tls internal
+
+    @without_the_key not header Authorization "Bearer {$VLLM_API_KEY}"
+    respond @without_the_key 401
+
+    reverse_proxy nim-llm:8000
+}

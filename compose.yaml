@@ -83,6 +83,7 @@ services:
       # UT_INTERNAL_SURFACE="no-internal-surface" on a node that runs no
       # authority.
       - ./caddy/${UT_INTERNAL_SURFACE:-internal-surface}.caddy:/etc/caddy/surface.caddy:ro
+      - ./caddy/no-inference-surface.caddy:/etc/caddy/inference.caddy:ro
       - ${DATA_ROOT:-/var/lib/understandtech}/ca/certs:/etc/caddy/ca/certs:ro
       - caddy-data:/data
       - caddy-config:/config

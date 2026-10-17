@@ -344,13 +344,18 @@ machine runs no database and no application:
 ```bash
 COMPOSE_FILE="compose.yaml:compose.compute.yaml"
 COMPOSE_PROFILES="nim"
-NIM_LLM_BIND_ADDRESS=<address the control plane reaches>
+UT_INFERENCE_ADDRESS=<name or address the control plane reaches it by>
 ```
 
-**That address is required on a compute node and nowhere else.** Left at
-its default the engine listens on loopback, so the node starts, passes its
-healthcheck, and serves nobody — a failure that reads as a model problem rather
-than a binding one.
+The engine stays on loopback. Caddy serves it at
+`https://<UT_INFERENCE_ADDRESS>:8444/v1`, with a certificate from its own
+authority, and refuses with `401` any request that does not carry the node's
+`VLLM_API_KEY` as `Authorization: Bearer`. The key is in the node's
+`/etc/understandtech/local.env`; the root of its certificate is in its Caddy:
+
+```bash
+docker exec ut-caddy cat /data/caddy/pki/authorities/local/root.crt
+```
 
 `llm` is switched off there too, and that is a limitation rather than a choice:
 it carries the embedding and reranking work, but it also reads the customer's
@@ -366,10 +371,15 @@ properties offline, including that a single-use token issues a certificate,
 that replaying it is refused, that renewal needs no token, and that a revoked
 node cannot renew even after expiry — but nothing in the product performs it.
 
-Until then, a compute node is reachable on an address you opened, with no
-certificate proving which machine it is. On a network you control, between two
-machines you own, that is a deliberate and bounded choice. It is not mutual
-authentication.
+**Pointing a control plane at the node.** Nothing sets the node's address, key
+and root on the control plane yet, and the platform does not trust the node's
+authority on its own: its services check certificates against the public roots
+only.
+
+Until then, a compute node answers only the bearer of its key, over TLS, with a
+certificate from an authority no control plane is told to trust. On a network you
+control, between two machines you own, that is a deliberate and bounded choice.
+It is not mutual authentication.
 
 ### The order these have to be built in
 

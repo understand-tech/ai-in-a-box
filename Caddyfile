@@ -41,6 +41,9 @@ import /etc/caddy/ingress.caddy
 # whose front door holds a customer certificate or sits behind their proxy.
 import /etc/caddy/surface.caddy
 
+# The engine, for the machines a compute node serves; empty on every other role.
+import /etc/caddy/inference.caddy
+
 {$UT_CADDY_SCHEME:https}://llms.{$UT_DOMAIN:understand.local} {
     reverse_proxy app-llms:80
 

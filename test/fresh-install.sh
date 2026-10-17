@@ -184,6 +184,9 @@ state_setup() {
         # tells an operator to write it.
         openai_key_given)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'OA_KEY="sk-test-kept"\n'"'"' > /etc/understandtech/local.env' ;;
+        # What every release before the engine had a key shipped, carried into local.env.
+        engine_key_left_empty)
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'VLLM_API_KEY="EMPTY"\n'"'"' > /etc/understandtech/local.env' ;;
         no_accelerator_pointed_at_a_real_machine)
             echo 'rm -f /stub/nvidia-smi && install -d -m 750 /etc/understandtech && printf '"'"'VLLM_LLM_BASE_URL="https://inference.example.test/v1"\n'"'"' > /etc/understandtech/local.env' ;;
         # A release dated in the future is the same arithmetic as a clock in the
@@ -385,6 +388,16 @@ an_openai_key_given_is_never_replaced() {
     grep -qx 'OA_KEY="sk-test-kept"' <<< "$settings" && return 0
     grep '^OA_KEY' <<< "$settings"
     echo "$(output_of openai_key_given)"
+    return 1
+}
+
+engine_key_of() { grep -m1 '^VLLM_API_KEY=' <<< "$(settings_of "$1")" | cut -d= -f2- | tr -d '"'; }
+
+the_engine_gets_a_key_of_its_own() {
+    local key
+    key=$(engine_key_of "$1")
+    [[ ${#key} -ge 32 && "$key" != "EMPTY" ]] && return 0
+    echo "VLLM_API_KEY is '${key}' — the engine surface would let anyone in"
     return 1
 }
 
@@ -793,6 +806,7 @@ INSTALL_TOKEN= INSTALL_COMMAND=/srv/clone/ut-install \
     run_install_from_state checkout_but_no_key
 run_install_from_state empty_settings
 run_install_from_state openai_key_given
+run_install_from_state engine_key_left_empty
 run_install_from_state already_set
 run_install_from_state no_settings_dir
 MONGO_VOLUME_EXISTS=yes run_install_from_state orphan_volume
@@ -844,6 +858,11 @@ property "it gives the API the OA_KEY it needs to start" \
     the_install_gives_the_api_the_key_it_needs_to_start
 property "an OpenAI key already given is never replaced" \
     an_openai_key_given_is_never_replaced
+
+property "the engine gets a key of its own" \
+    the_engine_gets_a_key_of_its_own bare
+property "an engine key an older release left as EMPTY is replaced" \
+    the_engine_gets_a_key_of_its_own engine_key_left_empty
 
 printf '\n%sA settings file that exists but says nothing%s\n' "$BOLD" "$NC"
 property "it is filled rather than kept" \

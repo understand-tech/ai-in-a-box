@@ -10,8 +10,8 @@ For the shape of the request path and what each network can reach, see
 ## Services
 
 Only `caddy` publishes ports on every interface. `nim-llm` is bound to
-loopback, so it is reachable from the machine itself and from nowhere else; a compute node that has to serve another machine overrides
-`NIM_LLM_BIND_ADDRESS`. **Everything else is reachable only from inside the
+loopback, so it is reachable from the machine itself and from nowhere else; a compute node serves it to other machines through
+Caddy on port 8444, to the bearer of its `VLLM_API_KEY` only. **Everything else is reachable only from inside the
 Docker networks** — the database has no host port at all.
 
 Five services carry no fixed container name, because a fixed name and `--scale`
