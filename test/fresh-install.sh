@@ -141,6 +141,7 @@ cp /opt/understandtech/.env /w/$state/checkout-env 2>/dev/null || : > /w/$state/
 cp /stub/docker-calls /w/$state/docker-calls 2>/dev/null || : > /w/$state/docker-calls
 cp /stub/docker-login-stdin /w/$state/login-stdin 2>/dev/null || : > /w/$state/login-stdin
 cp /etc/understandtech/license /w/$state/license 2>/dev/null || : > /w/$state/license
+cp /etc/understandtech/inference-ca-bundle.pem /w/$state/inference-ca-bundle 2>/dev/null || : > /w/$state/inference-ca-bundle
 stat -c '%a %U' /etc/understandtech/license > /w/$state/license-mode 2>/dev/null || : > /w/$state/license-mode
 chmod -R a+rw /w/$state
 PROBE
@@ -184,6 +185,9 @@ state_setup() {
         # tells an operator to write it.
         openai_key_given)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'OA_KEY="sk-test-kept"\n'"'"' > /etc/understandtech/local.env' ;;
+        # The walk image has no public roots of its own; this one stands for them.
+        pointed_at_a_compute_node|compute_node_over_http)
+            echo 'install -d /etc/ssl/certs && cp /w/compute/public.pem /etc/ssl/certs/ca-certificates.crt' ;;
         # What every release before the engine had a key shipped, carried into local.env.
         engine_key_left_empty)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'VLLM_API_KEY="EMPTY"\n'"'"' > /etc/understandtech/local.env' ;;
@@ -388,6 +392,47 @@ an_openai_key_given_is_never_replaced() {
     grep -qx 'OA_KEY="sk-test-kept"' <<< "$settings" && return 0
     grep '^OA_KEY' <<< "$settings"
     echo "$(output_of openai_key_given)"
+    return 1
+}
+
+a_control_plane_takes_the_node_s_address_and_key() {
+    local settings key
+    settings=$(cat "$WORK_DIR/pointed_at_a_compute_node/local-env" 2>/dev/null)
+    key=$(tr -d '\n' < "$WORK_DIR/compute/key")
+    grep -qx 'VLLM_LLM_BASE_URL="https://node.example.test:8444/v1"' <<< "$settings" \
+        && grep -qx 'VLLM_VLM_BASE_URL="https://node.example.test:8444/v1"' <<< "$settings" \
+        && grep -qxF "VLLM_API_KEY=\"${key}\"" <<< "$settings" \
+        && grep -q '^COMPOSE_FILE=.*compose.no-gpu.yaml' <<< "$settings" \
+        && grep -q '^COMPOSE_FILE=.*compose.remote-inference.yaml' <<< "$settings" && return 0
+    grep -E '^(VLLM_LLM_BASE_URL|VLLM_VLM_BASE_URL|COMPOSE_FILE)=' <<< "$settings"
+    output_of pointed_at_a_compute_node | tail -5
+    return 1
+}
+
+a_control_plane_trusts_the_node_beside_the_public_roots() {
+    local bundle="$WORK_DIR/pointed_at_a_compute_node/inference-ca-bundle" root public
+    root=$(grep -v -- '-----' "$WORK_DIR/compute/root.pem" | tr -d '\n')
+    public=$(grep -v -- '-----' "$WORK_DIR/compute/public.pem" | tr -d '\n')
+    grep -v -- '-----' "$bundle" 2>/dev/null | tr -d '\n' | grep -qF "$root" \
+        || { echo "the bundle the services read has no trace of the node's root"; return 1; }
+    grep -v -- '-----' "$bundle" | tr -d '\n' | grep -qF "$public" \
+        || { echo "the bundle the services read lost the host's public roots"; return 1; }
+}
+
+the_node_s_key_stays_out_of_the_output() {
+    local key
+    key=$(tr -d '\n' < "$WORK_DIR/compute/key")
+    grep -qF "$key" <<< "$(output_of pointed_at_a_compute_node)" || return 0
+    echo "the compute node's key appears in the install output"
+    return 1
+}
+
+a_compute_node_over_http_is_refused() {
+    local output
+    output=$(output_of compute_node_over_http)
+    grep -q 'must be an https address' <<< "$output" && ! grep -q '^EXIT=0$' <<< "$output" \
+        && [[ ! -s "$WORK_DIR/compute_node_over_http/local-env" ]] && return 0
+    echo "$output" | tail -5
     return 1
 }
 
@@ -648,6 +693,18 @@ LICENSE_TOKEN=license-carried-token-0001
 # package declares, is not there; a license check cannot run without it.
 WITH_OPENSSL_IMAGE=""
 
+prepare_a_compute_node() {
+    local work="$WORK_DIR/compute" name
+    mkdir -p "$work"
+    for name in root public; do
+        openssl req -x509 -newkey rsa:2048 -sha256 -days 30 -noenc -subj "/CN=walk ${name}" \
+            -keyout "$work/${name}.key" -out "$work/${name}.pem" 2>/dev/null
+    done
+    cp "$work/root.pem" "$work/root.crt"
+    printf 'walk-node-key-%s%s\n' "$RANDOM" "$RANDOM" > "$work/key"
+    chmod -R a+r "$work"
+}
+
 prepare_licenses() {
     local work="$WORK_DIR/licenses"
     mkdir -p "$work"
@@ -797,6 +854,7 @@ printf '%sWalking a fresh install%s %s(the installer, from a machine in a known 
 build_the_package
 write_machine_stubs
 prepare_licenses
+prepare_a_compute_node
 
 run_install_from_state bare
 PULL_EXIT=0 run_install_from_state install_runs_through
@@ -807,6 +865,10 @@ INSTALL_TOKEN= INSTALL_COMMAND=/srv/clone/ut-install \
 run_install_from_state empty_settings
 run_install_from_state openai_key_given
 run_install_from_state engine_key_left_empty
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --inference-from https://node.example.test:8444 --inference-key-file /w/compute/key --inference-ca-file /w/compute/root.crt" \
+    run_install_from_state pointed_at_a_compute_node
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --inference-from http://node.example.test:8444 --inference-key-file /w/compute/key --inference-ca-file /w/compute/root.crt" \
+    run_install_from_state compute_node_over_http
 run_install_from_state already_set
 run_install_from_state no_settings_dir
 MONGO_VOLUME_EXISTS=yes run_install_from_state orphan_volume
@@ -863,6 +925,16 @@ property "the engine gets a key of its own" \
     the_engine_gets_a_key_of_its_own bare
 property "an engine key an older release left as EMPTY is replaced" \
     the_engine_gets_a_key_of_its_own engine_key_left_empty
+
+printf '\n%sA control plane pointed at a compute node%s\n' "$BOLD" "$NC"
+property "it takes the node's address and key" \
+    a_control_plane_takes_the_node_s_address_and_key
+property "it trusts the node's root beside the public ones" \
+    a_control_plane_trusts_the_node_beside_the_public_roots
+property "the node's key stays out of the install output" \
+    the_node_s_key_stays_out_of_the_output
+property "a node reached over plain http is refused before anything is written" \
+    a_compute_node_over_http_is_refused
 
 printf '\n%sA settings file that exists but says nothing%s\n' "$BOLD" "$NC"
 property "it is filled rather than kept" \

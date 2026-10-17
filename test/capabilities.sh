@@ -1553,6 +1553,25 @@ the_compute_engine_is_reached_only_through_its_key() {
     return 1
 }
 
+# SSL_CERT_FILE replaces a Python service's trust store, so each service that
+# calls the engine must get the node's root, and must keep the public ones.
+every_engine_caller_trusts_the_compute_node() {
+    command -v jq >/dev/null || { echo "jq absent"; return 1; }
+    local config service missing=""
+    config=$( cd "$WORK_DIR" && UT_INFERENCE_CA_BUNDLE=/etc/understandtech/inference-ca-bundle.pem \
+        docker compose -f compose.yaml -f compose.no-gpu.yaml -f compose.remote-inference.yaml config --format json 2>/dev/null )
+    for service in $(jq -r '.services | to_entries[] | select(.value.environment.VLLM_LLM_BASE_URL != null) | .key' <<< "$config"); do
+        jq -e --arg s "$service" '.services[$s]
+            | .environment.SSL_CERT_FILE == "/etc/understandtech/inference-ca-bundle.pem"
+              and .environment.REQUESTS_CA_BUNDLE == "/etc/understandtech/inference-ca-bundle.pem"
+              and any(.volumes[]?; .source == "/etc/understandtech/inference-ca-bundle.pem")' <<< "$config" >/dev/null \
+            || missing+=" ${service}"
+    done
+    [[ -n "$config" && -z "$missing" ]] && return 0
+    echo "these services call the engine without trusting the compute node:${missing:- (nothing rendered)}"
+    return 1
+}
+
 overrides_isolate_every_resource() {
     local rendered stray
     rendered=$( cd "$WORK_DIR" && \
@@ -2364,6 +2383,8 @@ if [[ -f "$REPO_ROOT/compose.compute.yaml" ]]; then
         with_profiles nim lists_service metrics -f compose.yaml -f compose.compute.yaml
     capability "a compute node lets other machines reach its engine only with its key" \
         the_compute_engine_is_reached_only_through_its_key
+    capability "every service that calls a compute node trusts its root" \
+        every_engine_caller_trusts_the_compute_node
     capability "overriding the prefixes isolates every resource" \
         overrides_isolate_every_resource
 fi
