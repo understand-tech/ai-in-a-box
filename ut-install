@@ -47,6 +47,10 @@ REPORTING_RECEIVER=""
 REPORTING_TOKEN_FILE=""
 REPORTING_RECEIVER_CERT=""
 REPORTING_EVERY=""
+INFERENCE_FROM=""
+INFERENCE_KEY_FILE=""
+INFERENCE_CA_FILE=""
+HOST_CA_BUNDLE="${UT_HOST_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}"
 UT_SEND="${UT_SEND:-ut-send}"
 CURRENT_STEP=""
 INFERENCE_STILL_LOADING=""
@@ -122,6 +126,10 @@ Options
                        the accelerator check, never a driver that stopped
                        answering. A settings file already carrying
                        compose.no-gpu.yaml says the same thing.
+  --inference-from URL, --inference-key-file PATH, --inference-ca-file PATH
+                       Take the inference from a compute node: its address
+                       (https://<node>:8444), its VLLM_API_KEY and its Caddy
+                       root, as its own install printed them. Implies --no-gpu.
   --health-timeout N   Seconds to wait for services (default: 3600).
   --reporting yes|no   Whether this machine sends its usage reports to
                        UnderstandTech (docs/usage-report.md says what they hold).
@@ -909,6 +917,68 @@ write_the_settings_a_machine_without_an_accelerator_needs() {
     fi
 }
 
+inference_base_url() {
+    local url=${1%/}
+    printf '%s/v1' "${url%/v1}"
+}
+
+the_key_file_holds_one_key() {
+    local key
+    [[ -r "$1" ]] || return 1
+    (( $(grep -c . "$1") == 1 )) || return 1
+    key=$(tr -d '\r\n' < "$1")
+    [[ -n "$key" && "$key" != *[[:space:]]* ]]
+}
+
+problem_with_the_compute_node_given() {
+    if [[ -z "$INFERENCE_FROM" ]]; then
+        [[ -z "$INFERENCE_KEY_FILE$INFERENCE_CA_FILE" ]] && return 1
+        echo "--inference-key-file and --inference-ca-file only go with --inference-from"
+    elif [[ ! "$INFERENCE_FROM" =~ ^https://[^/]+ ]]; then
+        echo "--inference-from must be an https address, got ${INFERENCE_FROM}"
+    elif ! the_key_file_holds_one_key "$INFERENCE_KEY_FILE"; then
+        echo "--inference-key-file must hold the node's VLLM_API_KEY, one line, nothing else"
+    elif ! openssl x509 -in "$INFERENCE_CA_FILE" -noout 2>/dev/null; then
+        echo "--inference-ca-file must be the node's root certificate, in PEM"
+    elif [[ ! -r "$HOST_CA_BUNDLE" ]]; then
+        echo "no public roots at ${HOST_CA_BUNDLE} to keep beside the node's (apt install ca-certificates)"
+    else
+        return 1
+    fi
+}
+
+die_on_a_compute_node_given_wrong() {
+    local problem
+    problem=$(problem_with_the_compute_node_given) || return 0
+    log_error "$problem"
+    log_error "  Give all three, as the compute node's install printed them:"
+    log_error "    --inference-from https://<node>:8444 --inference-key-file <key> --inference-ca-file <root.crt>"
+    log_error "  or none, and point VLLM_LLM_BASE_URL at the inference yourself."
+    exit 1
+}
+
+write_the_settings_a_compute_node_needs() {
+    local local_file=$1 bundle compose_files
+    [[ -n "$INFERENCE_FROM" ]] || return 0
+
+    bundle="$(dirname "$local_file")/inference-ca-bundle.pem"
+    cat "$HOST_CA_BUNDLE" "$INFERENCE_CA_FILE" > "$bundle"
+    chmod 644 "$bundle"
+
+    env_set "$local_file" VLLM_LLM_BASE_URL "$(inference_base_url "$INFERENCE_FROM")"
+    env_set "$local_file" VLLM_VLM_BASE_URL "$(inference_base_url "$INFERENCE_FROM")"
+    env_set "$local_file" VLLM_API_KEY "$(tr -d '\r\n' < "$INFERENCE_KEY_FILE")"
+    env_set "$local_file" UT_INFERENCE_CA_BUNDLE "$bundle"
+
+    compose_files=$(env_get "$local_file" COMPOSE_FILE 2>/dev/null || true)
+    [[ -n "$compose_files" ]] || compose_files=$(release_declares COMPOSE_FILE || echo "compose.yaml")
+    case "$compose_files" in
+        *compose.remote-inference.yaml*) ;;
+        *) env_set "$local_file" COMPOSE_FILE "${compose_files}:compose.remote-inference.yaml" ;;
+    esac
+    log_info "Inference from ${INFERENCE_FROM}, with its key, trusting its root"
+}
+
 BACKUP_DESTINATION_MARKER=".understandtech-backup-destination"
 
 filesystem_of_the_nearest_existing() {
@@ -1147,6 +1217,7 @@ step_configure() {
         log_info "Address set to ${DOMAIN} — every other URL derives from it"
     fi
 
+    write_the_settings_a_compute_node_needs "$local_file"
     $NO_GPU && write_the_settings_a_machine_without_an_accelerator_needs "$local_file"
     die_on_two_backup_destinations "$local_file"
     write_the_settings_a_backup_destination_needs "$local_file"
@@ -1661,6 +1732,9 @@ parse_arguments() {
             --reporting-token-file)    REPORTING_TOKEN_FILE="${2:?--reporting-token-file needs a path}"; shift ;;
             --reporting-receiver-cert) REPORTING_RECEIVER_CERT="${2:?--reporting-receiver-cert needs a path}"; shift ;;
             --reporting-every)         REPORTING_EVERY="${2:?--reporting-every needs minutes}"; shift ;;
+            --inference-from)     INFERENCE_FROM="${2:?--inference-from needs an address}"; NO_GPU=true; shift ;;
+            --inference-key-file) INFERENCE_KEY_FILE="${2:?--inference-key-file needs a path}"; shift ;;
+            --inference-ca-file)  INFERENCE_CA_FILE="${2:?--inference-ca-file needs a path}"; shift ;;
             -h|--help)        usage; exit 0 ;;
             *)                log_error "Unknown option: $1"; usage; exit 2 ;;
         esac
@@ -1670,6 +1744,7 @@ parse_arguments() {
 
 main() {
     parse_arguments "$@"
+    die_on_a_compute_node_given_wrong
     resolve_install_dir
 
     if [[ "$ACTION" == "check" ]]; then

@@ -228,6 +228,10 @@ Nothing else changes. The install still writes the same configuration, issues th
 same certificates and installs the same units. `VLLM_LLM_BASE_URL` has to name a
 machine that does generate, or the platform comes up answering nothing.
 
+When that machine is a compute node, `--inference-from` says so, and implies
+`--no-gpu`: it sets the address, the node's key and the trust in its root in one
+go — see [adding a second machine](certificates-and-dns.md#adding-a-second-machine).
+
 The summary printed at the end names the role the machine was installed as, and
 it is kept in the install log.
 

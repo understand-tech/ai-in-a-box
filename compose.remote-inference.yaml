@@ -1,0 +1,25 @@
+name: ${COMPOSE_PROJECT_NAME:-understandtech}
+
+# Overlay for a control plane whose inference comes from a compute node.
+#
+#   UT_INFERENCE_CA_BUNDLE=/etc/understandtech/inference-ca-bundle.pem
+#
+# ut-install adds it with --inference-from, and writes the bundle: the host's
+# public roots followed by the node's. SSL_CERT_FILE replaces the trust store of
+# the Python services rather than adding to it, so the node's root alone would
+# cut them off from every public service they call.
+#
+# The variable carries no ${...:?} guard on purpose: the test suites read every
+# such guard as a setting all installs require, and this one only exists here.
+
+x-trusts-the-compute-node: &trusts-the-compute-node
+  environment:
+    SSL_CERT_FILE: /etc/understandtech/inference-ca-bundle.pem
+    REQUESTS_CA_BUNDLE: /etc/understandtech/inference-ca-bundle.pem
+  volumes:
+    - ${UT_INFERENCE_CA_BUNDLE}:/etc/understandtech/inference-ca-bundle.pem:ro
+
+services:
+  api: *trusts-the-compute-node
+  api-customer: *trusts-the-compute-node
+  llm: *trusts-the-compute-node

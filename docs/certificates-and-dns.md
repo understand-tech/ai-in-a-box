@@ -357,6 +357,15 @@ authority, and refuses with `401` any request that does not carry the node's
 docker exec ut-caddy cat /data/caddy/pki/authorities/local/root.crt
 ```
 
+On the control plane, give the three to the install. It takes the inference
+from the node instead of starting an engine, and its services trust the node's
+root on top of the public ones:
+
+```bash
+sudo ut-install --inference-from https://<node>:8444 \
+    --inference-key-file node.key --inference-ca-file node-root.crt
+```
+
 `llm` is switched off there too, and that is a limitation rather than a choice:
 it carries the embedding and reranking work, but it also reads the customer's
 documents and talks to MongoDB, so it cannot run on a machine that holds
@@ -371,15 +380,10 @@ properties offline, including that a single-use token issues a certificate,
 that replaying it is refused, that renewal needs no token, and that a revoked
 node cannot renew even after expiry — but nothing in the product performs it.
 
-**Pointing a control plane at the node.** Nothing sets the node's address, key
-and root on the control plane yet, and the platform does not trust the node's
-authority on its own: its services check certificates against the public roots
-only.
-
 Until then, a compute node answers only the bearer of its key, over TLS, with a
-certificate from an authority no control plane is told to trust. On a network you
-control, between two machines you own, that is a deliberate and bounded choice.
-It is not mutual authentication.
+certificate from its own authority, which the control plane is told to trust by
+hand. On a network you control, between two machines you own, that is a
+deliberate and bounded choice. It is not mutual authentication.
 
 ### The order these have to be built in
 

@@ -29,7 +29,7 @@ fresh_copy() {
     rm -rf "$COPY"
     mkdir -p "$COPY"
     ( cd "$REPO_ROOT" && tar -cf - release.env compose.yaml compose.appbuilder.yaml \
-        compose.compute.yaml compose.no-gpu.yaml compose.backup-mount.yaml compose.backup-network.yaml \
+        compose.compute.yaml compose.no-gpu.yaml compose.backup-mount.yaml compose.backup-network.yaml compose.remote-inference.yaml \
         Caddyfile caddy metrics backup-files.sh \
         setup-autostart.sh ut-logs-archive ut-install ut-certificate ut-verify ut-get ut-license ut-status ut-report ut-send ut-setup go.mod cmd appbuilder docs \
         packaging README.md test .github 2>/dev/null ) | tar -xf - -C "$COPY" 2>/dev/null
@@ -384,6 +384,10 @@ capability_discriminates "a compute node that opens its engine port to the netwo
 capability_discriminates "a compute node that starts without an engine key" \
     "a compute node lets other machines reach its engine only with its key" \
     "sed -i.bak 's|VLLM_API_KEY: \${VLLM_API_KEY:?ut-install generates it}|VLLM_API_KEY: \${VLLM_API_KEY:-}|' compose.compute.yaml"
+
+capability_discriminates "a caller of the compute node left on the public roots" \
+    "every service that calls a compute node trusts its root" \
+    "sed -i.bak '/^  api-customer: \\*trusts-the-compute-node\$/d' compose.remote-inference.yaml"
 
 if grep -q 'record_this_install' "$REPO_ROOT/ut-install"; then
     capability_discriminates "an install run nobody keeps" \
@@ -942,6 +946,26 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
     install_walk_discriminates "an engine key an older release shipped, kept as it was" \
         "an engine key an older release left as EMPTY is replaced" \
         "sed -i.bak 's| \"EMPTY\"\$||' ut-install"
+
+    install_walk_discriminates "a control plane told the node's key and keeping its own" \
+        "it takes the node's address and key" \
+        "sed -i.bak '/env_set \"\$local_file\" VLLM_API_KEY /d' ut-install"
+
+    install_walk_discriminates "a bundle without the node's root" \
+        "it trusts the node's root beside the public ones" \
+        "sed -i.bak 's|cat \"\$HOST_CA_BUNDLE\" \"\$INFERENCE_CA_FILE\" >|cat \"\$HOST_CA_BUNDLE\" >|' ut-install"
+
+    install_walk_discriminates "a bundle with the node's root alone" \
+        "it trusts the node's root beside the public ones" \
+        "sed -i.bak 's|cat \"\$HOST_CA_BUNDLE\" \"\$INFERENCE_CA_FILE\" >|cat \"\$INFERENCE_CA_FILE\" >|' ut-install"
+
+    install_walk_discriminates "the node's key written to the install log" \
+        "the node's key stays out of the install output" \
+        "sed -i.bak 's|with its key, trusting its root\"|with key \$(cat \"\$INFERENCE_KEY_FILE\"), trusting its root\"|' ut-install"
+
+    install_walk_discriminates "a compute node reached over plain http" \
+        "a node reached over plain http is refused before anything is written" \
+        "sed -i.bak 's|\\^https://\\[\\^/\\]+|^https?://[^/]+|' ut-install"
 
     install_walk_discriminates "a clock nothing compares to anything" \
         "the preflight stops rather than issue certificates nothing will accept" \

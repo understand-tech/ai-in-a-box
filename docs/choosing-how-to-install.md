@@ -47,7 +47,7 @@ Only `internal` needs no setting. The other three are written in
 | It | Install with | Settings |
 |---|---|---|
 | Everything, with its own GPU | nothing more | — |
-| Everything but inference, which runs on another machine | `--no-gpu` | [`VLLM_LLM_BASE_URL`](install.md#a-machine-that-serves-no-inference) names the machine that generates |
+| Everything but inference, which runs on another machine | `--no-gpu`, or `--inference-from` when it is a compute node | [`VLLM_LLM_BASE_URL`](install.md#a-machine-that-serves-no-inference) names the machine that generates; `--inference-from` sets it with the node's key and root |
 | Only inference, for a box that keeps the data | the compute overlay | [adding a second machine](certificates-and-dns.md#adding-a-second-machine) — read [what does not work yet](certificates-and-dns.md#what-does-not-work-yet) first |
 | A test, beside a live install | `--dir … --no-autostart` | [installing beside something already running](install.md#installing-beside-something-already-running) |
 
