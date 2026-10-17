@@ -47,6 +47,7 @@ func (w *Wizard) Stopped() <-chan string { return w.stop }
 func (w *Wizard) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", w.start)
+	mux.HandleFunc("POST /enter", w.enter)
 	mux.Handle("GET /page/", http.FileServerFS(page))
 	mux.HandleFunc("POST /install", w.withSession(w.install))
 	mux.HandleFunc("GET /progress", w.withSession(w.report))
@@ -74,24 +75,35 @@ func (w *Wizard) guarded(next http.Handler) http.Handler {
 	})
 }
 
+// Browsers load an address before it is opened — typed in the bar, or shown
+// as a preview — and not always with the cookies they keep. Showing the
+// address spends nothing: the code is spent by the click that posts it.
 func (w *Wizard) start(rw http.ResponseWriter, r *http.Request) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if code := r.URL.Query().Get("code"); code != "" {
-		if w.code == "" || subtle.ConstantTimeCompare([]byte(code), []byte(w.code)) != 1 {
-			w.refuse(rw)
-			return
-		}
-		w.code = ""
-		http.SetCookie(rw, &http.Cookie{Name: sessionCookie, Value: w.session, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
+	switch {
+	case w.hasSession(r) && r.URL.RawQuery != "":
 		http.Redirect(rw, r, "/", http.StatusSeeOther)
-		return
-	}
-	if !w.hasSession(r) {
+	case w.hasSession(r):
+		http.ServeFileFS(rw, r, page, "page/index.html")
+	case r.URL.Query().Get("code") != "":
+		http.ServeFileFS(rw, r, page, "page/enter.html")
+	default:
 		http.Error(rw, "Open the address ut-setup printed on the box.", http.StatusForbidden)
+	}
+}
+
+func (w *Wizard) enter(rw http.ResponseWriter, r *http.Request) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	code := r.PostFormValue("code")
+	if w.code == "" || subtle.ConstantTimeCompare([]byte(code), []byte(w.code)) != 1 {
+		w.refuse(rw)
 		return
 	}
-	http.ServeFileFS(rw, r, page, "page/index.html")
+	w.code = ""
+	http.SetCookie(rw, &http.Cookie{Name: sessionCookie, Value: w.session, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
+	rw.WriteHeader(http.StatusNoContent)
 }
 
 func (w *Wizard) withSession(next http.HandlerFunc) http.HandlerFunc {

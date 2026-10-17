@@ -96,9 +96,14 @@ func (b *box) post(path string, form url.Values, origin string) *http.Response {
 	return response
 }
 
+func (b *box) enter(code string) int {
+	b.t.Helper()
+	return b.post("/enter", url.Values{"code": {code}}, b.server.URL).StatusCode
+}
+
 func (b *box) signIn() {
 	b.t.Helper()
-	if status := b.get("/?code=" + testCode).StatusCode; status != http.StatusSeeOther {
+	if status := b.enter(testCode); status != http.StatusNoContent {
 		b.t.Fatalf("the right code answered %d", status)
 	}
 }
@@ -133,7 +138,7 @@ func TestOnlyTheCodeOpensTheWizard(t *testing.T) {
 	if status := b.get("/").StatusCode; status != http.StatusForbidden {
 		t.Fatalf("no code answered %d", status)
 	}
-	if status := b.get("/?code=wrong").StatusCode; status != http.StatusForbidden {
+	if status := b.enter("wrong"); status != http.StatusForbidden {
 		t.Fatalf("a wrong code answered %d", status)
 	}
 	b.signIn()
@@ -142,15 +147,44 @@ func TestOnlyTheCodeOpensTheWizard(t *testing.T) {
 	}
 	other := newBox(t, &fakeInstall{})
 	other.server = b.server
-	if status := other.get("/?code=" + testCode).StatusCode; status != http.StatusForbidden {
+	if status := other.enter(testCode); status != http.StatusForbidden {
 		t.Fatalf("the code opened a second browser: %d", status)
+	}
+}
+
+func TestShowingTheAddressSpendsNothing(t *testing.T) {
+	b := newBox(t, &fakeInstall{})
+	preview := newBox(t, &fakeInstall{})
+	preview.server = b.server
+	for range maxFailures + 1 {
+		if status := preview.get("/?code=" + testCode).StatusCode; status != http.StatusOK {
+			t.Fatalf("showing the address answered %d", status)
+		}
+	}
+	b.signIn()
+	if status := b.get("/").StatusCode; status != http.StatusOK {
+		t.Fatalf("the browser that clicked got %d", status)
+	}
+}
+
+func TestTheAddressOpenedAgainInTheSameBrowserShowsThePage(t *testing.T) {
+	b := newBox(t, &fakeInstall{})
+	b.signIn()
+	if status := b.get("/?code=" + testCode).StatusCode; status != http.StatusSeeOther {
+		t.Fatalf("the same browser opening the address again got %d", status)
+	}
+	if status := b.get("/").StatusCode; status != http.StatusOK {
+		t.Fatalf("then the page answered %d", status)
+	}
+	if b.wizard.failures != 0 {
+		t.Fatalf("counted %d failures", b.wizard.failures)
 	}
 }
 
 func TestFiveWrongCodesStopTheWizard(t *testing.T) {
 	b := newBox(t, &fakeInstall{})
 	for range maxFailures {
-		b.get("/?code=wrong")
+		b.enter("wrong")
 	}
 	select {
 	case reason := <-b.wizard.Stopped():
@@ -164,7 +198,7 @@ func TestFiveWrongCodesStopTheWizard(t *testing.T) {
 
 func TestARequestNamingAnotherHostIsRefused(t *testing.T) {
 	b := newBox(t, &fakeInstall{})
-	request, _ := http.NewRequest(http.MethodGet, b.server.URL+"/?code="+testCode, nil)
+	request, _ := http.NewRequest(http.MethodGet, b.server.URL+"/", nil)
 	request.Host = "rebound.example.com"
 	response, err := b.client.Do(request)
 	if err != nil {
