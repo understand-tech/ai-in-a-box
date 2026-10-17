@@ -182,6 +182,8 @@ state_setup() {
             echo 'rm -f /stub/nvidia-smi' ;;
         # local.env written before the first install, the way the warning itself
         # tells an operator to write it.
+        openai_key_given)
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'OA_KEY="sk-test-kept"\n'"'"' > /etc/understandtech/local.env' ;;
         no_accelerator_pointed_at_a_real_machine)
             echo 'rm -f /stub/nvidia-smi && install -d -m 750 /etc/understandtech && printf '"'"'VLLM_LLM_BASE_URL="https://inference.example.test/v1"\n'"'"' > /etc/understandtech/local.env' ;;
         # A release dated in the future is the same arithmetic as a clock in the
@@ -364,14 +366,25 @@ the_preflight_stops_on_a_disk_too_small() {
 }
 
 # The name in the Python traceback is OPENAI_API_KEY, which exists nowhere in
-# this appliance. Saying OA_KEY before the pull is the difference between one
-# sentence and eight minutes of reading container logs.
-the_install_names_what_would_keep_the_platform_down() {
-    local output
+# this appliance: an install that left OA_KEY empty came up as an API restarting
+# in a loop, behind a browser page that showed only the last line.
+the_install_gives_the_api_the_key_it_needs_to_start() {
+    local output settings
     output=$(output_of bare)
-    grep -q 'OA_KEY has no value' <<< "$output" \
-        && grep -q 'restart in a loop' <<< "$output" && return 0
+    settings=$(settings_of bare)
+    grep -q 'OA_KEY set to "not-configured"' <<< "$output" \
+        && grep -qx 'OA_KEY="not-configured"' <<< "$settings" && return 0
     echo "$output"
+    grep '^OA_KEY' <<< "$settings"
+    return 1
+}
+
+an_openai_key_given_is_never_replaced() {
+    local settings
+    settings=$(settings_of openai_key_given)
+    grep -qx 'OA_KEY="sk-test-kept"' <<< "$settings" && return 0
+    grep '^OA_KEY' <<< "$settings"
+    echo "$(output_of openai_key_given)"
     return 1
 }
 
@@ -779,6 +792,7 @@ INSTALL_TOKEN= INSTALL_COMMAND=/srv/clone/ut-install \
 INSTALL_TOKEN= INSTALL_COMMAND=/srv/clone/ut-install \
     run_install_from_state checkout_but_no_key
 run_install_from_state empty_settings
+run_install_from_state openai_key_given
 run_install_from_state already_set
 run_install_from_state no_settings_dir
 MONGO_VOLUME_EXISTS=yes run_install_from_state orphan_volume
@@ -826,8 +840,10 @@ property "the secrets are not the ones the template ships" \
 property "the App Builder's token key is one Fernet accepts" \
     the_builder_key_is_one_fernet_accepts
 
-property "it names the setting the platform will not start without" \
-    the_install_names_what_would_keep_the_platform_down
+property "it gives the API the OA_KEY it needs to start" \
+    the_install_gives_the_api_the_key_it_needs_to_start
+property "an OpenAI key already given is never replaced" \
+    an_openai_key_given_is_never_replaced
 
 printf '\n%sA settings file that exists but says nothing%s\n' "$BOLD" "$NC"
 property "it is filled rather than kept" \
