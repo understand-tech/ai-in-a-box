@@ -107,6 +107,15 @@ renders_valid_configuration() {
     ( cd "$WORK_DIR" && docker compose "$@" config >/dev/null )
 }
 
+# A panel with no GPU runs no llm. The builder waited for it, so the whole
+# project was refused and nothing started — the App Builder included.
+app_builder_runs_without_a_gpu() {
+    local files=(-f compose.yaml -f compose.no-gpu.yaml -f compose.appbuilder.yaml)
+    renders_valid_configuration "${files[@]}" && lists_service app-builder "${files[@]}" && return 0
+    ( cd "$WORK_DIR" && docker compose "${files[@]}" config 2>&1 >/dev/null | tail -3 )
+    return 1
+}
+
 write_mdns_probe() {
     cat > "$WORK_DIR/mdns-probe.sh" <<'PROBE'
 set -u
@@ -436,6 +445,7 @@ compose_in_dir() {
                 '{"id":"Image ghcr.io/x/api:1","status":"Done","text":"Pulled"}' \
                 '{"id":"Image ghcr.io/x/caddy:2","status":"Done","text":"Pulled"}'
             [[ -z "${PULL_FAILS:-}" ]] || { echo "Error response from daemon: denied" >&2; return 1; }
+            [[ -z "${COMPOSE_REFUSES:-}" ]] || { echo '{"error":true,"message":"service \"app-builder\" depends on undefined service \"llm\": invalid compose project"}' >&2; return 1; }
             return 0 ;;
         "pull") echo "COMPOSE'S OWN OUTPUT" ;;
     esac
@@ -465,6 +475,15 @@ a_pull_that_fails_still_stops_the_install() {
     grep -q 'Image pull failed' <<< "$report" \
         && grep -q 'Error response from daemon: denied' <<< "$report" \
         && ! grep -q 'EXIT=0' <<< "$report" && return 0
+    echo "$report"
+    return 1
+}
+
+a_project_compose_refuses_is_named() {
+    local report
+    report=$(COMPOSE_REFUSES=1 installer_pull_over)
+    grep -q 'depends on undefined service' <<< "$report" \
+        && grep -q 'Image pull failed' <<< "$report" && return 0
     echo "$report"
     return 1
 }
@@ -2061,6 +2080,8 @@ capability "the default role renders a valid stack" \
     renders_valid_configuration -f compose.yaml
 capability "the App Builder overlay renders on top of it" \
     renders_valid_configuration -f compose.yaml -f compose.appbuilder.yaml
+capability "the App Builder renders on a machine without a GPU, and still runs there" \
+    app_builder_runs_without_a_gpu
 capability "the control-plane role leaves out the inference engines" \
     omits_service nim-llm -f compose.yaml
 capability "a machine that runs an engine records its load" \
@@ -2123,6 +2144,8 @@ if [[ -x "$REPO_ROOT/ut-install" ]]; then
         the_pull_says_each_image_as_it_lands
     capability "a download that fails still stops the install" \
         a_pull_that_fails_still_stops_the_install
+    capability "a project Compose refuses is named, not only the pull that failed" \
+        a_project_compose_refuses_is_named
     capability "a Compose without JSON progress downloads as before" \
         a_compose_without_json_progress_pulls_as_before
     capability "the last screen says how long it took, where to go, and what is still loading" \
