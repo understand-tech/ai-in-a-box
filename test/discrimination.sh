@@ -912,8 +912,12 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
     # The clock check reads one value out of release.env. Make that read fail and
     # it skips in silence, which is the shape the defect would really take.
     install_walk_discriminates "an install that lets the operator find out from a traceback" \
-        "it names the setting the platform will not start without" \
-        "sed -i.bak 's|^say_what_the_platform_will_not_start_without() {\$|say_what_the_platform_will_not_start_without() { return 0;|' ut-install"
+        "it gives the API the OA_KEY it needs to start" \
+        "sed -i.bak 's|^give_the_api_the_openai_key_it_needs_to_start() {\$|give_the_api_the_openai_key_it_needs_to_start() { return 0;|' ut-install"
+
+    install_walk_discriminates "an OpenAI key replaced by the placeholder" \
+        "an OpenAI key already given is never replaced" \
+        "sed -i.bak '/^    \\[\\[ -n \"\\\$(env_get \"\\\$env_file\" OA_KEY/d' ut-install"
 
     install_walk_discriminates "a clock nothing compares to anything" \
         "the preflight stops rather than issue certificates nothing will accept" \
