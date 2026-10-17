@@ -27,10 +27,21 @@ func TestAnAddressIsTakenInLowerCase(t *testing.T) {
 }
 
 func TestTheBrowserOpensInTheSessionOfWhoeverRanSudo(t *testing.T) {
-	got := strings.Join(browserCommand("mathieu", "1000", "http://127.0.0.1:4242/?code=x"), " ")
-	want := "runuser -u mathieu -- env XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 xdg-open http://127.0.0.1:4242/?code=x"
+	got := strings.Join(browserCommand("mathieu", []string{"DISPLAY=:1"}, "x-www-browser", "http://127.0.0.1:4242/?code=x"), " ")
+	want := "runuser -u mathieu -- env DISPLAY=:1 x-www-browser http://127.0.0.1:4242/?code=x"
 	if got != want {
 		t.Fatalf("opened with %q", got)
+	}
+}
+
+func TestTheSessionIsReadFromAGraphicalProcess(t *testing.T) {
+	gdm := []byte("HOME=/home/ut\x00DISPLAY=:1\x00XAUTHORITY=/run/user/1000/gdm/Xauthority\x00DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus\x00SECRET=x\x00")
+	got := strings.Join(sessionVariables(gdm), " ")
+	if got != "DISPLAY=:1 XAUTHORITY=/run/user/1000/gdm/Xauthority DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus" {
+		t.Fatalf("read %q", got)
+	}
+	if session := sessionVariables([]byte("HOME=/home/ut\x00DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus\x00")); session != nil {
+		t.Fatalf("a process with no display was taken for the desktop: %q", session)
 	}
 }
 
