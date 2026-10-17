@@ -49,6 +49,7 @@ REPORTING_RECEIVER_CERT=""
 REPORTING_EVERY=""
 UT_SEND="${UT_SEND:-ut-send}"
 CURRENT_STEP=""
+INFERENCE_STILL_LOADING=""
 
 SHIPPED_PLACEHOLDERS=(
     "" "12345678" "password" "SECRET" "SJKFVK" "FVVE" "SJBVSJB" "ut"
@@ -1289,6 +1290,33 @@ step_networks() {
     fi
 }
 
+compose_reports_progress_as_json() { compose_in_dir --progress json version >/dev/null 2>&1; }
+
+images_the_release_runs() { compose_in_dir config --images 2>/dev/null | sort -u | grep -c . || true; }
+
+say_each_image_as_it_lands() {
+    local total=$1 started=$SECONDS landed=0 line image
+    (( total > 0 )) || total="?"
+    while IFS= read -r line; do
+        [[ "$line" == "{"* ]] || { log "$line"; continue; }
+        [[ "$line" == *'"id":"Image '* ]] || continue
+        image=${line#*\"id\":\"Image }
+        image=${image%%\"*}
+        case "$line" in
+            *'"status":"Done"'*)
+                landed=$((landed + 1))
+                log "     ${landed}/${total}  ${image}  ($(( (SECONDS - started) / 60 )) min)"
+                ;;
+            *'"status":"Error"'*)
+                log_error "${image}: $(sed -n 's/.*"text":"\([^"]*\)".*/\1/p' <<< "$line")"
+                ;;
+        esac
+    done
+}
+
+# Compose draws its progress bars only on a terminal, and start_logging sends
+# everything through tee: without JSON, a pull of tens of GB shows "0B" per layer.
+# The JSON comes on stderr, beside any error that is not JSON.
 step_pull() {
     if ! $DO_PULL; then
         log_step "Skipping image download (--skip-pull)"
@@ -1296,7 +1324,12 @@ step_pull() {
     fi
     log_step "Downloading images"
     log "     First run downloads several tens of GB. This is the long part."
-    compose_in_dir pull || die "Image pull failed. Check the token and the network."
+    if compose_reports_progress_as_json; then
+        compose_in_dir --progress json pull 2>&1 | say_each_image_as_it_lands "$(images_the_release_runs)" \
+            || die "Image pull failed. Check the token and the network."
+    else
+        compose_in_dir pull || die "Image pull failed. Check the token and the network."
+    fi
     log_info "Images present locally"
 }
 
@@ -1392,6 +1425,7 @@ names_in() {
 report_inference_still_loading() {
     local loading=$1 line
     [[ -n "$loading" ]] || return 0
+    INFERENCE_STILL_LOADING=$(names_in "$loading")
     log ""
     log "     Inference is not ready yet, and the platform does not wait for it:"
     printf '%s' "$loading" | while IFS= read -r line; do [[ -n "$line" ]] && log "  ${line# }"; done
@@ -1564,13 +1598,18 @@ step_reporting() {
 }
 
 print_summary() {
-    local env_file="$INSTALL_DIR/.env"
+    local env_file="$INSTALL_DIR/.env" inference=""
+    [[ -z "$INFERENCE_STILL_LOADING" ]] \
+        || inference=$'\n'"  Inference      still loading: ${INFERENCE_STILL_LOADING} — the platform works meanwhile"
 
     cat <<EOF
 
-${BOLD}Installation complete${NC}
+${BOLD}Installation complete in $(( SECONDS / 60 )) min${NC}
 
-  Address        https://${DOMAIN}
+  Open https://${DOMAIN} — the initial admin password printed below opens
+  the first-run wizard: models, sign-on, data sources.
+
+  Address        https://${DOMAIN}${inference}
   Directory      ${INSTALL_DIR}
   Configuration  ${env_file}   (0600, contains generated secrets)
   Role           $(role_this_machine_was_installed_as)

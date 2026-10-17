@@ -335,6 +335,28 @@ if grep -q 'role_is_waited_for' "$REPO_ROOT/ut-install"; then
         "sed -i.bak 's|still starting: %s (%dm elapsed)|still starting (%dm elapsed)|; s|\"\$(names_in \"\$pending\")\" \\\\||' ut-install"
 fi
 
+if grep -q 'say_each_image_as_it_lands' "$REPO_ROOT/ut-install"; then
+    capability_discriminates "every layer counted as an image" \
+        "the download says each image as it lands" \
+        "sed -i.bak '/^        \[\[ \"\$line\" == \*'\"'\"'\"id\":\"Image '\"'\"'\* \]\] || continue\$/d' ut-install"
+
+    capability_discriminates "a failed download that goes on" \
+        "a download that fails still stops the install" \
+        "sed -i.bak 's#^        compose_in_dir --progress json pull 2>\\&1 | #        { compose_in_dir --progress json pull 2>\\&1 || true; } | #' ut-install"
+
+    capability_discriminates "progress read where Compose does not write it" \
+        "the download says each image as it lands" \
+        "sed -i.bak 's#compose_in_dir --progress json pull 2>\\&1 | #compose_in_dir --progress json pull | #' ut-install"
+
+    capability_discriminates "JSON progress asked of a Compose that refuses it" \
+        "a Compose without JSON progress downloads as before" \
+        "sed -i.bak 's|^    if compose_reports_progress_as_json; then\$|    if true; then|' ut-install"
+
+    capability_discriminates "a last screen that forgets how long it took" \
+        "the last screen says how long it took" \
+        "sed -i.bak 's|Installation complete in \$(( SECONDS / 60 )) min|Installation complete|' ut-install"
+fi
+
 capability_discriminates "the authority removed from the stack" \
     "the appliance runs its own certificate authority" \
     "sed -i.bak 's|^  step-ca:|  step-ca:\n    profiles: [\"never-enabled\"]|' compose.yaml"

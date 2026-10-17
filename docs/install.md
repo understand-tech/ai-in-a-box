@@ -96,7 +96,8 @@ BASE=https://github.com/understand-tech/ai-in-a-box/releases/download/v$VERSION
 
 mkdir ut-release && cd ut-release
 for f in understandtech_${VERSION}_all.deb understandtech_${VERSION}_all.deb.sig \
-         understandtech_${VERSION}.cdx.json ut-verify ut-get release.pub SHA256SUMS; do
+         understandtech_${VERSION}.cdx.json \
+         ut-verify ut-get release.pub SHA256SUMS; do
     curl -fsSLO "$BASE/$f"
 done
 chmod +x ut-verify
@@ -242,6 +243,14 @@ directory, creates the App Builder network, pulls the images, starts the stack,
 waits for the platform to be healthy, applies the certificate policy, and
 installs the boot service.
 
+The images are the long part, several tens of GB on a first install. Each one is
+named as it lands, with how many there are and the minutes since the download
+began:
+
+```text
+     7/13  ghcr.io/understand-tech/api:2.1-arm64@sha256:…  (12 min)
+```
+
 **It hands back as soon as the platform answers**, usually within a minute of
 the images being on the machine. The inference engines keep loading their model
 weights in the background — up to 45 minutes on a first install — and the
@@ -252,6 +261,11 @@ Follow them with `sudo docker compose ps` in `/usr/share/understandtech`. It
 needs `sudo`: the settings file it reads is `0600`.
 
 ## 6 · Write down what it prints at the end
+
+The last screen opens on how long the install took and the address to open
+first: the initial admin password opens the
+[first-run wizard](first-run-configuration.md) there. An inference engine still
+loading is named on an `Inference` line.
 
 Two secrets are shown **once**, on the terminal and not in the log:
 
