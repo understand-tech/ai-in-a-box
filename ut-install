@@ -1155,6 +1155,7 @@ step_configure() {
     render_settings "$env_file" "$local_file"
     generate_database_credentials "$env_file" "$local_file"
     generate_application_secrets "$local_file"
+    give_the_api_the_openai_key_it_needs_to_start "$env_file" "$local_file"
     render_settings "$env_file" "$local_file"
 
     chmod 600 "$env_file" "$local_file"
@@ -1170,18 +1171,14 @@ step_configure() {
 # start. Measured on a bare install, 2026-09-21 — thirty-five restarts before
 # anyone read far enough up the Python traceback to find the name.
 #
-# A warning and not a refusal. This installer cannot know whether a later
-# release still carries that, and refusing an install that would have worked is
-# worse than a sentence nobody needed.
-say_what_the_platform_will_not_start_without() {
-    local env_file="$INSTALL_DIR/.env" local_file
+# Any value that is not empty keeps it up — the client is built, never called —
+# and a key the operator gives in local.env is never replaced.
+give_the_api_the_openai_key_it_needs_to_start() {
+    local env_file=$1 local_file=$2
     [[ -n "$(env_get "$env_file" OA_KEY 2>/dev/null || true)" ]] && return 0
-    local_file="$(settings_directory "$env_file")/local.env"
-    log_warn "OA_KEY has no value. The platform API builds an OpenAI client as it"
-    log_warn "  loads, so it will restart in a loop and everything waiting on it"
-    log_warn "  will stay down. Any non-empty value is enough — the client is"
-    log_warn "  built here, never called:"
-    log_warn "    echo 'OA_KEY=\"not-configured\"' | sudo tee -a ${local_file}"
+    env_set "$local_file" OA_KEY "not-configured"
+    log_info "OA_KEY set to \"not-configured\": the platform API does not start without a value"
+    log_info "  A real OpenAI key, if one is ever needed, goes in ${local_file}"
 }
 
 step_check_resolution() {
@@ -1687,7 +1684,6 @@ main() {
     step_registry_login
     step_fetch_repo
     step_configure
-    say_what_the_platform_will_not_start_without
     step_check_resolution
     step_docker_group
     step_certificate_authority_root
