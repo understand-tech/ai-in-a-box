@@ -1918,6 +1918,27 @@ pin_host_keys() {
     docker run --rm -i -v "$1":/k "$ALPINE_IMAGE" sh -c 'cat > /k/known_hosts'
 }
 
+# The image answers ssh-keyscan while it is still creating its account, and a
+# session opened then is closed on it: "server unexpectedly closed connection".
+# Ready means an SFTP session opens with the test's key. Bounded by the clock,
+# as mongo_ready is, since a runner pulling the image takes most of a minute.
+sftp_server_ready() {
+    local server=$1 net=$2 ssh_dir=$3 deadline=$((SECONDS + 150)) scanned
+    while (( SECONDS < deadline )); do
+        [[ "$(docker inspect -f '{{.State.Running}}' "$server" 2>/dev/null)" == true ]] || { sleep 2; continue; }
+        scanned=$(docker run --rm --network "$net" --entrypoint ssh-keyscan "$RESTIC_IMAGE" \
+            -p 2222 -t ed25519 "$server" 2>/dev/null)
+        if [[ -n "$scanned" ]] && echo bye | docker run --rm -i --network "$net" -v "$ssh_dir":/k:ro --entrypoint sftp "$RESTIC_IMAGE" \
+                -b - -P 2222 -i /k/id_ed25519 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                "backup@$server" >/dev/null 2>&1; then
+            printf '%s\n' "$scanned"
+            return 0
+        fi
+        sleep 2
+    done
+    return 1
+}
+
 the_sftp_destination_has_to_prove_who_it_is() {
     command -v jq >/dev/null || { echo "jq absent"; return 1; }
     local run=cap-sftp-$$ net server ssh_dir="$WORK_DIR/sftp-ssh" source="$WORK_DIR/sftp-source" scanned="" attempt output verdict=1
@@ -1935,12 +1956,7 @@ the_sftp_destination_has_to_prove_who_it_is() {
     docker run -d --name "$server" --network "$net" -e USER_NAME=backup \
         -e PUBLIC_KEY="$(cat "$ssh_dir/id_ed25519.pub")" "$SFTP_SERVER_IMAGE" >/dev/null 2>&1
 
-    for attempt in $(seq 1 30); do
-        scanned=$(docker run --rm --network "$net" --entrypoint ssh-keyscan "$RESTIC_IMAGE" \
-            -p 2222 -t ed25519 "$server" 2>/dev/null)
-        [[ -n "$scanned" ]] && break
-        sleep 2
-    done
+    scanned=$(sftp_server_ready "$server" "$net" "$ssh_dir")
 
     if [[ -n "$scanned" ]]; then
         printf '[%s]:2222 %s\n' "$server" "$(cut -d' ' -f1,2 "$WORK_DIR/impostor.pub")" | pin_host_keys "$ssh_dir"
@@ -1954,7 +1970,7 @@ the_sftp_destination_has_to_prove_who_it_is() {
                 || echo "the pinned host was refused: $(tail -3 <<< "$output")"
         fi
     else
-        echo "the SFTP server never answered"
+        echo "the SFTP server never opened a session: $(docker inspect -f 'status={{.State.Status}} exit={{.State.ExitCode}}' "$server" 2>&1); $(docker logs "$server" 2>&1 | tail -3 | tr '\n' ' ')"
     fi
 
     docker rm -f "$server" >/dev/null 2>&1
