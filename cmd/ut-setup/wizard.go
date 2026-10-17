@@ -184,10 +184,10 @@ func (w *Wizard) install(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	go func() {
-		defer os.Remove(license)
 		err := w.installer(context.Background(), installArguments(answers, license), func(line string) {
 			w.record(func(p Progress) Progress { return p.read(line) })
 		})
+		os.Remove(license)
 		w.record(func(p Progress) Progress { return p.finish(err == nil) })
 	}()
 	rw.WriteHeader(http.StatusAccepted)
