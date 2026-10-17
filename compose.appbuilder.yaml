@@ -76,8 +76,11 @@ services:
         condition: service_healthy
       api-customer:
         condition: service_healthy
+      # The builder talks to models through api-customer's gateway, not to llm,
+      # which a machine with no GPU does not run: it waits for llm only where there is one.
       llm:
         condition: service_healthy
+        required: false
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/api/health"]
       <<: *healthcheck-defaults
