@@ -2102,8 +2102,8 @@ capability "the control-plane role leaves out the inference engines" \
     omits_service nim-llm -f compose.yaml
 capability "a machine that runs an engine records its load" \
     with_profiles nim lists_service metrics -f compose.yaml
-capability "a machine that runs no engine records nothing" \
-    omits_service metrics -f compose.yaml
+capability "a machine without a GPU still records what its gateway and front door served" \
+    lists_service metrics -f compose.yaml -f compose.no-gpu.yaml
 
 group "Machine identity"
 capability "the appliance runs its own certificate authority" \
