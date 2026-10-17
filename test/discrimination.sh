@@ -371,11 +371,11 @@ capability_discriminates "the authority removed from the stack" \
 
 capability_discriminates "the recorder left out where an engine runs" \
     "a machine that runs an engine records its load" \
-    "sed -i.bak 's|profiles: \[\"nim\", \"nim-llm\"\]\$|profiles: [\"never-enabled\"]|' compose.yaml"
+    "sed -i.bak 's|^  metrics:\$|  metrics:\n    profiles: [\"never-enabled\"]|' compose.yaml"
 
-capability_discriminates "the recorder started where no engine runs" \
-    "a machine that runs no engine records nothing" \
-    "sed -i.bak '/^  metrics:\$/,/^    image:/ s|^    profiles: \[\"nim\", \"nim-llm\"\]\$||' compose.yaml"
+capability_discriminates "the recorder tied to the engine again" \
+    "a machine without a GPU still records what its gateway and front door served" \
+    "sed -i.bak 's|^  metrics:\$|  metrics:\n    profiles: [\"nim\", \"nim-llm\"]|' compose.yaml"
 
 capability_discriminates "a compute node that opens its engine port to the network" \
     "a compute node lets other machines reach its engine only with its key" \

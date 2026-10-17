@@ -117,9 +117,10 @@ drawn at random the first time a report is written, kept in
 
 ## Where the numbers come from
 
-The engine figures are kept by the `metrics` service, which records the
-engines' own counters on the machine that runs them and publishes no port. It
-keeps 35 days, or 1 GB, whichever comes first — see [the stack](the-stack.md).
+The recorder's figures are kept by the `metrics` service, which runs on every
+machine and publishes no port: the engines' own counters where an engine runs,
+the model gateway's and the front door's wherever the platform runs. It keeps
+35 days, or 1 GB, whichever comes first — see [the stack](the-stack.md).
 
 The number of people per hour is counted inside the database container, from the
 platform's records of who sent a request, and only the count leaves it.
