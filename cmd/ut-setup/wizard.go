@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"time"
 )
 
 const (
@@ -32,6 +33,14 @@ type Wizard struct {
 	progress Progress
 	served   bool
 	stopped  bool
+
+	checking  sync.Once
+	readiness Readiness
+}
+
+type Readiness struct {
+	Ready bool     `json:"ready"`
+	Lines []string `json:"lines"`
 }
 
 func newWizard(installer Installer, code, session string, hosts ...string) *Wizard {
@@ -51,6 +60,7 @@ func (w *Wizard) Handler() http.Handler {
 	mux.Handle("GET /page/", http.FileServerFS(page))
 	mux.HandleFunc("POST /install", w.withSession(w.install))
 	mux.HandleFunc("GET /progress", w.withSession(w.report))
+	mux.HandleFunc("GET /check", w.withSession(w.check))
 	mux.HandleFunc("POST /secrets", w.withSession(w.secrets))
 	return w.guarded(mux)
 }
@@ -164,7 +174,7 @@ func (w *Wizard) install(rw http.ResponseWriter, r *http.Request) {
 		http.Error(rw, "an install is already running", http.StatusConflict)
 		return
 	}
-	w.progress = Progress{Running: true, Domain: answers.Domain}
+	w.progress = Progress{Running: true, Domain: answers.Domain, started: time.Now()}
 	w.mu.Unlock()
 
 	license, err := writeLicense(answers.License)
@@ -183,6 +193,18 @@ func (w *Wizard) install(rw http.ResponseWriter, r *http.Request) {
 	rw.WriteHeader(http.StatusAccepted)
 }
 
+// ut-install --check changes nothing and takes a few seconds: it runs once,
+// the first time the page asks, and its answer is kept for every reload.
+func (w *Wizard) check(rw http.ResponseWriter, _ *http.Request) {
+	w.checking.Do(func() {
+		var lines []string
+		err := w.installer(context.Background(), []string{"--check"}, func(line string) { lines = append(lines, line) })
+		w.readiness = Readiness{Ready: err == nil, Lines: lines}
+	})
+	rw.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(rw).Encode(w.readiness)
+}
+
 func (w *Wizard) record(change func(Progress) Progress) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -193,6 +215,11 @@ func (w *Wizard) report(rw http.ResponseWriter, _ *http.Request) {
 	w.mu.Lock()
 	progress := w.progress
 	progress.Lines = append([]string{}, progress.Lines...)
+	progress.Steps = append([]string{}, progress.Steps...)
+	progress.Warnings = append([]string{}, progress.Warnings...)
+	if !progress.started.IsZero() {
+		progress.Elapsed = int(time.Since(progress.started).Seconds())
+	}
 	w.mu.Unlock()
 	rw.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(rw).Encode(progress)

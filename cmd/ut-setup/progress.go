@@ -4,9 +4,13 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
-const keptLines = 200
+const (
+	keptLines    = 200
+	keptWarnings = 20
+)
 
 var (
 	imageLanded  = regexp.MustCompile(`^\s+(\d+)/(\d+|\?)\s+\S+\s+\(\d+ min\)$`)
@@ -19,10 +23,14 @@ type Progress struct {
 	Succeeded bool     `json:"succeeded"`
 	Domain    string   `json:"domain"`
 	Step      string   `json:"step"`
+	Steps     []string `json:"steps"`
+	Warnings  []string `json:"warnings"`
 	Landed    int      `json:"landed"`
 	Total     int      `json:"total"`
 	Failure   string   `json:"failure"`
 	Lines     []string `json:"lines"`
+	Elapsed   int      `json:"elapsed"`
+	started   time.Time
 	secrets   string
 }
 
@@ -34,7 +42,13 @@ func (p Progress) read(line string) Progress {
 	switch {
 	case strings.HasPrefix(line, "==> "):
 		p.Step = strings.TrimPrefix(line, "==> ")
+		p.Steps = append(p.Steps, p.Step)
 		p.Landed, p.Total = 0, 0
+	case strings.HasPrefix(line, "[warn] "):
+		p.Warnings = append(p.Warnings, strings.TrimPrefix(line, "[warn] "))
+		if len(p.Warnings) > keptWarnings {
+			p.Warnings = p.Warnings[len(p.Warnings)-keptWarnings:]
+		}
 	case strings.HasPrefix(line, "[fail] "):
 		p.Failure = strings.TrimPrefix(line, "[fail] ")
 	case imageLanded.MatchString(line):

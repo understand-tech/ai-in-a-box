@@ -2,52 +2,92 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>UnderstandTech AI in a Box — installation</title>
 <link rel="stylesheet" href="/page/style.css">
 <script src="/page/app.js" defer></script>
 </head>
 <body>
+<header>
+  <p class="brand">UnderstandTech <span>AI in a Box</span></p>
+  <ol class="stepper" aria-label="Installation steps">
+    <li id="stage-answers" aria-current="step">Check and answer</li>
+    <li id="stage-install">Install</li>
+    <li id="stage-done">Done</li>
+  </ol>
+</header>
 <main>
-<h1>UnderstandTech AI in a Box</h1>
 
-<form id="questions" hidden>
-  <h2>Three answers, then the box installs itself</h2>
-  <label>The address this box answers on
-    <input name="domain" required placeholder="box.example.com" autocomplete="off">
-  </label>
-  <p class="hint">A name from your DNS zone lets browsers trust the box without installing anything on them.</p>
-  <label>The license key UnderstandTech sent
-    <input name="license" type="password" required autocomplete="off">
-  </label>
-  <fieldset>
-    <legend>Send UnderstandTech usage reports — counts, never content, never who?</legend>
-    <label><input type="radio" name="reporting" value="yes" required> Yes</label>
-    <label><input type="radio" name="reporting" value="no"> No</label>
-  </fieldset>
-  <p id="refused" class="failure" hidden></p>
-  <button>Install</button>
-</form>
+<section id="questions" hidden>
+  <div class="card">
+    <h2>This box</h2>
+    <p id="checking" class="muted">Checking this box…</p>
+    <ul id="readiness" class="checklist" aria-live="polite"></ul>
+    <p id="not-ready" class="banner failure" hidden>This box cannot be installed as it is. Fix what is marked <b>✕ Problem</b>, then reload this page.</p>
+  </div>
 
-<section id="running" hidden>
-  <h2 id="step">Starting</h2>
-  <progress id="images" hidden></progress>
-  <p id="count"></p>
-  <p id="failure" class="failure" hidden></p>
-  <button id="again" hidden>Try again</button>
-  <details><summary>What ut-install says</summary><pre id="lines"></pre></details>
+  <form id="answers" class="card">
+    <h2>Three answers</h2>
+    <p class="hint"><span class="required" aria-hidden="true">*</span> required</p>
+
+    <label for="domain">The address people will open <span class="required" aria-hidden="true">*</span></label>
+    <input id="domain" name="domain" required value="understand.local" autocomplete="off" spellcheck="false">
+    <p class="hint">Keep <code>understand.local</code> on a single network with no DNS server. With one, use a name in your zone, such as <code>ai.example.com</code>, and publish it and <code>*.ai.example.com</code> pointing at this box.</p>
+
+    <label for="license">The license key UnderstandTech sent <span class="required" aria-hidden="true">*</span></label>
+    <div class="secret-input">
+      <input id="license" name="license" type="password" required autocomplete="off" spellcheck="false">
+      <button type="button" id="show-license" class="quiet" aria-pressed="false">Show</button>
+    </div>
+
+    <fieldset>
+      <legend>Send UnderstandTech usage reports? <span class="required" aria-hidden="true">*</span></legend>
+      <p class="hint">How loaded the box was and how many people it served — counts, never content, never who. Answer no on a box with no Internet.</p>
+      <label class="choice"><input type="radio" name="reporting" value="yes" required> Yes</label>
+      <label class="choice"><input type="radio" name="reporting" value="no"> No</label>
+    </fieldset>
+
+    <p id="refused" class="banner failure" role="alert" hidden></p>
+    <button id="install" class="primary">Install</button>
+  </form>
 </section>
 
-<section id="done" hidden>
-  <h2>Installed</h2>
-  <p>Two passwords are shown once, here, and nowhere else.</p>
-  <button id="reveal">Show them</button>
+<section id="running" class="card" hidden>
+  <h2 id="step" aria-live="polite">Starting</h2>
+  <p class="muted"><span id="elapsed">0:00</span> elapsed</p>
+  <div id="images-block" hidden>
+    <progress id="images" aria-describedby="count"></progress>
+    <p id="count"></p>
+  </div>
+  <ol id="steps" class="checklist"></ol>
+  <div id="warnings-block" class="banner warning" hidden>
+    <p><b>⚠ Worth reading</b></p>
+    <ul id="warnings"></ul>
+  </div>
+  <div id="failure-block" class="banner failure" role="alert" hidden>
+    <p><b>✕ The install stopped</b> during <span id="failed-step"></span>.</p>
+    <p id="failure"></p>
+    <p>Nothing was rolled back: running it again resumes where it stopped.</p>
+    <button id="again" class="primary">Try again</button>
+  </div>
+  <details><summary>Everything ut-install said</summary><pre id="lines"></pre></details>
+</section>
+
+<section id="done" class="card" hidden>
+  <h2>✓ Installed <span id="took"></span></h2>
+  <p>Open <a id="address"></a>. The initial admin password below opens the first-run wizard there: models, sign-on, data sources.</p>
+  <p class="banner warning">Two passwords are shown once, here, and nowhere else. Without the backup password, no backup can ever be read.</p>
+  <button id="reveal" class="primary">Show the passwords</button>
   <dl id="secrets" hidden>
-    <dt>Initial admin password — opens the first-run wizard</dt><dd id="admin"></dd>
-    <dt>Backup password — without it, no backup can ever be read</dt><dd id="backup"></dd>
+    <dt>Initial admin password</dt>
+    <dd><code id="admin"></code> <button type="button" class="quiet copy" data-copy="admin">Copy</button></dd>
+    <dt>Backup password</dt>
+    <dd><code id="backup"></code> <button type="button" class="quiet copy" data-copy="backup">Copy</button></dd>
   </dl>
-  <label id="noted" hidden><input type="checkbox" id="written"> I wrote both down somewhere other than this box</label>
-  <p><a id="open" hidden>Open the platform</a></p>
+  <label id="noted" class="choice" hidden><input type="checkbox" id="written" required> I wrote both down somewhere other than this box <span class="required" aria-hidden="true">*</span></label>
+  <p id="open-block" hidden><a id="open" class="button primary" aria-disabled="true">Open the platform</a></p>
 </section>
+
 </main>
 </body>
 </html>
