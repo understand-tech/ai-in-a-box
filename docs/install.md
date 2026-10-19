@@ -228,9 +228,17 @@ Nothing else changes. The install still writes the same configuration, issues th
 same certificates and installs the same units. `VLLM_LLM_BASE_URL` has to name a
 machine that does generate, or the platform comes up answering nothing.
 
-When that machine is a compute node, `--inference-from` says so, and implies
-`--no-gpu`: it sets the address, the node's key and the trust in its root in one
-go — see [adding a second machine](certificates-and-dns.md#adding-a-second-machine).
+**Chats over documents need a GPU here too.** They go through `llm`, which
+searches the documents and reranks them before asking the engine, and `llm` does
+not start without an accelerator: its build of llama.cpp loads CUDA when it
+starts. `--no-gpu` therefore leaves a platform that answers plain chats from the
+other machine and nothing over documents, and the install says so.
+
+When the other machine is a compute node, `--inference-from` says so: it sets the
+address, the node's key and the trust in its root in one go — see
+[adding a second machine](certificates-and-dns.md#adding-a-second-machine). No
+engine starts here. A machine with a GPU keeps it for `llm`; one without is
+installed as with `--no-gpu`.
 
 The summary printed at the end names the role the machine was installed as, and
 it is kept in the install log.
