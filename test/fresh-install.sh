@@ -188,6 +188,8 @@ state_setup() {
         # The walk image has no public roots of its own; this one stands for them.
         pointed_at_a_compute_node|compute_node_over_http)
             echo 'install -d /etc/ssl/certs && cp /w/compute/public.pem /etc/ssl/certs/ca-certificates.crt' ;;
+        compute_node_from_a_machine_without_gpu)
+            echo 'rm -f /stub/nvidia-smi && install -d /etc/ssl/certs && cp /w/compute/public.pem /etc/ssl/certs/ca-certificates.crt' ;;
         # What every release before the engine had a key shipped, carried into local.env.
         engine_key_left_empty)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'VLLM_API_KEY="EMPTY"\n'"'"' > /etc/understandtech/local.env' ;;
@@ -405,10 +407,44 @@ a_control_plane_takes_the_node_s_address_and_key() {
     grep -qx 'VLLM_LLM_BASE_URL="https://node.example.test:8444/v1"' <<< "$settings" \
         && grep -qx 'VLLM_VLM_BASE_URL="https://node.example.test:8444/v1"' <<< "$settings" \
         && grep -qxF "VLLM_API_KEY=\"${key}\"" <<< "$settings" \
-        && grep -q '^COMPOSE_FILE=.*compose.no-gpu.yaml' <<< "$settings" \
         && grep -q '^COMPOSE_FILE=.*compose.remote-inference.yaml' <<< "$settings" && return 0
     grep -E '^(VLLM_LLM_BASE_URL|VLLM_VLM_BASE_URL|COMPOSE_FILE)=' <<< "$settings"
     output_of pointed_at_a_compute_node | tail -5
+    return 1
+}
+
+# llm does not start without an accelerator, so a machine that has one keeps it
+# for llm: no engine of its own, and no overlay that would take the GPU away.
+a_control_plane_with_a_gpu_keeps_it_for_llm() {
+    local settings
+    settings=$(cat "$WORK_DIR/pointed_at_a_compute_node/local-env" 2>/dev/null)
+    ! grep -q '^COMPOSE_FILE=.*compose.no-gpu.yaml' <<< "$settings" \
+        && grep -qx 'COMPOSE_PROFILES=""' <<< "$settings" && return 0
+    grep -E '^COMPOSE_(FILE|PROFILES)=' <<< "$settings"
+    return 1
+}
+
+a_control_plane_without_a_gpu_goes_without_it() {
+    local settings
+    settings=$(cat "$WORK_DIR/compute_node_from_a_machine_without_gpu/local-env" 2>/dev/null)
+    grep -q '^COMPOSE_FILE=.*compose.no-gpu.yaml' <<< "$settings" \
+        && grep -q '^COMPOSE_FILE=.*compose.remote-inference.yaml' <<< "$settings" && return 0
+    grep -E '^COMPOSE_(FILE|PROFILES)=' <<< "$settings"
+    output_of compute_node_from_a_machine_without_gpu | tail -5
+    return 1
+}
+
+the_summary_says_where_generation_comes_from() {
+    local output
+    output=$(output_of pointed_at_a_compute_node)
+    grep -qF 'control plane — generation comes from https://node.example.test:8444/v1' <<< "$output" && return 0
+    grep -E 'Role|EXIT=' <<< "$output"
+    return 1
+}
+
+a_machine_without_gpu_is_told_documents_get_no_answer() {
+    grep -q 'chats over documents answer nothing' <<< "$(output_of no_accelerator_by_flag)" && return 0
+    output_of no_accelerator_by_flag | grep -E 'warn|Inference' | tail -4
     return 1
 }
 
@@ -877,8 +913,10 @@ run_install_from_state empty_settings
 run_install_from_state openai_key_given
 run_install_from_state engine_key_left_empty
 run_install_from_state origins_on_an_old_domain
-WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --inference-from https://node.example.test:8444 --inference-key-file /w/compute/key --inference-ca-file /w/compute/root.crt" \
+PULL_EXIT=0 WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --inference-from https://node.example.test:8444 --inference-key-file /w/compute/key --inference-ca-file /w/compute/root.crt" \
     run_install_from_state pointed_at_a_compute_node
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --inference-from https://node.example.test:8444 --inference-key-file /w/compute/key --inference-ca-file /w/compute/root.crt" \
+    run_install_from_state compute_node_from_a_machine_without_gpu
 WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --inference-from http://node.example.test:8444 --inference-key-file /w/compute/key --inference-ca-file /w/compute/root.crt" \
     run_install_from_state compute_node_over_http
 run_install_from_state already_set
@@ -928,6 +966,8 @@ property "the secrets are not the ones the template ships" \
 property "the App Builder's token key is one Fernet accepts" \
     the_builder_key_is_one_fernet_accepts
 
+property "a machine without a GPU is told its documents get no answer" \
+    a_machine_without_gpu_is_told_documents_get_no_answer
 property "it gives the API the OA_KEY it needs to start" \
     the_install_gives_the_api_the_key_it_needs_to_start
 property "an OpenAI key already given is never replaced" \
@@ -947,6 +987,12 @@ property "it trusts the node's root beside the public ones" \
     a_control_plane_trusts_the_node_beside_the_public_roots
 property "the node's key stays out of the install output" \
     the_node_s_key_stays_out_of_the_output
+property "a control plane with a GPU keeps it for llm and starts no engine" \
+    a_control_plane_with_a_gpu_keeps_it_for_llm
+property "a control plane without a GPU is installed as with --no-gpu" \
+    a_control_plane_without_a_gpu_goes_without_it
+property "the summary says where generation comes from" \
+    the_summary_says_where_generation_comes_from
 property "a node reached over plain http is refused before anything is written" \
     a_compute_node_over_http_is_refused
 

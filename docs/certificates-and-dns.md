@@ -366,6 +366,9 @@ sudo ut-install --inference-from https://<node>:8444 \
     --inference-key-file node.key --inference-ca-file node-root.crt
 ```
 
+Give the control plane a GPU if its users chat over their documents: `llm` runs
+there, and does not start without one.
+
 `llm` is switched off there too, and that is a limitation rather than a choice:
 it carries the embedding and reranking work, but it also reads the customer's
 documents and talks to MongoDB, so it cannot run on a machine that holds

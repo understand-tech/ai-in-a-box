@@ -971,6 +971,22 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
         "a node reached over plain http is refused before anything is written" \
         "sed -i.bak 's|\\^https://\\[\\^/\\]+|^https?://[^/]+|' ut-install"
 
+    install_walk_discriminates "a control plane with a GPU stripped of it" \
+        "a control plane with a GPU keeps it for llm and starts no engine" \
+        "sed -i.bak 's|\\[\\[ -n \"\\\$INFERENCE_FROM\" \\]\\] \\&\\& ! an_accelerator_answers|[[ -n \"\$INFERENCE_FROM\" ]]|' ut-install"
+
+    install_walk_discriminates "a control plane without a GPU asking for one" \
+        "a control plane without a GPU is installed as with --no-gpu" \
+        "sed -i.bak 's|^    \\[\\[ -n \"\\\$INFERENCE_FROM\" \\]\\] \\&\\& ! an_accelerator_answers\$|    false|' ut-install"
+
+    install_walk_discriminates "a role read from the overlay rather than from where generation comes from" \
+        "the summary says where generation comes from" \
+        "sed -i.bak 's|printf .control plane — generation comes from %s.|printf \"appliance — inference runs on this machine\"|' ut-install"
+
+    install_walk_discriminates "a machine without a GPU left to find out its documents get no answer" \
+        "a machine without a GPU is told its documents get no answer" \
+        "sed -i.bak '/chats over documents answer nothing on this machine/d' ut-install"
+
     install_walk_discriminates "a clock nothing compares to anything" \
         "the preflight stops rather than issue certificates nothing will accept" \
         "sed -i.bak 's|^release_declares() {\$|release_declares() { return 1;|' ut-install"

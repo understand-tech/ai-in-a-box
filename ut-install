@@ -129,7 +129,9 @@ Options
   --inference-from URL, --inference-key-file PATH, --inference-ca-file PATH
                        Take the inference from a compute node: its address
                        (https://<node>:8444), its VLLM_API_KEY and its Caddy
-                       root, as its own install printed them. Implies --no-gpu.
+                       root, as its own install printed them. No engine starts
+                       here; a GPU, when there is one, stays with llm, which
+                       searches the documents. Without one, as --no-gpu.
   --health-timeout N   Seconds to wait for services (default: 3600).
   --reporting yes|no   Whether this machine sends its usage reports to
                        UnderstandTech (docs/usage-report.md says what they hold).
@@ -243,6 +245,7 @@ appbuilder_enabled() {
 # before calling this.
 the_inference_is_served_by_another_machine() {
     $NO_GPU && return 0
+    [[ -n "$INFERENCE_FROM" ]] && return 0
     [[ "$(env_get "$INSTALL_DIR/.env" COMPOSE_FILE 2>/dev/null || true)" == *no-gpu* ]]
 }
 
@@ -250,15 +253,24 @@ the_inference_is_served_by_another_machine() {
 # died and a machine that never had an accelerator leave the same trace, and the
 # first one is a failure nobody would look for.
 role_this_machine_was_installed_as() {
-    if ! the_inference_is_served_by_another_machine; then
-        printf 'appliance — inference runs on this machine'
-    elif the_inference_url_names_a_service_this_machine_will_not_run; then
+    if ! the_inference_url_names_a_service_this_machine_will_not_run; then
+        printf 'control plane — generation comes from %s' \
+            "$(env_get "$INSTALL_DIR/.env" VLLM_LLM_BASE_URL 2>/dev/null)"
+    elif the_inference_is_served_by_another_machine; then
         printf 'control plane — and nothing serves it yet: VLLM_LLM_BASE_URL still names %s' \
             "${INTERNAL_INFERENCE_HOST:-no host at all}"
     else
-        printf 'control plane — generates nothing here, inference comes from %s' \
-            "$(env_get "$INSTALL_DIR/.env" VLLM_LLM_BASE_URL 2>/dev/null)"
+        printf 'appliance — inference runs on this machine'
     fi
+}
+
+an_accelerator_answers() {
+    command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1
+}
+
+this_machine_goes_without_its_accelerator() {
+    $NO_GPU && return 0
+    [[ -n "$INFERENCE_FROM" ]] && ! an_accelerator_answers
 }
 
 checkout_exists() { [[ -d "$INSTALL_DIR/.git" ]]; }
@@ -357,7 +369,7 @@ preflight() {
         blocking=1
     fi
 
-    if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+    if an_accelerator_answers; then
         log_info "GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"
         if nvidia_runtime_registered; then
             log_info "GPU reachable from containers through the nvidia runtime"
@@ -908,6 +920,10 @@ write_the_settings_a_machine_without_an_accelerator_needs() {
     fi
 
     log_info "Inference left to another machine: no engine is started here"
+    # ut-llm loads a CUDA build of llama.cpp when it starts, so without the
+    # accelerator it does not run at all, and nothing answers over documents.
+    log_warn "No accelerator for llm either: chats over documents answer nothing on this machine."
+    log_warn "  Give it a GPU and install without --no-gpu to have them."
 
     if the_inference_url_names_a_service_this_machine_will_not_run; then
         log_warn "VLLM_LLM_BASE_URL still names ${INTERNAL_INFERENCE_HOST}, an engine this"
@@ -977,6 +993,15 @@ write_the_settings_a_compute_node_needs() {
         *) env_set "$local_file" COMPOSE_FILE "${compose_files}:compose.remote-inference.yaml" ;;
     esac
     log_info "Inference from ${INFERENCE_FROM}, with its key, trusting its root"
+}
+
+write_the_settings_a_control_plane_with_an_accelerator_needs() {
+    local local_file=$1
+    if [[ "$(env_get "$local_file" COMPOSE_PROFILES 2>/dev/null || true)" != "" ]] \
+        || [[ -n "$(release_declares COMPOSE_PROFILES || true)" ]]; then
+        env_set "$local_file" COMPOSE_PROFILES ""
+    fi
+    log_info "No engine started here; the GPU stays with llm, which searches the documents"
 }
 
 BACKUP_DESTINATION_MARKER=".understandtech-backup-destination"
@@ -1236,7 +1261,11 @@ step_configure() {
     fi
 
     write_the_settings_a_compute_node_needs "$local_file"
-    $NO_GPU && write_the_settings_a_machine_without_an_accelerator_needs "$local_file"
+    if this_machine_goes_without_its_accelerator; then
+        write_the_settings_a_machine_without_an_accelerator_needs "$local_file"
+    elif [[ -n "$INFERENCE_FROM" ]]; then
+        write_the_settings_a_control_plane_with_an_accelerator_needs "$local_file"
+    fi
     die_on_two_backup_destinations "$local_file"
     write_the_settings_a_backup_destination_needs "$local_file"
     write_the_settings_a_backup_over_the_network_needs "$local_file"
@@ -1750,7 +1779,7 @@ parse_arguments() {
             --reporting-token-file)    REPORTING_TOKEN_FILE="${2:?--reporting-token-file needs a path}"; shift ;;
             --reporting-receiver-cert) REPORTING_RECEIVER_CERT="${2:?--reporting-receiver-cert needs a path}"; shift ;;
             --reporting-every)         REPORTING_EVERY="${2:?--reporting-every needs minutes}"; shift ;;
-            --inference-from)     INFERENCE_FROM="${2:?--inference-from needs an address}"; NO_GPU=true; shift ;;
+            --inference-from)     INFERENCE_FROM="${2:?--inference-from needs an address}"; shift ;;
             --inference-key-file) INFERENCE_KEY_FILE="${2:?--inference-key-file needs a path}"; shift ;;
             --inference-ca-file)  INFERENCE_CA_FILE="${2:?--inference-ca-file needs a path}"; shift ;;
             -h|--help)        usage; exit 0 ;;
