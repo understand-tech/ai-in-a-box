@@ -191,6 +191,9 @@ state_setup() {
         # What every release before the engine had a key shipped, carried into local.env.
         engine_key_left_empty)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'VLLM_API_KEY="EMPTY"\n'"'"' > /etc/understandtech/local.env' ;;
+        # A checkout that set its origins in full, on the address it had then.
+        origins_on_an_old_domain)
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'UT_DOMAIN="old.example"\nEXTRA_ALLOWED_ORIGINS="https://admin.old.example,https://llms.old.example,https://old.example"\n'"'"' > /etc/understandtech/local.env' ;;
         no_accelerator_pointed_at_a_real_machine)
             echo 'rm -f /stub/nvidia-smi && install -d -m 750 /etc/understandtech && printf '"'"'VLLM_LLM_BASE_URL="https://inference.example.test/v1"\n'"'"' > /etc/understandtech/local.env' ;;
         # A release dated in the future is the same arithmetic as a clock in the
@@ -433,6 +436,14 @@ a_compute_node_over_http_is_refused() {
     grep -q 'must be an https address' <<< "$output" && ! grep -q '^EXIT=0$' <<< "$output" \
         && [[ ! -s "$WORK_DIR/compute_node_over_http/local-env" ]] && return 0
     echo "$output" | tail -5
+    return 1
+}
+
+the_allowed_origins_follow_the_domain() {
+    local settings
+    settings=$(cat "$WORK_DIR/origins_on_an_old_domain/local-env" 2>/dev/null)
+    grep -qx 'EXTRA_ALLOWED_ORIGINS="https://admin.box.example.test,https://llms.box.example.test,https://box.example.test"' <<< "$settings" && return 0
+    grep -E '^(UT_DOMAIN|EXTRA_ALLOWED_ORIGINS)=' <<< "$settings"
     return 1
 }
 
@@ -865,6 +876,7 @@ INSTALL_TOKEN= INSTALL_COMMAND=/srv/clone/ut-install \
 run_install_from_state empty_settings
 run_install_from_state openai_key_given
 run_install_from_state engine_key_left_empty
+run_install_from_state origins_on_an_old_domain
 WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --inference-from https://node.example.test:8444 --inference-key-file /w/compute/key --inference-ca-file /w/compute/root.crt" \
     run_install_from_state pointed_at_a_compute_node
 WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --inference-from http://node.example.test:8444 --inference-key-file /w/compute/key --inference-ca-file /w/compute/root.crt" \
@@ -923,6 +935,8 @@ property "an OpenAI key already given is never replaced" \
 
 property "the engine gets a key of its own" \
     the_engine_gets_a_key_of_its_own bare
+property "the allowed origins follow the address when it changes" \
+    the_allowed_origins_follow_the_domain
 property "an engine key an older release left as EMPTY is replaced" \
     the_engine_gets_a_key_of_its_own engine_key_left_empty
 

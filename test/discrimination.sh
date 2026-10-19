@@ -939,6 +939,10 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
         "an OpenAI key already given is never replaced" \
         "sed -i.bak '/^    \\[\\[ -n \"\\\$(env_get \"\\\$env_file\" OA_KEY/d' ut-install"
 
+    install_walk_discriminates "allowed origins left on the old address" \
+        "the allowed origins follow the address when it changes" \
+        "sed -i.bak '/^        move_the_allowed_origins_to_the_new_domain /d' ut-install"
+
     install_walk_discriminates "an engine key nobody generates" \
         "the engine gets a key of its own" \
         "sed -i.bak 's| VLLM_API_KEY)|)|' ut-install"
