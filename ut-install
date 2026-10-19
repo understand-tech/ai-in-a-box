@@ -1221,6 +1221,21 @@ render_settings() {
     rm -f "$tmp"
 }
 
+# compose.yaml derives the allowed origins from UT_DOMAIN unless they are set,
+# and an install taken from a checkout often carries them set. Left on the old
+# domain, the API refuses to hand a session to any satellite app.
+move_the_allowed_origins_to_the_new_domain() {
+    local local_file=$1 previous=$2 origins moved
+    [[ -n "$previous" ]] || return 0
+    origins=$(env_get "$local_file" EXTRA_ALLOWED_ORIGINS 2>/dev/null || true)
+    [[ -n "$origins" ]] || return 0
+    moved=${origins//.${previous}/.${DOMAIN}}
+    moved=${moved//\/\/${previous}/\/\/${DOMAIN}}
+    [[ "$moved" != "$origins" ]] || return 0
+    env_set "$local_file" EXTRA_ALLOWED_ORIGINS "$moved"
+    log_info "Allowed origins moved from ${previous} to ${DOMAIN}"
+}
+
 step_configure() {
     log_step "Writing the configuration"
 
@@ -1237,9 +1252,12 @@ step_configure() {
     fi
     migrate_existing_settings_into_local "$source_settings" "$local_file"
 
-    if [[ "$(env_get "$local_file" UT_DOMAIN || true)" != "$DOMAIN" ]]; then
+    local previous_domain
+    previous_domain=$(env_get "$local_file" UT_DOMAIN || true)
+    if [[ "$previous_domain" != "$DOMAIN" ]]; then
         env_set "$local_file" UT_DOMAIN "$DOMAIN"
         log_info "Address set to ${DOMAIN} — every other URL derives from it"
+        move_the_allowed_origins_to_the_new_domain "$local_file" "$previous_domain"
     fi
 
     write_the_settings_a_compute_node_needs "$local_file"
