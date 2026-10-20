@@ -2317,9 +2317,21 @@ sftp_server_ready() {
     return 1
 }
 
+# The image comes from lscr.io, pulled on the spot: a pull that fails once is
+# the registry's hiccup, not the capability's verdict.
+pull_with_retries() {
+    local image=$1 attempt
+    for attempt in 1 2 3; do
+        docker image inspect "$image" >/dev/null 2>&1 && return 0
+        docker pull -q "$image" >/dev/null && return 0
+        sleep $(( attempt * 5 ))
+    done
+    docker pull "$image"
+}
+
 the_sftp_destination_has_to_prove_who_it_is() {
     command -v jq >/dev/null || { echo "jq absent"; return 1; }
-    local run=cap-sftp-$$ net server ssh_dir="$WORK_DIR/sftp-ssh" source="$WORK_DIR/sftp-source" scanned="" attempt output verdict=1
+    local run=cap-sftp-$$ net server ssh_dir="$WORK_DIR/sftp-ssh" source="$WORK_DIR/sftp-source" scanned="" attempt output started verdict=1
     local repository
     net=$run-net; server=$run-server
     repository="sftp://backup@${server}:2222/backups"
@@ -2331,12 +2343,11 @@ the_sftp_destination_has_to_prove_who_it_is() {
         -q -t ed25519 -N '' -f /k/id_ed25519 -C capability >/dev/null 2>&1
     docker run --rm -v "$WORK_DIR":/w --entrypoint ssh-keygen "$RESTIC_IMAGE" \
         -q -t ed25519 -N '' -f /w/impostor -C impostor >/dev/null 2>&1
-    docker run -d --name "$server" --network "$net" -e USER_NAME=backup \
-        -e PUBLIC_KEY="$(cat "$ssh_dir/id_ed25519.pub")" "$SFTP_SERVER_IMAGE" >/dev/null 2>&1
-
-    scanned=$(sftp_server_ready "$server" "$net" "$ssh_dir")
-
-    if [[ -n "$scanned" ]]; then
+    if ! started=$(pull_with_retries "$SFTP_SERVER_IMAGE" 2>&1 \
+            && docker run -d --name "$server" --network "$net" -e USER_NAME=backup \
+                -e PUBLIC_KEY="$(cat "$ssh_dir/id_ed25519.pub")" "$SFTP_SERVER_IMAGE" 2>&1); then
+        echo "the SFTP server could not be started: $(tail -2 <<< "$started" | tr '\n' ' ')"
+    elif scanned=$(sftp_server_ready "$server" "$net" "$ssh_dir"); [[ -n "$scanned" ]]; then
         printf '[%s]:2222 %s\n' "$server" "$(cut -d' ' -f1,2 "$WORK_DIR/impostor.pub")" | pin_host_keys "$ssh_dir"
         if output=$(backup_over_sftp "$source" "$ssh_dir" "$repository" "$net"); then
             echo "a host whose key was not the pinned one was trusted"
