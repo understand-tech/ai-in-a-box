@@ -324,6 +324,14 @@ func servedModels(run Runner, id string) []string {
 	return models
 }
 
+func environment(run Runner, id, name string) *string {
+	value, err := run("", "docker", "exec", id, "printenv", name)
+	if err != nil || strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return optional(strings.TrimSpace(value))
+}
+
 func engines(run Runner, rows []container, held map[string]int64, warnings *[]string) []Engine {
 	found := []Engine{}
 	var names []string
@@ -345,18 +353,22 @@ func engines(run Runner, rows []container, held map[string]int64, warnings *[]st
 			*warnings = append(*warnings, "health-unreadable:engine:"+service)
 		}
 		engine := Engine{Service: service, ServedModels: models}
-		if declared, err := run("", "docker", "exec", id, "printenv", "NIM_SERVED_MODEL_NAME"); err == nil && strings.TrimSpace(declared) != "" {
-			engine.DeclaredModel = optional(strings.TrimSpace(declared))
-		}
 		if metrics, err := run("", "docker", "exec", id, "curl", "-sf", "--max-time", "5", fmt.Sprintf("http://127.0.0.1:%d/metrics", enginePort)); err == nil {
 			engine.Requests = metricSum(metrics, "vllm:request_success_total")
 		}
 		if amount, ok := held[id]; ok {
 			engine.GPUMemoryBytes = optional(amount)
 		}
-		weights, _ := run("", "docker", "exec", id, "sh", "-c",
-			`grep -m1 "^model:" "$NIM_CACHE_PATH/nim_runtime_manifest.yaml"; printenv NIM_MODEL_PATH`)
-		engine.CachedModel, engine.ModelPath = loadedWeights(weights)
+		// compose.engine-vllm.yaml keeps the NIM settings of the service it
+		// replaces: on a vLLM engine they name a model that does not run.
+		if model := environment(run, id, "VLLM_ENGINE_MODEL"); model != nil {
+			engine.DeclaredModel = model
+		} else {
+			engine.DeclaredModel = environment(run, id, "NIM_SERVED_MODEL_NAME")
+			weights, _ := run("", "docker", "exec", id, "sh", "-c",
+				`grep -m1 "^model:" "$NIM_CACHE_PATH/nim_runtime_manifest.yaml"; printenv NIM_MODEL_PATH`)
+			engine.CachedModel, engine.ModelPath = loadedWeights(weights)
+		}
 		found = append(found, engine)
 	}
 	return found
