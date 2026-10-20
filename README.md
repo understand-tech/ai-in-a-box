@@ -24,7 +24,8 @@ Per-container detail — ports, volumes, how to act on a service:
 - Docker Engine 24.0+ with Compose V2, 250 GB free, 24 GB of RAM.
 - NVIDIA Container Toolkit (pre-installed on DGX).
 - `avahi-daemon` and `avahi-utils`, for a `.local` address only.
-- A license key, provided by UnderstandTech. It carries the access to the
+- A license key, provided by UnderstandTech, and access to `https://api.keygen.sh` on the
+  first install, to bind it to the machine. It carries the access to the
   `ghcr.io` registry, which covers the NVIDIA NIM inference containers too — they are re-hosted on the
   UnderstandTech registry, so **no NVIDIA NGC account or API key is required on
   the box**.

@@ -27,16 +27,17 @@ programs_that_write_their_arguments_down() {
 
 signed_machine_file() {
     local signing_key=$1 out=$2 fingerprint=$3 issued_in=$4 expires_in=$5 license_ends_in=$6 status=$7 registry=${8:-}
-    local enc
+    local metadata_file=${9:-} enc metadata=null
+    [[ -z "$metadata_file" ]] || metadata=$(cat "$metadata_file")
     jq -n --arg fingerprint "$fingerprint" --argjson issued_in "$issued_in" --argjson expires_in "$expires_in" \
         --argjson license_ends_in "$license_ends_in" --arg status "$status" --arg registry "$registry" \
-        --arg token "$KEYGEN_TEST_TOKEN" --arg user "$KEYGEN_TEST_USER" '
+        --arg token "$KEYGEN_TEST_TOKEN" --arg user "$KEYGEN_TEST_USER" --argjson metadata "$metadata" '
         def stamp: todate | sub("Z$"; ".000Z");
         {data: {type: "machines", id: "machine-1", attributes: {fingerprint: $fingerprint}},
          included: [{type: "licenses", id: "license-1", attributes: {
              name: "Test box", status: $status, expiry: ((now + $license_ends_in) | stamp),
-             metadata: ({customer: "Test Customer", registryUser: $user, registryToken: $token}
-                        + (if $registry == "" then {} else {registry: $registry} end))}}],
+             metadata: ($metadata // ({customer: "Test Customer", registryUser: $user, registryToken: $token}
+                                     + (if $registry == "" then {} else {registry: $registry} end)))}}],
          meta: {issued: ((now + $issued_in) | stamp), expiry: ((now + $expires_in) | stamp), ttl: 31556952}}' \
         > "$out.json"
     enc=$(openssl base64 -A < "$out.json")
