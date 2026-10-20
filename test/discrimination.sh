@@ -618,7 +618,7 @@ if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
 
     capability_discriminates "a dependency nobody calls" \
         "every dependency it declares" \
-        "sed -i.bak 's|^Depends: openssl|Depends: curl, openssl|' packaging/build-deb.sh"
+        "sed -i.bak 's|^Depends: openssl|Depends: rsync, openssl|' packaging/build-deb.sh"
 
     capability_discriminates "a package that never builds, compared with itself" \
         "the same tree builds the same bytes twice" \
