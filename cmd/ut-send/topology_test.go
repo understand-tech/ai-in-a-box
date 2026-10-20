@@ -55,8 +55,17 @@ func TestAControlPlaneSendsTheRootOfTheComputeBoxItTrusts(t *testing.T) {
 	public, _ := rootCertificate(t)
 	node, fingerprint := rootCertificate(t)
 	answers := stackAnswering("/usr/share/understandtech/compose.yaml,/usr/share/understandtech/compose.remote-inference.yaml",
-		map[string]string{"docker exec aaaa cat /etc/understandtech/inference-ca-bundle.pem": public + node})
+		map[string]string{"docker exec aaaa cat /etc/understandtech/inference-ca-bundle.pem": public + node,
+			"cat /etc/ssl/certs/ca-certificates.crt": public})
 	checkTopology(t, answers, "control-plane", []string{fingerprint}, []string{})
+}
+
+func TestABundleThatLostTheNodesRootSendsNoPublicRootInItsPlace(t *testing.T) {
+	public, _ := rootCertificate(t)
+	answers := stackAnswering("/usr/share/understandtech/compose.yaml,/usr/share/understandtech/compose.remote-inference.yaml",
+		map[string]string{"docker exec aaaa cat /etc/understandtech/inference-ca-bundle.pem": public,
+			"cat /etc/ssl/certs/ca-certificates.crt": public})
+	checkTopology(t, answers, "control-plane", []string{}, []string{"topology-unreadable:inference-root"})
 }
 
 func TestABoxThatServesItselfHasNoInferenceLink(t *testing.T) {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
@@ -12,6 +13,7 @@ const (
 	configFilesFormat = `{{index .Config.Labels "com.docker.compose.project.config_files"}}`
 	caddyRoot         = "/data/caddy/pki/authorities/local/root.crt"
 	inferenceBundle   = "/etc/understandtech/inference-ca-bundle.pem"
+	hostRoots         = "/etc/ssl/certs/ca-certificates.crt"
 )
 
 // What the box is in a deployment, and the root certificates of its inference
@@ -52,6 +54,22 @@ func certificateFingerprint(certificate *x509.Certificate) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// A bundle that lost the node's root ends with a public one, which every
+// control plane shares and would pair boxes that have nothing to do together.
+func (m machine) isPublicRoot(root *x509.Certificate) bool {
+	public, _ := m.run("", "cat", hostRoots)
+	for rest := []byte(public); ; {
+		block, remaining := pem.Decode(rest)
+		if block == nil {
+			return false
+		}
+		if bytes.Equal(block.Bytes, root.Raw) {
+			return true
+		}
+		rest = remaining
+	}
+}
+
 func (m machine) inferenceRoot(rows []container, configFiles string) (root *x509.Certificate, linked bool) {
 	switch {
 	case strings.Contains(configFiles, "compose.compute.yaml"):
@@ -64,6 +82,9 @@ func (m machine) inferenceRoot(rows []container, configFiles string) (root *x509
 		if api := runningContainer(rows, "api"); api != "" {
 			content, _ := m.run("", "docker", "exec", api, "cat", inferenceBundle)
 			root = lastCertificate(content)
+		}
+		if root != nil && m.isPublicRoot(root) {
+			root = nil
 		}
 		return root, true
 	}
