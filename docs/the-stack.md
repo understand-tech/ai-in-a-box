@@ -31,7 +31,7 @@ follows `COMPOSE_PROJECT_NAME`.
 | `app-assistants` | `ut-app-assistants` | — | Assistant builder, at `assistants.<UT_DOMAIN>` |
 | `admin-portal` | `ut-admin-portal` | — | Tenant and user administration, at `admin.<UT_DOMAIN>` |
 | `llm` | `understandtech-llm-*` | — | RAG, embeddings and reranking on GPU, `:8000` internal |
-| `nim-llm` | `understandtech-nim-llm-*` | 127.0.0.1:8001 | NVIDIA NIM serving the chat model (profile `nim`) |
+| `nim-llm` | `understandtech-nim-llm-*` | — | NVIDIA NIM serving the chat model (profile `nim`), `:8000` internal |
 | `metrics` | `ut-metrics` | — | Records how loaded the engine is, how long users wait for it, and what each surface of the front door answered and how long it took, 35 days or 1 GB, whichever comes first. Runs in every role: a machine without a GPU still records its gateway and front door |
 | `mongodb` | `ut-mongodb` | — | Document database |
 | `redis` | `ut-redis` | — | Task queue and cache |

@@ -381,6 +381,10 @@ capability_discriminates "a compute node that opens its engine port to the netwo
     "a compute node lets other machines reach its engine only with its key" \
     "printf '  nim-llm:\\n    ports: !override\\n      - \"0.0.0.0:8001:8000\"\\n' >> compose.compute.yaml"
 
+capability_discriminates "an engine port declared again, which Docker never publishes" \
+    "a model on vLLM runs in place of NIM, with the same GPU and cache, and no port of its own" \
+    "sed -i.bak 's|^    # No ports: Docker publishes none for a container on internal networks only.\$|    ports:\\n      - \"127.0.0.1:8001:8000\"|' compose.yaml"
+
 capability_discriminates "a compute node that starts without an engine key" \
     "a compute node lets other machines reach its engine only with its key" \
     "sed -i.bak 's|VLLM_API_KEY: \${VLLM_API_KEY:?ut-install generates it}|VLLM_API_KEY: \${VLLM_API_KEY:-}|' compose.compute.yaml"
@@ -390,7 +394,7 @@ capability_discriminates "the arguments of a vLLM model passed as one" \
     "sed -i.bak 's|--port 8000 \\\$\\\$VLLM_ENGINE_ARGS|--port 8000 \\\\\"\$\$VLLM_ENGINE_ARGS\\\\\"|' compose.engine-vllm.yaml"
 
 capability_discriminates "a vLLM engine checked where NIM answers" \
-    "a model on vLLM runs in place of NIM, with the same GPU, port and cache" \
+    "a model on vLLM runs in place of NIM, with the same GPU and cache, and no port of its own" \
     "sed -i.bak '/localhost:8000\\/health/d; /^    healthcheck:\$/d' compose.engine-vllm.yaml"
 
 capability_discriminates "a caller of the compute node left on the public roots" \

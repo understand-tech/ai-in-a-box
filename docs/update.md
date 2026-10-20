@@ -174,6 +174,13 @@ Caddy, which does.
 the local authority, every already-paired browser sees a new fingerprint and
 warns again. That switch is a deliberate act, never part of an update.
 
+**The engine no longer declares a host port.** `127.0.0.1:8001` was declared but
+never answered: Docker publishes no port for a container that sits on internal
+networks only, as the engine does. Query it with `docker compose exec nim-llm
+curl -s localhost:8000/v1/models`, or from another machine through a compute
+node's surface. A `NIM_LLM_BIND_ADDRESS` or `NIM_LLM_HOST_PORT` left in
+`local.env` is now ignored.
+
 ## If the update goes wrong
 
 Nothing is rolled back and nothing is lost: re-running the same command resumes.

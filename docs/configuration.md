@@ -477,8 +477,12 @@ UT_INFERENCE_ADDRESS="10.42.0.7"
 by; the certificate is issued for it. `UT_INFERENCE_BIND_ADDRESS` narrows the
 interfaces port 8444 listens on, `UT_INFERENCE_PORT` moves it.
 
-Do not set `NIM_LLM_BIND_ADDRESS` to anything but loopback: the engine's own port
-checks no key.
+The engine publishes no port on the host: it checks no key, and reaches other
+machines only through that surface. To query it on the machine itself:
+
+```bash
+docker compose exec nim-llm curl -s localhost:8000/v1/models
+```
 
 ## What to check after editing
 

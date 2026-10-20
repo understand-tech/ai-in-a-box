@@ -1547,8 +1547,8 @@ the_compute_engine_is_reached_only_through_its_key() {
         || { echo "the compute node publishes no inference surface"; return 1; }
     engine=$(COMPOSE_PROFILES=nim VLLM_API_KEY=k compose_config -f compose.yaml -f compose.compute.yaml \
         | awk '/^  nim-llm:/ { on = 1; next } on && /^  [a-z]/ { on = 0 } on')
-    grep -q 'host_ip: 127.0.0.1' <<< "$engine" && return 0
-    echo "the engine's own port is not held on loopback on a compute node:"
+    grep -q '^    ports:' <<< "$engine" || return 0
+    echo "the engine publishes a port of its own on a compute node, which checks no key:"
     grep -A6 'ports:' <<< "$engine"
     return 1
 }
@@ -1580,7 +1580,7 @@ rendered_vllm_engine() {
         docker compose -f compose.yaml -f compose.engine-vllm.yaml config --format json 2>/dev/null )
 }
 
-# The engine keeps everything a box reads it by: name, GPU, loopback port, cache.
+# The engine keeps everything a box reads it by: name, GPU, cache, and no port of its own.
 a_model_on_vllm_runs_in_place_of_nim() {
     command -v jq >/dev/null || { echo "jq absent"; return 1; }
     local engine
@@ -1590,7 +1590,7 @@ a_model_on_vllm_runs_in_place_of_nim() {
         and (.entrypoint | join(" ") | test("vllm serve"))
         and (.healthcheck.test | join(" ") | test("localhost:8000/health"))
         and any(.deploy.resources.reservations.devices[]?; .driver == "nvidia")
-        and any(.ports[]?; .host_ip == "127.0.0.1" and .target == 8000)
+        and ((.ports // []) | length) == 0
         and any(.volumes[]?; .target == "/opt/nim/.cache")' <<< "$engine" >/dev/null && return 0
     echo "the vLLM engine renders as: $(jq -c '{image, entrypoint, healthcheck: .healthcheck.test, ports}' <<< "$engine" 2>/dev/null)"
     return 1
@@ -2427,7 +2427,7 @@ if [[ -f "$REPO_ROOT/compose.compute.yaml" ]]; then
         the_compute_engine_is_reached_only_through_its_key
     capability "every service that calls a compute node trusts its root" \
         every_engine_caller_trusts_the_compute_node
-    capability "a model on vLLM runs in place of NIM, with the same GPU, port and cache" \
+    capability "a model on vLLM runs in place of NIM, with the same GPU and cache, and no port of its own" \
         a_model_on_vllm_runs_in_place_of_nim
     capability "each argument of the model reaches vLLM whole, JSON included" \
         each_argument_reaches_vllm_intact
