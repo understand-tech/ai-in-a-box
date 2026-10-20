@@ -194,6 +194,25 @@ a_compute_node_publishes_none_of_the_platform_s_names() {
     grep -q '^EXIT=0$' <<< "$report" || { echo "$report"; return 1; }
 }
 
+# The platform's names on a compute node would send an operator to create DNS
+# records for satellites that machine never serves.
+a_compute_node_asks_only_for_its_inference_name() {
+    local report
+    report=$(docker run --rm -i -v "$REPO_ROOT":/src:ro "$BASH_IMAGE" bash -s 2>&1 <<'PROBE'
+mkdir -p /fix /stub
+cp /src/compose.yaml /src/compose.compute.yaml /fix/ && cp -r /src/caddy /fix/
+printf 'UT_DOMAIN="compute.example.com"\nCOMPOSE_FILE="compose.yaml:compose.compute.yaml"\nUT_INFERENCE_ADDRESS="inference.example.com"\n' > /fix/.env
+printf '#!/bin/sh\nexit 0\n' > /stub/docker
+printf '#!/bin/sh\nexit 0\n' > /stub/systemctl
+chmod +x /stub/docker /stub/systemctl
+PATH=/stub:$PATH bash /src/setup-autostart.sh --install --dir /fix 2>&1
+PROBE
+)
+    grep -qF 'https://inference.example.com:8444' <<< "$report" && ! grep -q 'llms\.compute' <<< "$report" && return 0
+    grep -E 'compute node|llms|8444|ERROR' <<< "$report" | head -5
+    return 1
+}
+
 moving_off_local_withdraws_the_publisher() {
     local report
     report=$(installing_mdns_reports box.example.com yes)
@@ -2230,6 +2249,8 @@ if [[ -f "$REPO_ROOT/setup-autostart.sh" ]]; then
         a_local_domain_publishes_over_mdns
     capability "a compute node on .local publishes none of the platform's names" \
         a_compute_node_publishes_none_of_the_platform_s_names
+    capability "a compute node asks for no DNS record but its inference name" \
+        a_compute_node_asks_only_for_its_inference_name
     capability "moving off .local withdraws a publisher installed earlier" \
         moving_off_local_withdraws_the_publisher
 fi

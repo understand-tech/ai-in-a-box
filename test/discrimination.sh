@@ -524,6 +524,10 @@ if grep -q 'mdns_applies' "$REPO_ROOT/setup-autostart.sh"; then
         "a compute node on .local publishes none of the platform's names" \
         "sed -i.bak 's|^    if this_machine_is_a_compute_node; then\$|    if false; then|' setup-autostart.sh"
 
+    capability_discriminates "a compute node asking for the platform's DNS records" \
+        "a compute node asks for no DNS record but its inference name" \
+        "sed -i.bak 's|^    if this_machine_is_a_compute_node; then\$|    if false; then|' setup-autostart.sh"
+
     capability_discriminates "a stale publisher left enabled after the move" \
         "moving off .local withdraws a publisher installed earlier" \
         "sed -i.bak 's|^        withdraw_mdns_publisher$|        :|' setup-autostart.sh"
