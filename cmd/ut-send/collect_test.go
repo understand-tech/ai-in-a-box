@@ -208,7 +208,7 @@ func TestNothingIsCollectedWithoutAYes(t *testing.T) {
 func TestAComputeNodeHasNoFrontDoorCertificateToMiss(t *testing.T) {
 	answers := map[string]string{
 		"docker ps -aq --filter label=com.docker.compose.project=understandtech": "ffff\ngggg\n",
-		"docker inspect": "nim-llm running healthy 0 false ffff\ncaddy running healthy 0 false gggg\n",
+		"docker inspect":                      "nim-llm running healthy 0 false ffff\ncaddy running healthy 0 false gggg\n",
 		"docker exec gggg printenv UT_DOMAIN": "compute-56.example.test\n",
 		"docker exec ffff curl -sf --max-time 5 http://127.0.0.1:8000/v1/models": `{"data": [{"id": "nemotron"}]}`,
 	}
