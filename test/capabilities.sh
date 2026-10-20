@@ -10,6 +10,7 @@ WORK_DIR="$(mktemp -d)"
 # The restic and step-ca containers run as root and write into WORK_DIR, so the
 # shell that created it cannot remove what they left.
 cleanup() {
+    [[ -s "$WORK_DIR/license/image" ]] && docker image rm "$(cat "$WORK_DIR/license/image")" >/dev/null 2>&1
     docker run --rm -v "$WORK_DIR":/w "$ALPINE_IMAGE" sh -c 'rm -rf /w/..?* /w/.[!.]* /w/*' >/dev/null 2>&1
     rm -rf "$WORK_DIR"
 }
@@ -767,12 +768,12 @@ removing_the_package_leaves_the_settings_and_the_data() {
 shipped_commands() {
     printf '%s\n' "$REPO_ROOT/ut-install" "$REPO_ROOT/ut-certificate" \
         "$REPO_ROOT/ut-logs-archive" "$REPO_ROOT/setup-autostart.sh" \
-        "$REPO_ROOT/backup-files.sh"
+        "$REPO_ROOT/backup-files.sh" "$REPO_ROOT/ut-license"
 }
 
 declared_dependencies() {
     grep -m1 '^Depends:' "$REPO_ROOT/packaging/build-deb.sh" \
-        | sed 's/^Depends: //' | tr ',' '\n' | tr -d ' ' | grep -v '^$'
+        | sed 's/^Depends: //; s/([^)]*)//g' | tr ',' '\n' | tr -d ' ' | grep -v '^$'
 }
 
 every_declared_dependency_is_really_used() {
@@ -1122,14 +1123,14 @@ the_launcher_carries_the_key_ut_verify_carries() {
     return 1
 }
 
-# A license key is what a customer types to get the product and its images, so
-# like the package it is only worth what it refuses — and it carries a registry
-# token that must never come back out on a screen or in a log.
+# A license file is what lets a box pull the release, so like the package it is
+# only worth what it refuses — and its license carries a registry token that
+# must never come back out on a screen, in a log or on a command line.
 LICENSE_TEST_TOKEN=ghp_licenseTestTokenNeverPrinted0001
 
 # GitHub and ghcr stand-ins on the loopback, one scenario per path prefix:
 # good, broad (more than read:packages), forever (no end), short (ends before
-# the license), blind (cannot pull), refused (401). Each answers only when it is
+# the license), long (outlives any license), blind (cannot pull), refused (401). Each answers only when it is
 # sent the credential the real one would expect.
 start_a_fake_github() {
     local work=$1 next_year=$2
@@ -1159,7 +1160,7 @@ class Answer(http.server.BaseHTTPRequestHandler):
                 return self.answer(401)
             headers = [("X-OAuth-Scopes", "read:packages, repo" if scenario == "broad" else "read:packages")]
             if scenario != "forever":
-                end = f"{year}-01-01" if scenario == "short" else f"{year + 1}-12-31"
+                end = {"short": f"{year}-01-01", "long": "9999-12-31"}.get(scenario, f"{year + 1}-12-31")
                 headers.append(("GitHub-Authentication-Token-Expiration", end + " 00:00:00 UTC"))
             return self.answer(200, headers)
         if rest.startswith("token"):
@@ -1197,65 +1198,43 @@ FAKE
 issued_against() {
     local scenario=$1; shift
     UT_GITHUB_API="$FAKE_GITHUB/$scenario" UT_GHCR="$FAKE_GITHUB/$scenario" UT_REGISTRY_URL="$FAKE_GITHUB/$scenario" \
-        "$REPO_ROOT/packaging/issue-license.sh" --ledger "$WORK_DIR/license/ledger.tsv" "$@"
+        "$REPO_ROOT/packaging/issue-license.sh" --ledger "$WORK_DIR/issuance/ledger.tsv" "$@"
 }
 
-license_verdicts() {
-    local work="$WORK_DIR/license"
+payload_field_of() {
+    cut -d. -f2 "$1" 2>/dev/null | openssl base64 -d -A 2>/dev/null | sed -n "s/^$2=//p"
+}
+
+issuance_verdicts() {
+    local work="$WORK_DIR/issuance"
     mkdir -p "$work"
     if [[ ! -s "$work/verdicts.txt" ]]; then
-        openssl ecparam -name prime256v1 -genkey -noout -out "$work/license.key" 2>/dev/null
-        openssl ec -in "$work/license.key" -pubout -out "$work/license.pub" 2>/dev/null
-        openssl ecparam -name prime256v1 -genkey -noout -out "$work/other.key" 2>/dev/null
+        openssl ecparam -name prime256v1 -genkey -noout -out "$work/signing.key" 2>/dev/null
         printf '%s\n' "$LICENSE_TEST_TOKEN" > "$work/token"
 
-        python3 - "$REPO_ROOT/ut-license" "$work/license.pub" "$work/ut-license" <<'SWAP'
-import pathlib, re, sys
-original, pub, out = (pathlib.Path(a) for a in sys.argv[1:4])
-text = original.read_text()
-swapped = re.sub(r"LICENSE_PUBLIC_KEY='[^']*'",
-                 "LICENSE_PUBLIC_KEY='" + pub.read_text().strip() + "'", text, count=1)
-out.write_text(swapped)
-SWAP
-        chmod +x "$work/ut-license"
-
-        local issue="$REPO_ROOT/packaging/issue-license.sh" next_year scenario
+        local next_year scenario
         next_year="$(( $(date -u +%Y) + 1 ))-12-31"
         start_a_fake_github "$work" "$next_year" || return 1
-        issued_against good --customer "Test Customer" --expires "$next_year" --token-file "$work/token" \
-            --signing-key "$work/license.key" > "$work/issued.lic" 2>/dev/null
-        issued_against good --customer "Test Customer" --expires "$next_year" --token-file "$work/token" \
-            --signing-key "$work/other.key" > "$work/foreign.lic" 2>/dev/null
-        python3 - "$work/issued.lic" "$work/tampered.lic" <<'TAMPER'
-import base64, sys
-fmt, payload, signature = open(sys.argv[1]).read().strip().split(".")
-renamed = base64.b64decode(payload).replace(b"customer=Test Customer", b"customer=Someone Else", 1)
-open(sys.argv[2], "w").write(".".join([fmt, base64.b64encode(renamed).decode(), signature]) + "\n")
-TAMPER
-        printf 'not a license key\n' > "$work/garbage.lic"
-
-        local name
         {
-            for name in issued tampered foreign garbage; do
-                printf '%s=%s\n' "$name" \
-                    "$("$work/ut-license" check "$work/$name.lic" >/dev/null 2>&1 && echo accepted || echo refused)"
-            done
+            printf 'issued=%s\n' \
+                "$(issued_against good --customer "Test Customer" --expires "$next_year" --token-file "$work/token" \
+                    --signing-key "$work/signing.key" >/dev/null 2>&1 && echo issued || echo refused)"
             printf 'issued_without_an_end=%s\n' \
-                "$("$issue" --customer "Test Customer" --token-file "$work/token" \
-                    --signing-key "$work/license.key" >/dev/null 2>&1 && echo issued || echo refused)"
+                "$(issued_against long --customer "Test Customer" --token-file "$work/token" \
+                    --signing-key "$work/signing.key" >/dev/null 2>&1 && echo issued || echo refused)"
             printf 'issued_to_nobody=%s\n' \
-                "$("$issue" --expires "$next_year" --token-file "$work/token" \
-                    --signing-key "$work/license.key" >/dev/null 2>&1 && echo issued || echo refused)"
+                "$(issued_against long --expires "$next_year" --token-file "$work/token" \
+                    --signing-key "$work/signing.key" >/dev/null 2>&1 && echo issued || echo refused)"
             issued_against zot --registry registry.example.test --customer "Test Customer" --expires "$next_year" \
-                --token-file "$work/token" --signing-key "$work/license.key" > "$work/zot.lic" 2>/dev/null
-            printf 'zot_issued=%s\n' "$("$work/ut-license" field registry "$work/zot.lic" 2>/dev/null || echo none)"
+                --token-file "$work/token" --signing-key "$work/signing.key" > "$work/zot.lic" 2>/dev/null
+            printf 'zot_issued=%s\n' "$(payload_field_of "$work/zot.lic" registry | grep . || echo none)"
             printf 'zot_blind=%s\n' \
                 "$(issued_against zotblind --registry registry.example.test --customer "Test Customer" --expires "$next_year" \
-                    --token-file "$work/token" --signing-key "$work/license.key" >/dev/null 2>&1 && echo issued || echo refused)"
+                    --token-file "$work/token" --signing-key "$work/signing.key" >/dev/null 2>&1 && echo issued || echo refused)"
             for scenario in broad forever short blind refused; do
                 printf 'token_%s=%s\n' "$scenario" \
                     "$(issued_against "$scenario" --customer "Test Customer" --expires "$next_year" \
-                        --token-file "$work/token" --signing-key "$work/license.key" >/dev/null 2>&1 \
+                        --token-file "$work/token" --signing-key "$work/signing.key" >/dev/null 2>&1 \
                         && echo issued || echo refused)"
             done
         } > "$work/verdicts.txt"
@@ -1264,47 +1243,37 @@ TAMPER
     cat "$work/verdicts.txt"
 }
 
-license_verdict_is() {
+issuance_verdict_is() {
     local key=$1 expected=$2 verdicts
-    verdicts=$(license_verdicts)
+    verdicts=$(issuance_verdicts)
     grep -qx "${key}=${expected}" <<< "$verdicts" && return 0
     echo "expected ${key}=${expected}, verdicts were:"; echo "$verdicts"; return 1
 }
 
-a_license_we_issued_is_accepted() {
-    license_verdict_is issued accepted
-}
-
-a_license_nobody_issued_is_refused() {
-    license_verdict_is tampered refused \
-        && license_verdict_is foreign refused \
-        && license_verdict_is garbage refused
-}
-
 a_license_is_issued_only_for_a_narrow_token_that_outlives_it() {
-    license_verdict_is issued accepted \
-        && license_verdict_is token_broad refused \
-        && license_verdict_is token_forever refused \
-        && license_verdict_is token_short refused \
-        && license_verdict_is token_blind refused \
-        && license_verdict_is token_refused refused
+    issuance_verdict_is issued issued \
+        && issuance_verdict_is token_broad refused \
+        && issuance_verdict_is token_forever refused \
+        && issuance_verdict_is token_short refused \
+        && issuance_verdict_is token_blind refused \
+        && issuance_verdict_is token_refused refused
 }
 
 every_license_issued_is_written_down_never_its_token() {
-    local ledger="$WORK_DIR/license/ledger.tsv" fingerprint
-    license_verdicts >/dev/null
+    local ledger="$WORK_DIR/issuance/ledger.tsv" fingerprint
+    issuance_verdicts >/dev/null
     fingerprint=$(printf '%s' "$LICENSE_TEST_TOKEN" | openssl dgst -sha256 -r | cut -c1-16)
     grep -qF "$LICENSE_TEST_TOKEN" "$ledger" 2>/dev/null \
         && { echo "the ledger holds the token itself"; return 1; }
-    [[ $(grep -c "	Test Customer	.*	${fingerprint}	" "$ledger" 2>/dev/null) -eq 3 ]] && return 0
-    echo "expected the three licenses issued, and only those, in the ledger:"
+    [[ $(grep -c "	Test Customer	.*	${fingerprint}	" "$ledger" 2>/dev/null) -eq 2 ]] && return 0
+    echo "expected the two licenses issued, and only those, in the ledger:"
     cat "$ledger" 2>/dev/null || echo "no ledger"
     return 1
 }
 
 a_license_for_another_registry_names_it_and_is_checked_there() {
-    license_verdict_is zot_issued registry.example.test \
-        && license_verdict_is zot_blind refused
+    issuance_verdict_is zot_issued registry.example.test \
+        && issuance_verdict_is zot_blind refused
 }
 
 # ut-install pulls under the names image_in_registry gives, and issue-license.sh
@@ -1328,19 +1297,166 @@ both_tools_name_every_image_alike() {
 }
 
 a_license_without_a_customer_or_an_end_is_never_issued() {
-    license_verdict_is issued_without_an_end refused \
-        && license_verdict_is issued_to_nobody refused
+    issuance_verdict_is issued_without_an_end refused \
+        && issuance_verdict_is issued_to_nobody refused
 }
 
-checking_a_license_never_prints_its_token() {
-    local work="$WORK_DIR/license" said name
-    license_verdicts >/dev/null
-    for name in issued tampered foreign garbage; do
-        said+=$("$work/ut-license" check "$work/$name.lic" 2>&1)
-        said+=$("$work/ut-license" check - < "$work/$name.lic" 2>&1)
+# ut-license runs where the box runs it, on Debian with its openssl and jq,
+# whatever openssl the machine that runs the suite has.
+license_image() {
+    local work="$WORK_DIR/license"
+    mkdir -p "$work"
+    if [[ ! -s "$work/image" ]]; then
+        docker build -q - > "$work/image" 2>/dev/null <<DOCKERFILE || { rm -f "$work/image"; return 1; }
+FROM ${DEBIAN_IMAGE}
+RUN apt-get update && apt-get install -y --no-install-recommends openssl jq curl python3 && rm -rf /var/lib/apt/lists/*
+DOCKERFILE
+    fi
+    cat "$work/image"
+}
+
+license_verdicts() {
+    local work="$WORK_DIR/license" image
+    mkdir -p "$work"
+    if [[ ! -s "$work/verdicts.txt" ]]; then
+        image=$(license_image) || { echo "the image the license checks run in did not build" >&2; return 1; }
+        docker run --rm -i -v "$REPO_ROOT":/src:ro -v "$work":/w -e KEYGEN_TEST_TOKEN="$LICENSE_TEST_TOKEN" \
+            "$image" bash -s > "$work/verdicts.txt" 2> "$work/verdicts.err" <<'LAB'
+set -u
+. /src/test/keygen.sh
+prepare_license_lab /src /w/lab
+: > /w/keygen-requests
+python3 /w/lab/fake-keygen.py "$KEYGEN_TEST_PORT" /w/keygen-requests /w/lab/certificates &
+for _ in $(seq 50); do curl -s -o /dev/null "http://127.0.0.1:$KEYGEN_TEST_PORT/" && break; sleep 0.1; done
+export PATH=/w/lab/argv:$PATH
+for name in valid tampered foreign garbage elsewhere clock ended suspended file_ended; do
+    status=0
+    /w/lab/ut-license check "/w/lab/files/$name.lic" > "/w/said-check-$name" 2>&1 || status=$?
+    printf 'check_%s=%s\n' "$name" "$([ "$status" = 0 ] && echo accepted || echo refused)"
+    printf 'check_%s_status=%s\n' "$name" "$status"
+done
+/w/lab/ut-license check /w/lab/keys/old_format.key > /w/said-check-old_format 2>&1 && verdict=accepted || verdict=refused
+printf 'check_old_format=%s\n' "$verdict"
+/w/lab/ut-license-without-a-serial check /w/lab/files/machine_id.lic > /w/said-check-machine_id 2>&1 \
+    && verdict=accepted || verdict=refused
+printf 'check_machine_id=%s\n' "$verdict"
+for name in fresh active registry elsewhere ended suspended unknown old_format injected; do
+    /w/lab/ut-license activate "/w/lab/keys/$name.key" "/w/activated-$name.lic" > "/w/said-activate-$name" 2>&1 \
+        && verdict=activated || verdict=refused
+    printf 'activate_%s=%s\n' "$name" "$verdict"
+done
+printf 'activated_mode=%s\n' "$(stat -c %a /w/activated-fresh.lic 2>/dev/null || echo none)"
+printf 'activated_checks=%s\n' "$(/w/lab/ut-license check /w/activated-fresh.lic >/dev/null 2>&1 && echo yes || echo no)"
+printf 'registry=%s\n' "$(/w/lab/ut-license field registry /w/activated-registry.lic 2>/dev/null || echo none)"
+given=$(/w/lab/ut-license field registry_token /w/lab/files/valid.lic 2>/dev/null)
+printf 'token_given=%s\n' "$([ "$given" = "$KEYGEN_TEST_TOKEN" ] && echo yes || echo no)"
+LAB
+    fi
+    cat "$work/verdicts.txt"
+}
+
+license_verdict_is() {
+    local key=$1 expected=$2 verdicts
+    verdicts=$(license_verdicts)
+    grep -qx "${key}=${expected}" <<< "$verdicts" && return 0
+    echo "expected ${key}=${expected}, verdicts were:"; echo "$verdicts"
+    tail -5 "$WORK_DIR/license/verdicts.err" 2>/dev/null
+    return 1
+}
+
+license_said() {
+    local name=$1 words=$2 said
+    said=$(cat "$WORK_DIR/license/said-$name" 2>/dev/null)
+    grep -qF "$words" <<< "$said" && return 0
+    echo "${name} was expected to say '${words}', and said: ${said:-nothing}"
+    return 1
+}
+
+a_license_file_keygen_signed_for_this_machine_is_accepted() {
+    license_verdict_is check_valid accepted && license_said check-valid 'Licensed to Test Customer'
+}
+
+a_license_file_nobody_signed_is_refused() {
+    license_verdict_is check_tampered refused && license_verdict_is check_foreign refused \
+        && license_verdict_is check_garbage refused \
+        && license_said check-tampered 'not issued by UnderstandTech' \
+        && license_said check-foreign 'not issued by UnderstandTech'
+}
+
+a_license_file_made_for_another_machine_is_refused() {
+    license_verdict_is check_elsewhere refused && license_said check-elsewhere 'made for another machine'
+}
+
+a_clock_set_before_the_file_is_named() {
+    license_verdict_is check_clock refused && license_said check-clock "machine's clock says"
+}
+
+an_ended_or_suspended_license_is_refused_with_whom_to_ask() {
+    license_verdict_is check_ended refused && license_said check-ended 'ended on' \
+        && license_said check-ended 'contact@understand.tech' \
+        && license_verdict_is check_suspended refused && license_said check-suspended 'is suspended'
+}
+
+a_license_file_past_its_end_says_how_to_get_a_new_one() {
+    license_verdict_is check_file_ended refused && license_said check-file_ended 'run ut-install with network'
+}
+
+# 2 says the file is genuine and this machine's, so that ut-install may renew it
+# from Keygen; 1 says it is refused, and nothing goes on the network.
+a_file_that_only_needs_renewing_is_told_apart_from_a_refused_one() {
+    local name
+    for name in ended suspended file_ended; do
+        license_verdict_is "check_${name}_status" 2 || return 1
     done
-    grep -qF "$LICENSE_TEST_TOKEN" <<< "$said" || return 0
-    echo "the registry token came out of ut-license check"
+    for name in tampered foreign garbage elsewhere clock; do
+        license_verdict_is "check_${name}_status" 1 || return 1
+    done
+}
+
+a_key_of_the_old_format_checked_as_a_license_file_says_what_to_ask_for() {
+    license_verdict_is check_old_format refused && license_said check-old_format 'old format'
+}
+
+a_machine_without_a_serial_binds_to_its_machine_id_and_says_so() {
+    license_verdict_is check_machine_id accepted && license_said check-machine_id 'which a reinstall changes'
+}
+
+a_key_that_would_carry_curl_settings_is_refused() {
+    license_verdict_is activate_injected refused && license_said activate-injected 'not a license key'
+}
+
+activating_binds_the_license_to_this_machine() {
+    license_verdict_is activate_fresh activated && license_verdict_is activate_active activated \
+        && license_verdict_is activated_mode 600 && license_verdict_is activated_checks yes
+}
+
+a_license_that_cannot_be_activated_here_says_why() {
+    license_verdict_is activate_elsewhere refused && license_said activate-elsewhere 'activated on another machine' \
+        && license_verdict_is activate_ended refused && license_said activate-ended 'ended on 2020-01-01' \
+        && license_verdict_is activate_suspended refused && license_said activate-suspended 'is suspended' \
+        && license_verdict_is activate_unknown refused && license_said activate-unknown 'no such license key' \
+        && license_verdict_is activate_old_format refused && license_said activate-old_format 'old format'
+}
+
+a_license_naming_a_registry_hands_it_to_the_installer() {
+    license_verdict_is registry registry.example.test && license_verdict_is token_given yes
+}
+
+the_license_key_and_its_token_never_come_out() {
+    local work="$WORK_DIR/license" said
+    license_verdicts >/dev/null
+    said=$(cat "$work"/said-* 2>/dev/null)
+    grep -qF "$LICENSE_TEST_TOKEN" <<< "$said" && { echo "the registry token came out of ut-license"; return 1; }
+    grep -qE 'TEST-(FRESH|ACTIVE|REGISTRY|ELSEWHERE|ENDED|SUSPENDED|UNKNOWN)' <<< "$said" \
+        && { echo "a license key came out of ut-license"; return 1; }
+    grep -q 'SECRET_ON_A_COMMAND_LINE' "$work/keygen-requests" 2>/dev/null \
+        && { echo "a license key or the token sat on a command line while ut-license asked Keygen"; return 1; }
+    [[ -s "$work/lab/argv.log" ]] || { echo "no program ut-license ran wrote its arguments down"; return 1; }
+    grep -qE "${LICENSE_TEST_TOKEN}|TEST-(FRESH|ACTIVE|REGISTRY|ELSEWHERE|ENDED|SUSPENDED|UNKNOWN)" "$work/lab/argv.log" \
+        && { echo "a program ut-license ran was given a license key or the token:"; \
+             grep -E "${LICENSE_TEST_TOKEN}|TEST-" "$work/lab/argv.log" | head -3; return 1; }
+    grep -q 'licenses/actions/validate-key' "$work/keygen-requests" 2>/dev/null && return 0
+    echo "the fake Keygen was never asked: $(tail -3 "$work/verdicts.err" 2>/dev/null)"
     return 1
 }
 
@@ -1352,21 +1468,6 @@ the_shipped_key_is_the_one_licenses_are_signed_with() {
     [[ "$embedded" == "$versioned" ]] && return 0
     echo "ut-license carries ${embedded}, packaging/license.pub is ${versioned}"
     return 1
-}
-
-# issue-license.sh refuses an end date in the past, so a license that ended is
-# signed here, the way one issued in 2019 would have been.
-ended_license() {
-    local work="$WORK_DIR/license"
-    license_verdicts >/dev/null
-    if [[ ! -s "$work/ended.lic" ]]; then
-        printf 'version=1\ncustomer=Test Customer\nissued=2019-01-01\nexpires=2020-01-01\nrights=platform\nregistry_user=u\nregistry_token=%s\n' \
-            "$LICENSE_TEST_TOKEN" > "$work/ended.payload"
-        openssl dgst -sha256 -sign "$work/license.key" -out "$work/ended.sig" "$work/ended.payload"
-        printf 'UT1.%s.%s\n' "$(openssl base64 -A < "$work/ended.payload")" \
-            "$(openssl base64 -A < "$work/ended.sig")" > "$work/ended.lic"
-    fi
-    printf '%s' "$work/ended.lic"
 }
 
 boot_unit() {
@@ -1383,24 +1484,23 @@ cat /etc/systemd/system/understandtech.service
 PROBE
 }
 
-# The boot line is run as systemd would, against a license that ended in 2020:
+# The boot line is run as systemd would, against a license that ended yesterday:
 # it has to say so, and it has to let the stack come up.
 an_ended_license_is_said_at_boot_and_never_stops_the_stack() {
     local work="$WORK_DIR/license" line command said status
-    ended_license >/dev/null
+    license_verdicts >/dev/null
 
     line=$(grep '^ExecStartPre=.*ut-license' <<< "$(boot_unit)") \
         || { echo "the boot service does not check the license"; return 1; }
     [[ "$line" == ExecStartPre=-* ]] \
         || { echo "a failing license check would stop the boot: ${line}"; return 1; }
     command=${line#ExecStartPre=-}
-    command=${command//\/etc\/understandtech\/license/\/w\/ended.lic}
-    command=${command//ut-license check/\/w\/ut-license check}
+    command=${command//\/etc\/understandtech\/machine.lic/\/w\/lab\/files\/ended.lic}
+    command=${command//ut-license check/\/w\/lab\/ut-license check}
     command=${command#/bin/sh -c \'}
     command=${command%\'}
-    said=$(docker run --rm --network none -v "$work":/w:ro --entrypoint sh "$MONGODB_IMAGE" \
-        -c "$command" 2>&1; echo "STATUS=$?")
-    grep -q 'ended on 2020-01-01' <<< "$said" \
+    said=$(docker run --rm --network none -v "$work":/w:ro "$(license_image)" sh -c "$command" 2>&1; echo "STATUS=$?")
+    grep -q 'ended on' <<< "$said" \
         || { echo "nothing said the license ended: ${said}"; return 1; }
     grep -q 'STATUS=0' <<< "$said" && return 0
     echo "the boot line failed: ${said}"
@@ -1410,8 +1510,8 @@ an_ended_license_is_said_at_boot_and_never_stops_the_stack() {
 a_license_checks_with_no_network_at_all() {
     local work="$WORK_DIR/license" said
     license_verdicts >/dev/null
-    said=$(docker run --rm --network none -v "$work":/w:ro --entrypoint sh "$MONGODB_IMAGE" \
-        -c '/w/ut-license check /w/issued.lic' 2>&1)
+    said=$(docker run --rm --network none -v "$work":/w:ro "$(license_image)" \
+        /w/lab/ut-license check /w/lab/files/valid.lic 2>&1)
     grep -q 'Licensed to Test Customer' <<< "$said" && return 0
     echo "with no network at all, ut-license said: ${said:-nothing}"
     return 1
@@ -2427,10 +2527,38 @@ fi
 
 if [[ -x "$REPO_ROOT/ut-license" ]]; then
     group "License keys"
-    capability "a license key we issued is accepted" \
-        a_license_we_issued_is_accepted
-    capability "one that was altered, signed by another key, or is not a key at all is refused" \
-        a_license_nobody_issued_is_refused
+    capability "a license file Keygen signed for this machine is accepted" \
+        a_license_file_keygen_signed_for_this_machine_is_accepted
+    capability "one that was altered, signed by another key, or is not a license file at all is refused" \
+        a_license_file_nobody_signed_is_refused
+    capability "a license file made for another machine is refused, and says so" \
+        a_license_file_made_for_another_machine_is_refused
+    capability "a clock set before the file was issued is named, not taken for a bad license" \
+        a_clock_set_before_the_file_is_named
+    capability "a license that ended or is suspended is refused, and says whom to ask" \
+        an_ended_or_suspended_license_is_refused_with_whom_to_ask
+    capability "a license file past its own end says how to get a new one" \
+        a_license_file_past_its_end_says_how_to_get_a_new_one
+    capability "a genuine file that only needs renewing is told apart from a refused one" \
+        a_file_that_only_needs_renewing_is_told_apart_from_a_refused_one
+    capability "a key of the old format, checked as a license file, says what to ask for" \
+        a_key_of_the_old_format_checked_as_a_license_file_says_what_to_ask_for
+    capability "a machine without a serial number binds to its machine id, and says a reinstall changes it" \
+        a_machine_without_a_serial_binds_to_its_machine_id_and_says_so
+    capability "a key that would carry settings to curl is refused" \
+        a_key_that_would_carry_curl_settings_is_refused
+    capability "activating binds the license to this machine, or takes the one already bound" \
+        activating_binds_the_license_to_this_machine
+    capability "a license activated elsewhere, ended, suspended, unknown or of the old format says why it is not activated" \
+        a_license_that_cannot_be_activated_here_says_why
+    capability "a license that names a registry hands it, and its token, to the installer" \
+        a_license_naming_a_registry_hands_it_to_the_installer
+    capability "the license key and its registry token never come out, nor reach a command line" \
+        the_license_key_and_its_token_never_come_out
+    capability "the key ut-license carries is the key licenses are signed with" \
+        the_shipped_key_is_the_one_licenses_are_signed_with
+    capability "and a license file checks with no network at all" \
+        a_license_checks_with_no_network_at_all
     capability "a license with no customer or no end date is never issued" \
         a_license_without_a_customer_or_an_end_is_never_issued
     capability "a license is issued only for a read-only token that pulls the release and outlives it" \
@@ -2441,12 +2569,6 @@ if [[ -x "$REPO_ROOT/ut-license" ]]; then
         a_license_for_another_registry_names_it_and_is_checked_there
     capability "the installer and the issuer name every image of the release alike" \
         both_tools_name_every_image_alike
-    capability "checking a license never prints the registry token it carries" \
-        checking_a_license_never_prints_its_token
-    capability "the key ut-license carries is the key licenses are signed with" \
-        the_shipped_key_is_the_one_licenses_are_signed_with
-    capability "and a license checks with no network at all" \
-        a_license_checks_with_no_network_at_all
     capability "at boot, a license that has ended is said, and the stack still starts" \
         an_ended_license_is_said_at_boot_and_never_stops_the_stack
 fi
@@ -2631,17 +2753,26 @@ ut_status_says_whether_reports_go_out() {
     return 1
 }
 
+# ut-status runs where ut-license can, in the license image, with a docker that
+# answers nothing, as it does on a machine where the project has no container.
+license_status_with() {
+    local machine_file=$1 probe=$2
+    docker run --rm -v "$REPO_ROOT":/src:ro -v "$WORK_DIR":"$WORK_DIR" -v "$WORK_DIR/license":/w:ro \
+        -e UT_LICENSE_STORE=/w/lab/keys/active.key -e UT_MACHINE_FILE="/w/lab/files/${machine_file}.lic" \
+        -e UT_LICENSE_TOOL=/w/lab/ut-license "$(license_image)" bash -c \
+        'mkdir -p /stub && printf "#!/bin/sh\nexit 0\n" > /stub/docker && chmod +x /stub/docker && PATH=/stub:$PATH bash /src/ut-status --dir "$0"' \
+        "$probe" 2>&1
+}
+
 ut_status_says_how_the_license_stands() {
-    local work="$WORK_DIR/license" probe current ended
-    ended=$(ended_license)
+    local probe current ended
+    license_verdicts >/dev/null
     probe=$(history_probe)
-    current=$(UT_LICENSE_STORE="$work/issued.lic" UT_LICENSE_TOOL="$work/ut-license" \
-        "$REPO_ROOT/ut-status" --dir "$probe" 2>&1)
+    current=$(license_status_with valid "$probe")
     grep -q '\[ ok \] Licensed to Test Customer until ' <<< "$current" \
         || { echo "a current license was not said:"; echo "$current"; return 1; }
-    ended=$(UT_LICENSE_STORE="$ended" UT_LICENSE_TOOL="$work/ut-license" \
-        "$REPO_ROOT/ut-status" --dir "$probe" 2>&1)
-    grep -q '\[warn\] The license of Test Customer ended on 2020-01-01' <<< "$ended" \
+    ended=$(license_status_with ended "$probe")
+    grep -q '\[warn\] The license of Test Customer ended on ' <<< "$ended" \
         || { echo "an ended license was not warned about:"; echo "$ended"; return 1; }
     grep -qF "$LICENSE_TEST_TOKEN" <<< "${current}${ended}" || return 0
     echo "the registry token came out of ut-status"
