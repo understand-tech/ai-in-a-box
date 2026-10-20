@@ -46,9 +46,10 @@ stage_release_files() {
     cp -r "$REPO_ROOT/caddy" "$root/$SHARE_DIR/"
     cp -r "$REPO_ROOT/appbuilder" "$root/$SHARE_DIR/"
     cp -r "$REPO_ROOT/metrics" "$root/$SHARE_DIR/"
+    cp -r "$REPO_ROOT/models" "$root/$SHARE_DIR/"
     install -m 755 "$REPO_ROOT/setup-autostart.sh" "$root/$SHARE_DIR/"
     install -m 755 "$REPO_ROOT/backup-files.sh" "$root/$SHARE_DIR/"
-    find "$root/$SHARE_DIR/caddy" "$root/$SHARE_DIR/appbuilder" "$root/$SHARE_DIR/metrics" -type f -exec chmod 644 {} +
+    find "$root/$SHARE_DIR/caddy" "$root/$SHARE_DIR/appbuilder" "$root/$SHARE_DIR/metrics" "$root/$SHARE_DIR/models" -type f -exec chmod 644 {} +
 }
 
 # dpkg compares numbers, not contents: 2026.09.3 built from an older commit

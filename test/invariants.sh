@@ -538,6 +538,41 @@ check_images_are_pinned() {
     done <<< "$(env_keys)"
 }
 
+# A model a box can be told to serve names the engine that serves it, and, when
+# that engine is vLLM, the image by its digest: the same entry must start the
+# same engine on every box.
+check_every_model_names_its_engine() {
+    local entry id engine image
+    for entry in "$REPO_ROOT"/models/*.env; do
+        [[ -f "$entry" ]] || continue
+        id=$(basename "$entry" .env)
+        engine=$(sed -n 's/^MODEL_ENGINE="\{0,1\}\([a-z]*\)"\{0,1\}$/\1/p' "$entry")
+        case "$engine" in
+            nim) ;;
+            vllm)
+                image=$(sed -n 's/^VLLM_ENGINE_IMAGE="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$entry")
+                [[ "$image" == *@sha256:* ]] \
+                    || report "model-image-not-pinned:${id}" \
+                        "models/${id}.env serves vLLM from ${image:-no image at all}, not pinned by digest" ;;
+            *) report "model-without-engine:${id}" \
+                    "models/${id}.env says MODEL_ENGINE=${engine:-nothing}: nim or vllm, nothing else" ;;
+        esac
+    done
+}
+
+# release.env serves its model without --model; its entry must say the same, or
+# --model with that very name would change what the box serves.
+check_the_shipped_model_agrees_with_the_release() {
+    local entry="$REPO_ROOT/models/qwen3.8-27b-nvfp4.env" line key
+    [[ -f "$entry" ]] || { report "shipped-model-missing" "models/qwen3.8-27b-nvfp4.env is gone"; return; }
+    while IFS= read -r line; do
+        case "$line" in MODEL_ENGINE=*|'#'*|'') continue ;; esac
+        key=${line%%=*}
+        grep -qxF "$line" "$RELEASE_ENV" \
+            || report "shipped-model-drifted:${key}" "models/qwen3.8-27b-nvfp4.env and release.env disagree on ${key}"
+    done < "$entry"
+}
+
 check_compose_images_are_pinned() {
     local reference
     while read -r reference; do
@@ -752,6 +787,8 @@ main() {
     check_ut_send_uses_only_the_standard_library
     check_images_are_pinned
     check_compose_images_are_pinned
+    check_every_model_names_its_engine
+    check_the_shipped_model_agrees_with_the_release
     check_the_recorder_is_bounded
     check_services_that_mount_a_release_file_follow_the_release
     check_the_install_starts_the_stack_as_boot_does

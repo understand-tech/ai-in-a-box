@@ -177,6 +177,26 @@ The same model reads images: `VLLM_VLM_MODEL`, `GATEWAY_VLM_MODEL` and the
 points at `nim-llm`. Changing the model means changing all of them, since
 `nim-llm` only answers to the name it serves.
 
+### Choosing the model
+
+Rather than editing those names one by one, give the install one of the models
+in `models/`:
+
+```bash
+sudo ut-install --model qwen3.8-27b-nvfp4
+```
+
+Each file there is one model, with every setting it needs and `MODEL_ENGINE`,
+the engine that serves it: `nim`, or `vllm` for a model NIM cannot serve. On
+`vllm` the install adds `compose.engine-vllm.yaml`, which runs the engine from
+`VLLM_ENGINE_IMAGE`, pinned by digest, as `vllm serve <VLLM_ENGINE_MODEL>
+<VLLM_ENGINE_ARGS>`, under the same service name, GPU, port and cache. A name
+that is not in `models/` is refused, with the list of those that are. The choice
+is kept in `local.env`: a later install without `--model` serves the same model.
+
+`VLLM_ENGINE_ARGS` is split on spaces: a JSON argument goes in bare, with no space
+inside and no quotes around it.
+
 `LLM_FILE_TOKEN_BUDGET` caps the text of files attached to a chat — a PDF, a
 spreadsheet — at 16000 tokens by default. Past it, the upload is refused with
 the count and the limit. Raising it lets longer documents through, at the cost

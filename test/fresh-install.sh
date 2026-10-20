@@ -185,6 +185,8 @@ state_setup() {
         # tells an operator to write it.
         openai_key_given)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'OA_KEY="sk-test-kept"\n'"'"' > /etc/understandtech/local.env' ;;
+        # An entry a team adds to the registry, served by vLLM.
+        model_on_vllm) echo 'cp /w/models/test-vllm.env /usr/share/understandtech/models/' ;;
         # The walk image has no public roots of its own; this one stands for them.
         pointed_at_a_compute_node|compute_node_over_http)
             echo 'install -d /etc/ssl/certs && cp /w/compute/public.pem /etc/ssl/certs/ca-certificates.crt' ;;
@@ -397,6 +399,37 @@ an_openai_key_given_is_never_replaced() {
     grep -qx 'OA_KEY="sk-test-kept"' <<< "$settings" && return 0
     grep '^OA_KEY' <<< "$settings"
     echo "$(output_of openai_key_given)"
+    return 1
+}
+
+a_model_on_nim_is_set_with_no_vllm_overlay() {
+    local settings
+    settings=$(cat "$WORK_DIR/model_on_nim/local-env" 2>/dev/null)
+    grep -qxF "$(grep '^NIM_LLM_PASSTHROUGH_ARGS=' "$REPO_ROOT/models/qwen3.8-27b-nvfp4.env")" <<< "$settings" \
+        && ! grep -q 'compose.engine-vllm.yaml' <<< "$settings" \
+        && grep -q 'Model qwen3.8-27b-nvfp4, served by NIM' <<< "$(output_of model_on_nim)" && return 0
+    grep -E '^(NIM_LLM_PASSTHROUGH_ARGS|COMPOSE_FILE)=' <<< "$settings" | cut -c1-120
+    output_of model_on_nim | tail -4
+    return 1
+}
+
+a_model_on_vllm_brings_its_engine_and_its_arguments_whole() {
+    local settings
+    settings=$(cat "$WORK_DIR/model_on_vllm/local-env" 2>/dev/null)
+    grep -q '^COMPOSE_FILE=.*compose.engine-vllm.yaml' <<< "$settings" \
+        && grep -qxF 'VLLM_ENGINE_ARGS=--trust-remote-code --override-generation-config {"temperature":0.2,"top_p":0.9}' <<< "$settings" \
+        && grep -q 'Model test-vllm, served by vLLM' <<< "$(output_of model_on_vllm)" && return 0
+    grep -E '^(VLLM_ENGINE_ARGS|COMPOSE_FILE)=' <<< "$settings"
+    output_of model_on_vllm | tail -4
+    return 1
+}
+
+a_model_nobody_listed_is_refused_before_anything_is_written() {
+    local output
+    output=$(output_of unknown_model)
+    grep -q 'No model called nope' <<< "$output" && grep -q 'qwen3.8-27b-nvfp4' <<< "$output" \
+        && ! grep -q '^EXIT=0$' <<< "$output" && [[ ! -s "$WORK_DIR/unknown_model/local-env" ]] && return 0
+    echo "$output" | tail -5
     return 1
 }
 
@@ -740,6 +773,20 @@ LICENSE_TOKEN=license-carried-token-0001
 # package declares, is not there; a license check cannot run without it.
 WITH_OPENSSL_IMAGE=""
 
+prepare_a_vllm_entry() {
+    mkdir -p "$WORK_DIR/models"
+    cat > "$WORK_DIR/models/test-vllm.env" <<'ENTRY'
+# A model served by vLLM, for the walk.
+MODEL_ENGINE="vllm"
+VLLM_ENGINE_IMAGE="registry.example/vllm@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+VLLM_ENGINE_MODEL="org/model"
+VLLM_ENGINE_ARGS=--trust-remote-code --override-generation-config {"temperature":0.2,"top_p":0.9}
+LLM_MODEL="org/model"
+VLLM_LLM_MODEL="org/model"
+ENTRY
+    chmod -R a+r "$WORK_DIR/models"
+}
+
 prepare_a_compute_node() {
     local work="$WORK_DIR/compute" name
     mkdir -p "$work"
@@ -902,6 +949,7 @@ build_the_package
 write_machine_stubs
 prepare_licenses
 prepare_a_compute_node
+prepare_a_vllm_entry
 
 run_install_from_state bare
 PULL_EXIT=0 run_install_from_state install_runs_through
@@ -913,6 +961,9 @@ run_install_from_state empty_settings
 run_install_from_state openai_key_given
 run_install_from_state engine_key_left_empty
 run_install_from_state origins_on_an_old_domain
+INSTALL_COMMAND="ut-install --model qwen3.8-27b-nvfp4" run_install_from_state model_on_nim
+INSTALL_COMMAND="ut-install --model test-vllm" run_install_from_state model_on_vllm
+INSTALL_COMMAND="ut-install --model nope" run_install_from_state unknown_model
 PULL_EXIT=0 WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --inference-from https://node.example.test:8444 --inference-key-file /w/compute/key --inference-ca-file /w/compute/root.crt" \
     run_install_from_state pointed_at_a_compute_node
 WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --inference-from https://node.example.test:8444 --inference-key-file /w/compute/key --inference-ca-file /w/compute/root.crt" \
@@ -975,6 +1026,14 @@ property "an OpenAI key already given is never replaced" \
 
 property "the engine gets a key of its own" \
     the_engine_gets_a_key_of_its_own bare
+property "a model on NIM is set from its entry, with no vLLM overlay" \
+    a_model_on_nim_is_set_with_no_vllm_overlay
+property "a model on vLLM brings its engine, and its arguments whole" \
+    a_model_on_vllm_brings_its_engine_and_its_arguments_whole
+property "and what it wrote renders a stack" \
+    the_settings_render_a_stack model_on_vllm
+property "a model nobody listed is refused before anything is written" \
+    a_model_nobody_listed_is_refused_before_anything_is_written
 property "the allowed origins follow the address when it changes" \
     the_allowed_origins_follow_the_domain
 property "an engine key an older release left as EMPTY is replaced" \

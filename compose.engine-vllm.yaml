@@ -1,0 +1,28 @@
+name: ${COMPOSE_PROJECT_NAME:-understandtech}
+
+# Overlay for a model the registry serves with vLLM rather than NIM.
+#
+#   ut-install --model <an entry of models/ whose MODEL_ENGINE is "vllm">
+#
+# The service keeps its name, nim-llm: the recorder, ut-report, the gateway and
+# a compute node's inference surface all reach the engine by it. Image, model and
+# arguments come from the model's entry; GPU, port, cache and network stay those
+# of compose.yaml.
+#
+# VLLM_ENGINE_ARGS is split on spaces and never unquoted: a JSON argument goes in
+# bare, with no space inside and no quotes around it.
+#
+# The variables carry no ${...:?} guard on purpose: the test suites read every
+# such guard as a setting all installs require, and these only exist here.
+
+services:
+  nim-llm:
+    image: ${VLLM_ENGINE_IMAGE}
+    entrypoint: ["/bin/sh", "-c", "exec vllm serve \"$$VLLM_ENGINE_MODEL\" --host 0.0.0.0 --port 8000 $$VLLM_ENGINE_ARGS"]
+    environment:
+      VLLM_ENGINE_MODEL: ${VLLM_ENGINE_MODEL}
+      VLLM_ENGINE_ARGS: ${VLLM_ENGINE_ARGS}
+      HF_HOME: /opt/nim/.cache/huggingface
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-0}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
