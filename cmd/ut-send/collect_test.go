@@ -117,6 +117,22 @@ func TestTheHealthOfTheStackIsReadTheWayThePrototypeReadIt(t *testing.T) {
 	}
 }
 
+func TestAVLLMEngineDeclaresTheModelItServesNotTheNIMSettingsItInherits(t *testing.T) {
+	answers := map[string]string{
+		"docker ps -aq --filter label=com.docker.compose.project=understandtech": "ffff\n",
+		"docker inspect": "nim-llm running healthy 0 false ffff\n",
+		"docker exec ffff curl -sf --max-time 5 http://127.0.0.1:8000/v1/models": `{"data": [{"id": "nemotron"}]}`,
+		"docker exec ffff printenv VLLM_ENGINE_MODEL":                            "nemotron\n",
+		"docker exec ffff printenv NIM_SERVED_MODEL_NAME":                        "qwen\n",
+		"docker exec ffff sh -c":                                                 "hf://Inferact/Qwen3.8-27B-NVFP4\n",
+	}
+	health, _ := machineAnswering(t, answers).health()
+	engine := health.Engines[0]
+	if engine.DeclaredModel == nil || *engine.DeclaredModel != "nemotron" || engine.CachedModel != nil || engine.ModelPath != nil {
+		t.Fatalf("engine %+v", engine)
+	}
+}
+
 func TestAnUnreadableSourceIsNamedNotGuessed(t *testing.T) {
 	answers := map[string]string{
 		"docker ps -aq --filter label=com.docker.compose.project=understandtech": "ffff\nhhhh\n",
