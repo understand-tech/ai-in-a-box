@@ -9,11 +9,11 @@ import (
 	"sort"
 )
 
-const reportSchema = 3
+const reportSchema = 4
 
-// ut-report writes the base report; health and tools are added to it here, and
-// the warnings of all three are kept together, each named once.
-func enrich(base []byte, health Health, tools Tools, warnings []string) ([]byte, error) {
+// ut-report writes the base report; health, tools and topology are added to it
+// here, and the warnings of all of them are kept together, each named once.
+func enrich(base []byte, health Health, tools Tools, topology Topology, warnings []string) ([]byte, error) {
 	var report map[string]json.RawMessage
 	if err := json.Unmarshal(base, &report); err != nil {
 		return nil, fmt.Errorf("ut-report wrote something that is not a report: %w", err)
@@ -33,7 +33,7 @@ func enrich(base []byte, health Health, tools Tools, warnings []string) ([]byte,
 		}
 	}
 	sort.Strings(merged)
-	for key, value := range map[string]any{"schema": reportSchema, "health": health, "tools": tools, "warnings": merged} {
+	for key, value := range map[string]any{"schema": reportSchema, "health": health, "tools": tools, "topology": topology, "warnings": merged} {
 		encoded, err := json.Marshal(value)
 		if err != nil {
 			return nil, err
@@ -71,7 +71,8 @@ func collectReport(m machine, workDir string) ([]byte, error) {
 	}
 	health, healthWarnings := m.health()
 	tools, toolsWarnings := m.tools(windowDays(base))
-	return enrich(base, health, tools, append(healthWarnings, toolsWarnings...))
+	topology, topologyWarnings := m.topology()
+	return enrich(base, health, tools, topology, append(append(healthWarnings, toolsWarnings...), topologyWarnings...))
 }
 
 func markReported(place Place) error {
