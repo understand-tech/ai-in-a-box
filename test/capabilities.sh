@@ -120,7 +120,7 @@ write_mdns_probe() {
     cat > "$WORK_DIR/mdns-probe.sh" <<'PROBE'
 set -u
 mkdir -p /fix /stub
-printf 'UT_DOMAIN="%s"\n' "$DOMAIN" > /fix/.env
+printf 'UT_DOMAIN="%s"\nCOMPOSE_FILE="%s"\n' "$DOMAIN" "$COMPOSE_FILE" > /fix/.env
 
 cat > /stub/systemctl <<'STUB'
 #!/bin/sh
@@ -144,12 +144,12 @@ PROBE
 }
 
 installing_mdns_reports() {
-    local domain=$1 already_enabled=${2:-no}
+    local domain=$1 already_enabled=${2:-no} compose_file=${3:-compose.yaml}
     write_mdns_probe
     docker run --rm \
         -v "$REPO_ROOT/setup-autostart.sh":/setup-autostart.sh:ro \
         -v "$WORK_DIR/mdns-probe.sh":/mdns-probe.sh:ro \
-        -e DOMAIN="$domain" -e ALREADY_ENABLED="$already_enabled" \
+        -e DOMAIN="$domain" -e ALREADY_ENABLED="$already_enabled" -e COMPOSE_FILE="$compose_file" \
         "$BASH_IMAGE" bash /mdns-probe.sh 2>&1
 }
 
@@ -179,6 +179,19 @@ a_real_domain_installs_no_mdns_publisher() {
     if ! grep -q '^EXIT=0$' <<< "$report"; then
         echo "$report"; return 1
     fi
+}
+
+# Two boxes on one .local network: a compute node publishing the platform's names
+# would answer for them with its own address, and browsers would reach either box.
+a_compute_node_publishes_none_of_the_platform_s_names() {
+    local report installed
+    report=$(installing_mdns_reports understand.local yes compose.yaml:compose.compute.yaml)
+    installed=${report#*--- installed ---}
+    installed=${installed%%--- systemctl ---*}
+    if grep -q 'ut-mdns-alias' <<< "$installed" || ! grep -q '^disable --now ut-mdns-alias$' <<< "$report"; then
+        echo "a compute node on .local kept or installed the publisher:"; echo "$report"; return 1
+    fi
+    grep -q '^EXIT=0$' <<< "$report" || { echo "$report"; return 1; }
 }
 
 moving_off_local_withdraws_the_publisher() {
@@ -2215,6 +2228,8 @@ if [[ -f "$REPO_ROOT/setup-autostart.sh" ]]; then
         a_real_domain_installs_no_mdns_publisher
     capability "a .local domain still publishes its names over mDNS" \
         a_local_domain_publishes_over_mdns
+    capability "a compute node on .local publishes none of the platform's names" \
+        a_compute_node_publishes_none_of_the_platform_s_names
     capability "moving off .local withdraws a publisher installed earlier" \
         moving_off_local_withdraws_the_publisher
 fi

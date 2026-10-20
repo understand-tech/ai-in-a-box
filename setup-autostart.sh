@@ -398,6 +398,10 @@ mdns_applies() {
     [[ "$domain" == *.local ]]
 }
 
+this_machine_is_a_compute_node() {
+    [[ "$(env_value COMPOSE_FILE)" == *compose.compute.yaml* ]]
+}
+
 withdraw_mdns_publisher() {
     systemctl is-enabled --quiet "$MDNS_SERVICE_NAME" 2>/dev/null || return 0
     if systemctl disable --now "$MDNS_SERVICE_NAME" >/dev/null 2>&1; then
@@ -408,6 +412,14 @@ withdraw_mdns_publisher() {
 }
 
 install_mdns_alias() {
+    if this_machine_is_a_compute_node; then
+        log_step "Skipping the mDNS publisher"
+        log_info "A compute node serves no platform: its names are the control plane's, and"
+        log_info "published from here they would point at this machine."
+        withdraw_mdns_publisher
+        return 0
+    fi
+
     if ! mdns_applies; then
         local domain; domain="$(env_value UT_DOMAIN)"
         log_step "Skipping the mDNS publisher"
