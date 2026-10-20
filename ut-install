@@ -246,6 +246,18 @@ appbuilder_enabled() {
     [[ "$(env_get "$INSTALL_DIR/.env" COMPOSE_FILE 2>/dev/null || true)" == *appbuilder* ]]
 }
 
+this_machine_is_a_compute_node() {
+    [[ "$(env_get "$INSTALL_DIR/.env" COMPOSE_FILE 2>/dev/null || true)" == *compose.compute.yaml* ]]
+}
+
+inference_surface_url() {
+    local address port
+    address=$(env_get "$INSTALL_DIR/.env" UT_INFERENCE_ADDRESS 2>/dev/null || true)
+    [[ -n "$address" ]] || address=$(env_get "$INSTALL_DIR/.env" UT_DOMAIN 2>/dev/null || echo "$DOMAIN")
+    port=$(env_get "$INSTALL_DIR/.env" UT_INFERENCE_PORT 2>/dev/null || true)
+    printf 'https://%s:%s' "$address" "${port:-8444}"
+}
+
 # The preflight runs before step_configure, so on a first install there is no
 # .env to read yet and the flag is the only way to say it. The settings file
 # answers for a laboratory stack, which docs/install.md has the operator write
@@ -260,7 +272,9 @@ the_inference_is_served_by_another_machine() {
 # died and a machine that never had an accelerator leave the same trace, and the
 # first one is a failure nobody would look for.
 role_this_machine_was_installed_as() {
-    if ! the_inference_url_names_a_service_this_machine_will_not_run; then
+    if this_machine_is_a_compute_node; then
+        printf 'compute node — serves inference at %s/v1 to the bearer of its key' "$(inference_surface_url)"
+    elif ! the_inference_url_names_a_service_this_machine_will_not_run; then
         printf 'control plane — generation comes from %s' \
             "$(env_get "$INSTALL_DIR/.env" VLLM_LLM_BASE_URL 2>/dev/null)"
     elif the_inference_is_served_by_another_machine; then
@@ -1497,6 +1511,11 @@ step_certificate_authority_root() {
 step_certificate_policy() {
     log_step "Applying the certificate policy"
 
+    if this_machine_is_a_compute_node; then
+        log_info "A compute node runs no authority: Caddy issues its surface's certificate"
+        return 0
+    fi
+
     local current
     current=$(compose_in_dir exec -T step-ca sh -c \
         'jq -r ".authority.provisioners[0].claims.defaultTLSCertDuration // empty" /home/step/config/ca.json' 2>/dev/null | tr -d '\r')
@@ -1846,8 +1865,41 @@ step_reporting() {
     log_warn "Usage reports could not be set up. The platform is unaffected; finish with: sudo ut-send configure --consent yes|no …"
 }
 
+print_compute_node_summary() {
+    local surface settings
+    surface=$(inference_surface_url)
+    settings="$(settings_directory "$INSTALL_DIR/.env")/local.env"
+    cat <<EOF
+
+${BOLD}Installation complete in $(( SECONDS / 60 )) min${NC}
+
+  This machine serves inference only: no platform, no admin password.
+
+  Directory      ${INSTALL_DIR}
+  Configuration  ${settings}   (holds the engine key)
+  Role           $(role_this_machine_was_installed_as)
+  Engine         ${INFERENCE_STILL_LOADING:+still loading: }${INFERENCE_STILL_LOADING:-ready}
+
+  On the control plane, give its install this node's key and root:
+
+    sudo grep '^VLLM_API_KEY=' ${settings} | cut -d= -f2- | tr -d '"' > node.key
+    docker exec ut-caddy cat /data/caddy/pki/authorities/local/root.crt > node-root.crt
+    sudo ut-install --inference-from ${surface} \\
+        --inference-key-file node.key --inference-ca-file node-root.crt
+
+  Status         cd ${INSTALL_DIR} && docker compose ps
+  Logs           cd ${INSTALL_DIR} && docker compose logs -f nim-llm
+  Install log    ${LOG_FILE}
+
+EOF
+}
+
 print_summary() {
     local env_file="$INSTALL_DIR/.env" inference=""
+    if this_machine_is_a_compute_node; then
+        print_compute_node_summary
+        return 0
+    fi
     [[ -z "$INFERENCE_STILL_LOADING" ]] \
         || inference=$'\n'"  Inference      still loading: ${INFERENCE_STILL_LOADING} — the platform works meanwhile"
 

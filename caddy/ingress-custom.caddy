@@ -21,6 +21,8 @@
     metrics {
         per_host
     }
+    # The SNI default every mode carries: see ingress-internal.caddy.
+    default_sni {$UT_INFERENCE_ADDRESS:understand.local}
 }
 
 (tls) {

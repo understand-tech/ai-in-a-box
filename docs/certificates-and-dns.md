@@ -347,6 +347,10 @@ COMPOSE_PROFILES="nim"
 UT_INFERENCE_ADDRESS=<name or address the control plane reaches it by>
 ```
 
+Write these in the node's `/etc/understandtech/local.env`, then run
+`sudo ut-install` there. It starts no authority and no platform, and ends by
+printing the commands the control plane needs.
+
 The engine stays on loopback. Caddy serves it at
 `https://<UT_INFERENCE_ADDRESS>:8444/v1`, with a certificate from its own
 authority, and refuses with `401` any request that does not carry the node's

@@ -9,10 +9,15 @@
 # Every mode carries the same metrics option: the global block lives in this
 # file, and a Caddyfile has only one. Hosts that no site names are pooled under
 # "_other", so a forged Host header cannot grow the counters.
+#
+# A client calling an IP sends no SNI, and Caddy would then look for a
+# certificate under its container's address, not the one called: default_sni
+# lets a compute node be reached by IP. Caddy does not nest {$VAR:default}.
 {
     metrics {
         per_host
     }
+    default_sni {$UT_INFERENCE_ADDRESS:understand.local}
 }
 
 (tls) {

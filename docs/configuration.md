@@ -200,8 +200,10 @@ it is still taken only if proven here. When neither is, the install stops and li
 the models proven on this GPU.
 
 On vLLM it adds `compose.engine-vllm.yaml`, which runs the engine from
-`VLLM_ENGINE_IMAGE` as `vllm serve <VLLM_ENGINE_MODEL> <VLLM_ENGINE_ARGS>`, under the
-same service name, GPU, port and cache. A machine that starts no engine of its own,
+`VLLM_ENGINE_IMAGE` as `vllm serve <VLLM_ENGINE_MODEL> --served-model-name
+<VLLM_ENGINE_MODEL> <VLLM_ENGINE_ARGS>`, under the same service name, GPU, port and
+cache. The served name stays the model's even offline, where vLLM would otherwise
+serve it under its local path. A machine that starts no engine of its own,
 installed with `--no-gpu` or `--inference-from`, takes the model's names only.
 
 The model is kept by name, as `UT_MODEL` in `local.env`, and its entry is applied
@@ -474,7 +476,8 @@ UT_INFERENCE_ADDRESS="10.42.0.7"
 ```
 
 `UT_INFERENCE_ADDRESS` is the name or address the control plane reaches the node
-by; the certificate is issued for it. `UT_INFERENCE_BIND_ADDRESS` narrows the
+by; the certificate is issued for it, and served to a client that calls an IP
+and so names none. `UT_INFERENCE_BIND_ADDRESS` narrows the
 interfaces port 8444 listens on, `UT_INFERENCE_PORT` moves it.
 
 Do not set `NIM_LLM_BIND_ADDRESS` to anything but loopback: the engine's own port

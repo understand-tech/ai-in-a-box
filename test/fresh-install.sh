@@ -88,6 +88,7 @@ case "$1 $2" in
     "compose pull")       exit "${PULL_EXIT:-0}" ;;
     "compose --progress") case "$*" in *" pull") exit "${PULL_EXIT:-0}" ;; esac ;;
     "login "*)            cat > /stub/docker-login-stdin ;;
+    "compose exec")       case "$*" in *step-ca*) [ "${STEP_CA_RUNS:-yes}" = yes ] ;; esac ;;
     *)                    exit 0 ;;
 esac
 DOCKER
@@ -151,6 +152,7 @@ PROBE
         -e MONGO_VOLUME_EXISTS="${MONGO_VOLUME_EXISTS:-no}" \
         -e NETWORK_CREATE_EXIT="${NETWORK_CREATE_EXIT:-0}" \
         -e PULL_EXIT="${PULL_EXIT:-9}" \
+        -e STEP_CA_RUNS="${STEP_CA_RUNS:-yes}" \
         -e DISK_AVAIL_BYTES="${DISK_AVAIL_BYTES:-}" \
         "${WALK_IMAGE:-$DEBIAN_IMAGE}" bash /w/walk-$state.sh >/dev/null 2>&1
 }
@@ -199,6 +201,9 @@ state_setup() {
             echo 'install -d /etc/ssl/certs && cp /w/compute/public.pem /etc/ssl/certs/ca-certificates.crt' ;;
         compute_node_from_a_machine_without_gpu)
             echo 'rm -f /stub/nvidia-smi && install -d /etc/ssl/certs && cp /w/compute/public.pem /etc/ssl/certs/ca-certificates.crt' ;;
+        # A second machine set up the way docs/certificates-and-dns.md says, reached by IP.
+        compute_node_runs_through)
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'COMPOSE_FILE="compose.yaml:compose.compute.yaml"\nCOMPOSE_PROFILES="nim"\nUT_INFERENCE_ADDRESS="192.0.2.10"\n'"'"' > /etc/understandtech/local.env' ;;
         # What every release before the engine had a key shipped, carried into local.env.
         engine_key_left_empty)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'VLLM_API_KEY="EMPTY"\n'"'"' > /etc/understandtech/local.env' ;;
@@ -517,6 +522,27 @@ the_summary_says_where_generation_comes_from() {
     output=$(output_of pointed_at_a_compute_node)
     grep -qF 'control plane — generation comes from https://node.example.test:8444/v1' <<< "$output" && return 0
     grep -E 'Role|EXIT=' <<< "$output"
+    return 1
+}
+
+# The authority belongs to the control plane: a compute node starts none, and
+# its install once stopped at the certificate policy, before autostart and
+# reporting, with the summary of a platform it does not run.
+a_compute_node_installs_to_the_end() {
+    local output
+    output=$(output_of compute_node_runs_through)
+    grep -q 'Installation complete' <<< "$output" && grep -q '^EXIT=0$' <<< "$output" && return 0
+    grep -E '^\[fail\]|^==>|^EXIT=' <<< "$output" | tail -5
+    return 1
+}
+
+a_compute_node_hands_the_control_plane_what_it_needs() {
+    local output
+    output=$(output_of compute_node_runs_through)
+    grep -qF 'compute node — serves inference at https://192.0.2.10:8444/v1' <<< "$output" \
+        && grep -qF -- '--inference-from https://192.0.2.10:8444' <<< "$output" \
+        && ! grep -q 'first-run wizard' <<< "$output" && return 0
+    grep -E 'Role|inference-from|wizard|EXIT=' <<< "$output"
     return 1
 }
 
@@ -999,6 +1025,7 @@ prepare_a_vllm_entry
 
 run_install_from_state bare
 PULL_EXIT=0 run_install_from_state install_runs_through
+PULL_EXIT=0 STEP_CA_RUNS=no run_install_from_state compute_node_runs_through
 INSTALL_TOKEN= INSTALL_COMMAND=/srv/clone/ut-install \
     run_install_from_state launched_from_a_checkout
 INSTALL_TOKEN= INSTALL_COMMAND=/srv/clone/ut-install \
@@ -1110,6 +1137,10 @@ property "a control plane without a GPU is installed as with --no-gpu" \
     a_control_plane_without_a_gpu_goes_without_it
 property "the summary says where generation comes from" \
     the_summary_says_where_generation_comes_from
+property "a compute node installs to the end, with no authority of its own" \
+    a_compute_node_installs_to_the_end
+property "a compute node's summary hands the control plane what it needs" \
+    a_compute_node_hands_the_control_plane_what_it_needs
 property "a node reached over plain http is refused before anything is written" \
     a_compute_node_over_http_is_refused
 
