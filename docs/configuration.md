@@ -446,14 +446,13 @@ file can arrange.
 
 ## Running more than one stack on a machine
 
-Five variables make a stack independent of anything else on the machine:
+Four variables make a stack independent of anything else on the machine:
 
 ```bash
 COMPOSE_PROJECT_NAME="staging"
 RESOURCE_PREFIX="staging"
 CONTAINER_PREFIX="staging"
 DATA_ROOT="/var/lib/understandtech-staging"
-MONGODB_HOST_PORT="27118"
 ```
 
 `COMPOSE_PROJECT_NAME` is not redundant. Four services carry no fixed container

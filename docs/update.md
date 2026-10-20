@@ -181,6 +181,10 @@ curl -s localhost:8000/v1/models`, or from another machine through a compute
 node's surface. A `NIM_LLM_BIND_ADDRESS` or `NIM_LLM_HOST_PORT` left in
 `local.env` is now ignored.
 
+**Neither does MongoDB.** `127.0.0.1:27018` never answered either, for the same
+reason. Reach the database with `docker compose exec mongodb mongosh`; a
+`MONGODB_HOST_PORT` left in `local.env` is ignored.
+
 ## If the update goes wrong
 
 Nothing is rolled back and nothing is lost: re-running the same command resumes.

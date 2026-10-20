@@ -1628,11 +1628,31 @@ each_argument_reaches_vllm_intact() {
     return 1
 }
 
+# Docker publishes no port for a container whose networks are all internal: such
+# a declaration reads as a way in and gives none.
+no_port_is_declared_where_docker_publishes_none() {
+    command -v jq >/dev/null || { echo "jq absent"; return 1; }
+    local files config dead=""
+    for files in "compose.yaml" "compose.yaml compose.appbuilder.yaml" "compose.yaml compose.compute.yaml"; do
+        config=$( cd "$WORK_DIR" && COMPOSE_PROFILES=nim VLLM_API_KEY=k \
+            docker compose $(printf -- '-f %s ' $files) config --format json 2>/dev/null )
+        [[ -n "$config" ]] || { echo "nothing rendered from ${files}"; return 1; }
+        dead+=$(jq -r --arg files "$files" '.networks as $n | .services | to_entries[]
+            | select((.value.ports // []) | length > 0)
+            | select(.value.network_mode == null)
+            | select([(.value.networks // {"default": null}) | keys[] | ($n[.] // {}).internal // false] | all)
+            | "\(.key), from \($files)"' <<< "$config")$'\n'
+    done
+    [[ -z "${dead//$'\n'/}" ]] && return 0
+    echo "declared and never published:"; printf '%s' "$dead" | grep .
+    return 1
+}
+
 overrides_isolate_every_resource() {
     local rendered stray
     rendered=$( cd "$WORK_DIR" && \
         COMPOSE_PROJECT_NAME=isolated RESOURCE_PREFIX=isolated CONTAINER_PREFIX=isolated \
-        DATA_ROOT=/var/lib/isolated MONGODB_HOST_PORT=27118 \
+        DATA_ROOT=/var/lib/isolated \
         docker compose -f compose.yaml config 2>/dev/null )
     stray=$(grep -oE '^ *(container_name|name): ut-[a-z0-9_-]+' <<< "$rendered" | awk '{print $2}' | sort -u)
     [[ -n "$stray" ]] && { echo "not isolated: $(tr '\n' ' ' <<< "$stray")"; return 1; }
@@ -2447,6 +2467,8 @@ if [[ -f "$REPO_ROOT/compose.compute.yaml" ]]; then
         a_model_on_vllm_runs_in_place_of_nim
     capability "each argument of the model reaches vLLM whole, JSON included" \
         each_argument_reaches_vllm_intact
+    capability "no service declares a port Docker never publishes" \
+        no_port_is_declared_where_docker_publishes_none
     capability "overriding the prefixes isolates every resource" \
         overrides_isolate_every_resource
 fi
