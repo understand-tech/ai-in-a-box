@@ -465,9 +465,10 @@ Add `UT_HTTP_PORT` and `UT_HTTPS_PORT` if the first stack already holds 80 and
 
 ## Opening inference to another machine
 
-The inference engine listens on `127.0.0.1` only, and checks no key. Another
-machine reaches it through a compute node's Caddy, which serves it on port 8444
-over TLS and answers `401` to any request without the node's `VLLM_API_KEY`:
+The inference engine checks no key. Another machine reaches it through a
+compute node's Caddy, which serves it on port 8444 over TLS and answers `401` to
+any request without the node's `VLLM_API_KEY`. `sudo ut-install --compute
+10.42.0.7` writes what that takes into `local.env`:
 
 ```bash
 COMPOSE_FILE="compose.yaml:compose.compute.yaml"
@@ -475,8 +476,8 @@ UT_INFERENCE_ADDRESS="10.42.0.7"
 ```
 
 `UT_INFERENCE_ADDRESS` is the name or address the control plane reaches the node
-by; the certificate is issued for it, and served to a client that calls an IP
-and so names none. `UT_INFERENCE_BIND_ADDRESS` narrows the
+by, never a `.local` name; the certificate is issued for it, and served to a
+client that calls an IP and so names none. `UT_INFERENCE_BIND_ADDRESS` narrows the
 interfaces port 8444 listens on, `UT_INFERENCE_PORT` moves it.
 
 The engine publishes no port on the host: it checks no key, and reaches other

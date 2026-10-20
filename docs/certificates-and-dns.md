@@ -339,19 +339,18 @@ anything to a customer.
 
 The role itself. `compose.compute.yaml` keeps the inference engines and Caddy
 and switches off everything belonging to the control plane, so the second
-machine runs no database and no application:
+machine runs no database and no application. On that machine:
 
 ```bash
-COMPOSE_FILE="compose.yaml:compose.compute.yaml"
-COMPOSE_PROFILES="nim"
-UT_INFERENCE_ADDRESS=<name or address the control plane reaches it by>
+sudo ut-install --compute <IP or DNS name the control plane reaches it by>
 ```
 
-Write these in the node's `/etc/understandtech/local.env`, then run
-`sudo ut-install` there. It starts no authority and no platform, and ends by
-printing the commands the control plane needs.
+The address cannot be a `.local` name: the control plane's containers do not
+resolve mDNS. The install starts no authority and no platform, asks for no
+domain, and ends by printing the commands the control plane needs. Later runs
+keep the role.
 
-The engine stays on loopback. Caddy serves it at
+The engine publishes no port of its own. Caddy serves it at
 `https://<UT_INFERENCE_ADDRESS>:8444/v1`, with a certificate from its own
 authority, and refuses with `401` any request that does not carry the node's
 `VLLM_API_KEY` as `Authorization: Bearer`. The key is in the node's
@@ -361,7 +360,8 @@ authority, and refuses with `401` any request that does not carry the node's
 docker exec ut-caddy cat /data/caddy/pki/authorities/local/root.crt
 ```
 
-On the control plane, give the three to the install. It takes the inference
+On the control plane, give the three to the install, naming the node by the
+same address. It takes the inference
 from the node instead of starting an engine, and its services trust the node's
 root on top of the public ones:
 

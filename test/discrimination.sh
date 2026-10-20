@@ -528,6 +528,10 @@ if grep -q 'mdns_applies' "$REPO_ROOT/setup-autostart.sh"; then
         "a compute node on .local publishes none of the platform's names" \
         "sed -i.bak 's|^    if this_machine_is_a_compute_node; then\$|    if false; then|' setup-autostart.sh"
 
+    capability_discriminates "a compute node asking for the platform's DNS records" \
+        "a compute node asks for no DNS record but its inference name" \
+        "sed -i.bak 's|^    if this_machine_is_a_compute_node; then\$|    if false; then|' setup-autostart.sh"
+
     capability_discriminates "a stale publisher left enabled after the move" \
         "moving off .local withdraws a publisher installed earlier" \
         "sed -i.bak 's|^        withdraw_mdns_publisher$|        :|' setup-autostart.sh"
@@ -1018,6 +1022,22 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
     install_walk_discriminates "a compute node reached over plain http" \
         "a node reached over plain http is refused before anything is written" \
         "sed -i.bak 's|\\^https://\\[\\^/\\]+|^https?://[^/]+|' ut-install"
+
+    install_walk_discriminates "a control plane pointed at a node only mDNS can name" \
+        "a node named by mDNS is refused before anything is written" \
+        "sed -i.bak '/^    elif names_an_mdns_host \"\\\$(host_of_url/d' ut-install"
+
+    install_walk_discriminates "--compute that leaves the compute overlay out" \
+        "a compute node is installed with one flag, and asked for no domain" \
+        "sed -i.bak '/^        \*) env_set \"\\\$local_file\" COMPOSE_FILE \"\\\${compose_files}:compose.compute.yaml\" ;;\$/d' ut-install"
+
+    install_walk_discriminates "--compute that takes a .local name" \
+        "a compute node named by mDNS is refused before anything is written" \
+        "sed -i.bak 's|^names_an_mdns_host() {\$|names_an_mdns_host() { return 1;|' ut-install"
+
+    install_walk_discriminates "--compute that takes --no-gpu too" \
+        "a compute node without its GPU is refused before anything is written" \
+        "sed -i.bak 's|^    if \$NO_GPU \|\| \[\[ -n \"\\\$INFERENCE_FROM\" \]\]; then\$|    if false; then|' ut-install"
 
     install_walk_discriminates "a control plane with a GPU stripped of it" \
         "a control plane with a GPU keeps it for llm and starts no engine" \
