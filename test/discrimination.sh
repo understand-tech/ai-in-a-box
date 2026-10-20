@@ -507,6 +507,10 @@ capability_discriminates "the machine surface pointed at something else" \
     "the machine-facing surface takes its certificate from that authority" \
     "sed -i.bak 's|step-ca:9000/acme|acme-v02.api.letsencrypt.org|' caddy/internal-surface.caddy"
 
+capability_discriminates "a database port declared again, which Docker never publishes" \
+    "no service declares a port Docker never publishes" \
+    "sed -i.bak 's|^    container_name: \${CONTAINER_PREFIX:-ut}-mongodb\$|&\\n    ports:\\n      - \"127.0.0.1:27018:27017\"|' compose.yaml"
+
 capability_discriminates "a resource left unprefixed" \
     "overriding the prefixes isolates every resource" \
     "sed -i.bak 's|name: \${RESOURCE_PREFIX:-ut}-redis-data|name: ut-redis-data|' compose.yaml"
