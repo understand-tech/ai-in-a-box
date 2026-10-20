@@ -238,7 +238,9 @@ When the other machine is a compute node, `--inference-from` says so: it sets th
 address, the node's key and the trust in its root in one go — see
 [adding a second machine](certificates-and-dns.md#adding-a-second-machine). No
 engine starts here. A machine with a GPU keeps it for `llm`; one without is
-installed as with `--no-gpu`.
+installed as with `--no-gpu`. The compute node itself is installed with
+`sudo ut-install --compute <its IP or DNS name>`; neither side takes a `.local`
+name for the other.
 
 The summary printed at the end names the role the machine was installed as, and
 it is kept in the install log.
