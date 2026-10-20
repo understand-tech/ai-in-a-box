@@ -17,13 +17,14 @@ cleanup() {
 trap cleanup EXIT
 
 if [[ -t 1 ]]; then
-    GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; DIM=$'\033[2m'; BOLD=$'\033[1m'; NC=$'\033[0m'
+    GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; YELLOW=$'\033[1;33m'; DIM=$'\033[2m'; BOLD=$'\033[1m'; NC=$'\033[0m'
 else
-    GREEN=""; RED=""; DIM=""; BOLD=""; NC=""
+    GREEN=""; RED=""; YELLOW=""; DIM=""; BOLD=""; NC=""
 fi
 
 PASSED=0
 FAILED=0
+NOT_RUN=()
 FAILURES=()
 
 group() { printf '\n%s%s%s\n' "$BOLD" "$1" "$NC"; }
@@ -44,6 +45,22 @@ capability() {
         FAILED=$((FAILED + 1))
         FAILURES+=("$description")
     fi
+}
+
+# A capability that cannot mean anything on this machine is named, never
+# counted as verified: the summary lists it apart.
+not_run_here() {
+    local description=$1 reason=$2
+    [[ -n "${CAPABILITY_FILTER:-}" && "$description" != *"$CAPABILITY_FILTER"* ]] && return 0
+    printf '  %s–%s %s %s(not run here: %s)%s\n' "$YELLOW" "$NC" "$description" "$DIM" "$reason" "$NC"
+    NOT_RUN+=("$description")
+}
+
+docker_runs_arm64_here() {
+    case "$(docker info --format '{{.Architecture}}' 2>/dev/null)" in
+        aarch64|arm64) return 0 ;;
+    esac
+    return 1
 }
 
 # A .env with only what compose cannot render without: image references,
@@ -214,15 +231,6 @@ PROBE
     return 1
 }
 
-# The folder's registry runs on this machine to load the images, so the folder
-# is prepared for the architecture Docker runs here, not the box's.
-the_architecture_docker_runs_here() {
-    case "$(docker info --format '{{.Architecture}}')" in
-        aarch64|arm64) echo arm64 ;;
-        *) echo amd64 ;;
-    esac
-}
-
 # A folder written the way ut-get --prepare writes it, then loaded the way a box
 # with no network loads it, ut-install's own functions on both sides. The two
 # images are first removed, so whatever starts afterwards came from the folder.
@@ -234,7 +242,6 @@ folder_load_report() {
     printf '{"auths":{}}\n' > "$probe/auth/auth.json"
     (
         set +u; source "$REPO_ROOT/ut-get"
-        BOX_ARCHITECTURE=$(the_architecture_docker_runs_here)
         printf '%s\n' "${BUSYBOX_IMAGE%%:*}@${BUSYBOX_IMAGE#*@}" "${ALPINE_INDEX_IMAGE%%:*}@${ALPINE_INDEX_IMAGE#*@}" \
             | copy_the_images_into "$probe/folder" "$probe/auth"
         copy_the_tools_into "$probe/folder" "$probe/auth"
@@ -2581,8 +2588,13 @@ fi
 
 if grep -q 'step_images_from_a_folder' "$REPO_ROOT/ut-install"; then
     group "A box with no network"
-    capability "images from a prepared folder start under the digest the release names, offline" \
-        images_from_a_folder_start_under_their_digest
+    if docker_runs_arm64_here; then
+        capability "images from a prepared folder start under the digest the release names, offline" \
+            images_from_a_folder_start_under_their_digest
+    else
+        not_run_here "images from a prepared folder start under the digest the release names, offline" \
+            "the folder's registry is arm64, as the box is"
+    fi
     capability "a folder holding an image the release does not name is refused" \
         a_folder_image_the_release_does_not_name_is_refused
     capability "a folder whose tool is not the one the release names is refused" \
@@ -3360,6 +3372,7 @@ capability "a second install is added after the first, never over it" \
     a_second_install_is_added_after_the_first
 
 printf '\n%s%d verified%s' "$GREEN" "$PASSED" "$NC"
+(( ${#NOT_RUN[@]} )) && printf ', %s%d not run here%s' "$YELLOW" "${#NOT_RUN[@]}" "$NC"
 if (( FAILED )); then
     printf ', %s%d failing%s\n' "$RED" "$FAILED" "$NC"
     printf '\nNot working:\n'
