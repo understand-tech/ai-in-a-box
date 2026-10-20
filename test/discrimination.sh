@@ -29,7 +29,7 @@ fresh_copy() {
     rm -rf "$COPY"
     mkdir -p "$COPY"
     ( cd "$REPO_ROOT" && tar -cf - release.env compose.yaml compose.appbuilder.yaml \
-        compose.compute.yaml compose.no-gpu.yaml compose.backup-mount.yaml compose.backup-network.yaml compose.remote-inference.yaml \
+        compose.compute.yaml compose.no-gpu.yaml compose.backup-mount.yaml compose.backup-network.yaml compose.remote-inference.yaml compose.engine-vllm.yaml models \
         Caddyfile caddy metrics backup-files.sh \
         setup-autostart.sh ut-logs-archive ut-install ut-certificate ut-verify ut-get ut-license ut-status ut-report ut-send ut-setup go.mod cmd appbuilder docs \
         packaging README.md test .github 2>/dev/null ) | tar -xf - -C "$COPY" 2>/dev/null
@@ -384,6 +384,14 @@ capability_discriminates "a compute node that opens its engine port to the netwo
 capability_discriminates "a compute node that starts without an engine key" \
     "a compute node lets other machines reach its engine only with its key" \
     "sed -i.bak 's|VLLM_API_KEY: \${VLLM_API_KEY:?ut-install generates it}|VLLM_API_KEY: \${VLLM_API_KEY:-}|' compose.compute.yaml"
+
+capability_discriminates "the arguments of a vLLM model passed as one" \
+    "each argument of the model reaches vLLM whole, JSON included" \
+    "sed -i.bak 's|--port 8000 \\\$\\\$VLLM_ENGINE_ARGS|--port 8000 \\\\\"\$\$VLLM_ENGINE_ARGS\\\\\"|' compose.engine-vllm.yaml"
+
+capability_discriminates "a vLLM engine checked where NIM answers" \
+    "a model on vLLM runs in place of NIM, with the same GPU, port and cache" \
+    "sed -i.bak '/localhost:8000\\/health/d; /^    healthcheck:\$/d' compose.engine-vllm.yaml"
 
 capability_discriminates "a caller of the compute node left on the public roots" \
     "every service that calls a compute node trusts its root" \
@@ -939,6 +947,18 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
         "an OpenAI key already given is never replaced" \
         "sed -i.bak '/^    \\[\\[ -n \"\\\$(env_get \"\\\$env_file\" OA_KEY/d' ut-install"
 
+    install_walk_discriminates "a model on vLLM left on NIM's engine" \
+        "a model on vLLM brings its engine, and its arguments whole" \
+        "sed -i.bak '/^        vllm:\\*) env_set /d' ut-install"
+
+    install_walk_discriminates "a model's arguments rewritten in double quotes" \
+        "a model on vLLM brings its engine, and its arguments whole" \
+        "sed -i.bak 's|\\[A-Z_\\]\\*=\\*) put_the_line_in_place_of_its_key \"\\\$local_file\" \"\\\$line\" ;;|[A-Z_]*=*) env_set \"\$local_file\" \"\${line%%=*}\" \"\${line#*=}\" ;;|' ut-install"
+
+    install_walk_discriminates "a model nobody listed taken at its word" \
+        "a model nobody listed is refused before anything is written" \
+        "sed -i.bak 's|^die_on_a_model_nobody_listed() {\$|die_on_a_model_nobody_listed() { return 0;|' ut-install"
+
     install_walk_discriminates "allowed origins left on the old address" \
         "the allowed origins follow the address when it changes" \
         "sed -i.bak '/^        move_the_allowed_origins_to_the_new_domain /d' ut-install"
@@ -1012,6 +1032,14 @@ if grep -q 'checkouts_holding_settings' "$REPO_ROOT/ut-install"; then
     install_walk_discriminates "a required variable nobody generates" \
         "every variable the stack requires has a value" \
         "sed -i.bak 's| GPU_VM_API_TOKEN\\([ )]\\)|\\1|' ut-install"
+
+discriminates "a model entry with an engine nobody knows" \
+    "model-without-engine" \
+    "sed -i.bak 's/^MODEL_ENGINE=\"nim\"/MODEL_ENGINE=\"tgi\"/' models/qwen3.8-27b-nvfp4.env"
+
+discriminates "the shipped model's entry drifting from the release" \
+    "shipped-model-drifted" \
+    "sed -i.bak 's|^LLM_MODEL=\"Qwen/Qwen3.8-27B\"|LLM_MODEL=\"Qwen/Qwen3.8-14B\"|' models/qwen3.8-27b-nvfp4.env"
 
 if grep -q 'check_the_package_stamps_the_commit_it_was_built_from' "$REPO_ROOT/test/invariants.sh"; then
     discriminates "a package that says nothing about the code inside it" \

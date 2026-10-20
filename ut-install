@@ -50,6 +50,7 @@ REPORTING_EVERY=""
 INFERENCE_FROM=""
 INFERENCE_KEY_FILE=""
 INFERENCE_CA_FILE=""
+MODEL_ID=""
 HOST_CA_BUNDLE="${UT_HOST_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}"
 UT_SEND="${UT_SEND:-ut-send}"
 CURRENT_STEP=""
@@ -126,6 +127,8 @@ Options
                        the accelerator check, never a driver that stopped
                        answering. A settings file already carrying
                        compose.no-gpu.yaml says the same thing.
+  --model ID           Serve one of the models in models/, on the engine its
+                       entry names, NIM or vLLM. Kept by later runs.
   --inference-from URL, --inference-key-file PATH, --inference-ca-file PATH
                        Take the inference from a compute node: its address
                        (https://<node>:8444), its VLLM_API_KEY and its Caddy
@@ -1004,6 +1007,56 @@ write_the_settings_a_control_plane_with_an_accelerator_needs() {
     log_info "No engine started here; the GPU stays with llm, which searches the documents"
 }
 
+models_listed() {
+    local entry
+    for entry in "$INSTALL_DIR"/models/*.env; do
+        [[ -f "$entry" ]] && basename "$entry" .env
+    done
+}
+
+die_on_a_model_nobody_listed() {
+    [[ -z "$MODEL_ID" || -f "$INSTALL_DIR/models/${MODEL_ID}.env" ]] && return 0
+    log_error "No model called ${MODEL_ID} in ${INSTALL_DIR}/models. This release serves:"
+    models_listed | sed 's/^/  /' >&2
+    log_error "  Give one of those to --model, or leave it out to keep the model already set."
+    exit 1
+}
+
+# Copied line by line rather than through env_set: a passthrough argument holds
+# JSON in single quotes, and env_set would wrap it in double quotes that compose
+# then reads as the end of the value.
+put_the_line_in_place_of_its_key() {
+    local local_file=$1 line=$2 key tmp
+    key=${line%%=*}
+    tmp=$(mktemp)
+    grep -v -E "^[[:space:]]*${key}=" "$local_file" > "$tmp" || true
+    printf '%s\n' "$line" >> "$tmp"
+    cat "$tmp" > "$local_file"
+    rm -f "$tmp"
+}
+
+write_the_settings_the_model_needs() {
+    local local_file=$1 entry engine line compose_files
+    [[ -n "$MODEL_ID" ]] || return 0
+    entry="$INSTALL_DIR/models/${MODEL_ID}.env"
+    engine=$(env_get "$entry" MODEL_ENGINE)
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        case "$line" in
+            MODEL_ENGINE=*) ;;
+            [A-Z_]*=*) put_the_line_in_place_of_its_key "$local_file" "$line" ;;
+        esac
+    done < "$entry"
+
+    compose_files=$(env_get "$local_file" COMPOSE_FILE 2>/dev/null || true)
+    [[ -n "$compose_files" ]] || compose_files=$(release_declares COMPOSE_FILE || echo "compose.yaml")
+    case "$engine:$compose_files" in
+        vllm:*compose.engine-vllm.yaml*) ;;
+        vllm:*) env_set "$local_file" COMPOSE_FILE "${compose_files}:compose.engine-vllm.yaml" ;;
+        *:*compose.engine-vllm.yaml*) env_set "$local_file" COMPOSE_FILE "${compose_files//:compose.engine-vllm.yaml/}" ;;
+    esac
+    log_info "Model ${MODEL_ID}, served by $( [[ "$engine" == vllm ]] && echo vLLM || echo NIM )"
+}
+
 BACKUP_DESTINATION_MARKER=".understandtech-backup-destination"
 
 filesystem_of_the_nearest_existing() {
@@ -1260,6 +1313,7 @@ step_configure() {
         move_the_allowed_origins_to_the_new_domain "$local_file" "$previous_domain"
     fi
 
+    write_the_settings_the_model_needs "$local_file"
     write_the_settings_a_compute_node_needs "$local_file"
     if this_machine_goes_without_its_accelerator; then
         write_the_settings_a_machine_without_an_accelerator_needs "$local_file"
@@ -1782,6 +1836,7 @@ parse_arguments() {
             --inference-from)     INFERENCE_FROM="${2:?--inference-from needs an address}"; shift ;;
             --inference-key-file) INFERENCE_KEY_FILE="${2:?--inference-key-file needs a path}"; shift ;;
             --inference-ca-file)  INFERENCE_CA_FILE="${2:?--inference-ca-file needs a path}"; shift ;;
+            --model)              MODEL_ID="${2:?--model needs one of the models in models/}"; shift ;;
             -h|--help)        usage; exit 0 ;;
             *)                log_error "Unknown option: $1"; usage; exit 2 ;;
         esac
@@ -1793,6 +1848,7 @@ main() {
     parse_arguments "$@"
     die_on_a_compute_node_given_wrong
     resolve_install_dir
+    die_on_a_model_nobody_listed
 
     if [[ "$ACTION" == "check" ]]; then
         DOMAIN=$(domain_to_check)

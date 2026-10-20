@@ -1572,6 +1572,48 @@ every_engine_caller_trusts_the_compute_node() {
     return 1
 }
 
+VLLM_TEST_ARGS='--trust-remote-code --max-model-len 262144 --override-generation-config {"temperature":0.2,"top_p":0.9} --speculative-config {"method":"dflash","num_speculative_tokens":7}'
+
+rendered_vllm_engine() {
+    ( cd "$WORK_DIR" && COMPOSE_PROFILES=nim VLLM_ENGINE_IMAGE="registry.example/vllm@sha256:$(printf '%064d' 0)" \
+        VLLM_ENGINE_MODEL=org/model VLLM_ENGINE_ARGS="$VLLM_TEST_ARGS" \
+        docker compose -f compose.yaml -f compose.engine-vllm.yaml config --format json 2>/dev/null )
+}
+
+# The engine keeps everything a box reads it by: name, GPU, loopback port, cache.
+a_model_on_vllm_runs_in_place_of_nim() {
+    command -v jq >/dev/null || { echo "jq absent"; return 1; }
+    local engine
+    engine=$(rendered_vllm_engine | jq '.services["nim-llm"]')
+    jq -e --arg image "registry.example/vllm@sha256:$(printf '%064d' 0)" '
+        .image == $image
+        and (.entrypoint | join(" ") | test("vllm serve"))
+        and (.healthcheck.test | join(" ") | test("localhost:8000/health"))
+        and any(.deploy.resources.reservations.devices[]?; .driver == "nvidia")
+        and any(.ports[]?; .host_ip == "127.0.0.1" and .target == 8000)
+        and any(.volumes[]?; .target == "/opt/nim/.cache")' <<< "$engine" >/dev/null && return 0
+    echo "the vLLM engine renders as: $(jq -c '{image, entrypoint, healthcheck: .healthcheck.test, ports}' <<< "$engine" 2>/dev/null)"
+    return 1
+}
+
+# vLLM reads JSON straight from its arguments, so each one must reach it whole.
+# A stub vllm prints what it was given, one argument per line.
+each_argument_reaches_vllm_intact() {
+    command -v jq >/dev/null || { echo "jq absent"; return 1; }
+    local script received expected
+    script=$(rendered_vllm_engine | jq -r '.services["nim-llm"].entrypoint[2]' | sed 's/\$\$/$/g')
+    received=$(docker run --rm -e VLLM_ENGINE_MODEL=org/model -e VLLM_ENGINE_ARGS="$VLLM_TEST_ARGS" \
+        --entrypoint /bin/sh "$ALPINE_IMAGE" -c '
+            mkdir -p /stub && printf "#!/bin/sh\nfor a in \"\$@\"; do echo \"\$a\"; done\n" > /stub/vllm && chmod +x /stub/vllm
+            PATH=/stub:$PATH; '"$script" 2>&1)
+    expected=$(printf '%s\n' serve org/model --host 0.0.0.0 --port 8000 --trust-remote-code --max-model-len 262144 \
+        --override-generation-config '{"temperature":0.2,"top_p":0.9}' \
+        --speculative-config '{"method":"dflash","num_speculative_tokens":7}')
+    [[ "$received" == "$expected" ]] && return 0
+    echo "vllm received:"; echo "$received"
+    return 1
+}
+
 overrides_isolate_every_resource() {
     local rendered stray
     rendered=$( cd "$WORK_DIR" && \
@@ -2385,6 +2427,10 @@ if [[ -f "$REPO_ROOT/compose.compute.yaml" ]]; then
         the_compute_engine_is_reached_only_through_its_key
     capability "every service that calls a compute node trusts its root" \
         every_engine_caller_trusts_the_compute_node
+    capability "a model on vLLM runs in place of NIM, with the same GPU, port and cache" \
+        a_model_on_vllm_runs_in_place_of_nim
+    capability "each argument of the model reaches vLLM whole, JSON included" \
+        each_argument_reaches_vllm_intact
     capability "overriding the prefixes isolates every resource" \
         overrides_isolate_every_resource
 fi
