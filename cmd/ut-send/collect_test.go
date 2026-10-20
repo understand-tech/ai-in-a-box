@@ -61,7 +61,8 @@ func machineAnswering(t *testing.T, answers map[string]string) machine {
 
 var everyAnswer = map[string]string{
 	"docker ps -aq --filter label=com.docker.compose.project=understandtech": "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\n",
-	"docker inspect": inspected,
+	"docker inspect":                                     inspected,
+	"docker container inspect":                           "/usr/share/understandtech/compose.yaml\n",
 	"docker exec eeee redis-cli SMEMBERS rq:queues":      "rq:queue:default\n",
 	"docker exec eeee redis-cli LLEN rq:queue:default":   "3\n",
 	"docker exec eeee redis-cli ZCARD rq:failed:default": "1\n",
@@ -183,7 +184,8 @@ func TestCollectQueuesUtReportsReportWithHealthAndTools(t *testing.T) {
 	if err := json.Unmarshal(content, &report); err != nil {
 		t.Fatal(err)
 	}
-	if report["schema"] != float64(3) || report["health"] == nil || report["tools"] == nil || report["release"] != "2026.10.0" {
+	if report["schema"] != float64(4) || report["health"] == nil || report["tools"] == nil || report["release"] != "2026.10.0" ||
+		!reflect.DeepEqual(report["topology"], map[string]any{"role": "complete", "inference_roots": []any{}}) {
 		t.Fatalf("report %v", report)
 	}
 	warnings := report["warnings"].([]any)
