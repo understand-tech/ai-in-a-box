@@ -204,3 +204,16 @@ func TestNothingIsCollectedWithoutAYes(t *testing.T) {
 		t.Fatal("collected with no answer given")
 	}
 }
+
+func TestAComputeNodeHasNoFrontDoorCertificateToMiss(t *testing.T) {
+	answers := map[string]string{
+		"docker ps -aq --filter label=com.docker.compose.project=understandtech": "ffff\ngggg\n",
+		"docker inspect": "nim-llm running healthy 0 false ffff\ncaddy running healthy 0 false gggg\n",
+		"docker exec gggg printenv UT_DOMAIN": "compute-56.example.test\n",
+		"docker exec ffff curl -sf --max-time 5 http://127.0.0.1:8000/v1/models": `{"data": [{"id": "nemotron"}]}`,
+	}
+	health, warnings := machineAnswering(t, answers).health()
+	if len(health.Certificates) != 0 || !reflect.DeepEqual(warnings, []string{}) {
+		t.Fatalf("certificates %+v warnings %v", health.Certificates, warnings)
+	}
+}

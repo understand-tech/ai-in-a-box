@@ -457,9 +457,20 @@ func ingressCertificate(domain string) *x509.Certificate {
 	return chain[0]
 }
 
+// A compute node's Caddy serves inference under its own root, never the
+// platform's address: it has no api container, running or not.
+func servesThePlatform(rows []container) bool {
+	for _, row := range rows {
+		if row.service == "api" {
+			return true
+		}
+	}
+	return false
+}
+
 func certificates(run Runner, rows []container, ingress func(domain string) *x509.Certificate, warnings *[]string) []Certificate {
 	found := []Certificate{}
-	if caddy := runningContainer(rows, "caddy"); caddy != "" {
+	if caddy := runningContainer(rows, "caddy"); caddy != "" && servesThePlatform(rows) {
 		var certificate *x509.Certificate
 		if domain, err := run("", "docker", "exec", caddy, "printenv", "UT_DOMAIN"); err == nil && strings.TrimSpace(domain) != "" {
 			certificate = ingress(strings.TrimSpace(domain))
