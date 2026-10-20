@@ -271,7 +271,12 @@ check_ingress() {
         fi
     fi
 
-    if [[ "$domain" != *.local ]]; then
+    if this_machine_is_a_compute_node; then
+        local address; address="$(env_value UT_INFERENCE_ADDRESS)"
+        log_info "A compute node serves no platform: the control plane reaches it at"
+        echo "    https://${address:-$domain}:8444"
+        log_info "and that name, if it is one, is the only record it needs in your DNS."
+    elif [[ "$domain" != *.local ]]; then
         log_info "Outside .local: mDNS does not apply, so create these records in your own DNS,"
         log_info "pointing at this box (or at the proxy in front of it):"
         echo "    $domain  llms.$domain  assistants.$domain  admin.$domain  builder.$domain  *.apps.$domain"
