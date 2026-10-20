@@ -214,6 +214,15 @@ PROBE
     return 1
 }
 
+# The folder's registry runs on this machine to load the images, so the folder
+# is prepared for the architecture Docker runs here, not the box's.
+the_architecture_docker_runs_here() {
+    case "$(docker info --format '{{.Architecture}}')" in
+        aarch64|arm64) echo arm64 ;;
+        *) echo amd64 ;;
+    esac
+}
+
 # A folder written the way ut-get --prepare writes it, then loaded the way a box
 # with no network loads it, ut-install's own functions on both sides. The two
 # images are first removed, so whatever starts afterwards came from the folder.
@@ -225,6 +234,7 @@ folder_load_report() {
     printf '{"auths":{}}\n' > "$probe/auth/auth.json"
     (
         set +u; source "$REPO_ROOT/ut-get"
+        BOX_ARCHITECTURE=$(the_architecture_docker_runs_here)
         printf '%s\n' "${BUSYBOX_IMAGE%%:*}@${BUSYBOX_IMAGE#*@}" "${ALPINE_INDEX_IMAGE%%:*}@${ALPINE_INDEX_IMAGE#*@}" \
             | copy_the_images_into "$probe/folder" "$probe/auth"
         copy_the_tools_into "$probe/folder" "$probe/auth"
