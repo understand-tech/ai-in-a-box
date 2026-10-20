@@ -393,6 +393,10 @@ capability_discriminates "the arguments of a vLLM model passed as one" \
     "each argument of the model reaches vLLM whole, JSON included" \
     "sed -i.bak 's|--port 8000 \\\$\\\$VLLM_ENGINE_ARGS|--port 8000 \\\\\"\$\$VLLM_ENGINE_ARGS\\\\\"|' compose.engine-vllm.yaml"
 
+capability_discriminates "a vLLM engine that names its model by its local path" \
+    "each argument of the model reaches vLLM whole, JSON included" \
+    "sed -i.bak 's|--served-model-name [^ ]* ||' compose.engine-vllm.yaml"
+
 capability_discriminates "a vLLM engine checked where NIM answers" \
     "a model on vLLM runs in place of NIM, with the same GPU and cache, and no port of its own" \
     "sed -i.bak '/localhost:8000\\/health/d; /^    healthcheck:\$/d' compose.engine-vllm.yaml"
@@ -1019,6 +1023,14 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
         "the summary says where generation comes from" \
         "sed -i.bak 's|printf .control plane — generation comes from %s.|printf \"appliance — inference runs on this machine\"|' ut-install"
 
+    install_walk_discriminates "a compute node held to an authority it does not run" \
+        "a compute node installs to the end, with no authority of its own" \
+        "sed -i.bak '/^step_certificate_policy() {\$/,/^    fi\$/ s|this_machine_is_a_compute_node|false|' ut-install"
+
+    install_walk_discriminates "a compute node handed the summary of a platform it does not run" \
+        "a compute node's summary hands the control plane what it needs" \
+        "sed -i.bak '/^print_summary() {\$/,/^    fi\$/ s|this_machine_is_a_compute_node|false|' ut-install"
+
     install_walk_discriminates "a machine without a GPU left to find out its documents get no answer" \
         "a machine without a GPU is told its documents get no answer" \
         "sed -i.bak '/chats over documents answer nothing on this machine/d' ut-install"
@@ -1208,6 +1220,10 @@ if [[ -x "$REPO_ROOT/test/ingress.sh" ]]; then
     ingress_discriminates "an engine served to anyone" \
         "it refuses a request without the key" \
         "sed -i.bak '/respond @without_the_key 401/d' caddy/inference-surface.caddy"
+
+    ingress_discriminates "a compute node that answers only to its name" \
+        "it presents a certificate for that IP to a client that names none" \
+        "sed -i.bak '/default_sni/d' caddy/ingress-internal.caddy"
 
     ingress_discriminates "a recorder that filters out the handler Caddy counts under" \
         "the recorder keeps each request to a surface" \

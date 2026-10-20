@@ -1606,7 +1606,8 @@ each_argument_reaches_vllm_intact() {
         --entrypoint /bin/sh "$ALPINE_IMAGE" -c '
             mkdir -p /stub && printf "#!/bin/sh\nfor a in \"\$@\"; do echo \"\$a\"; done\n" > /stub/vllm && chmod +x /stub/vllm
             PATH=/stub:$PATH; '"$script" 2>&1)
-    expected=$(printf '%s\n' serve org/model --host 0.0.0.0 --port 8000 --trust-remote-code --max-model-len 262144 \
+    expected=$(printf '%s\n' serve org/model --served-model-name org/model --host 0.0.0.0 --port 8000 \
+        --trust-remote-code --max-model-len 262144 \
         --override-generation-config '{"temperature":0.2,"top_p":0.9}' \
         --speculative-config '{"method":"dflash","num_speculative_tokens":7}')
     [[ "$received" == "$expected" ]] && return 0

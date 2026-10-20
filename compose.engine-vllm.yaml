@@ -12,13 +12,16 @@ name: ${COMPOSE_PROJECT_NAME:-understandtech}
 # VLLM_ENGINE_ARGS is split on spaces and never unquoted: a JSON argument goes in
 # bare, with no space inside and no quotes around it.
 #
+# Offline, vLLM swaps the model's name for its snapshot path and serves it under
+# that path, which the usage receiver refuses as a label: the name is given back.
+#
 # The variables carry no ${...:?} guard on purpose: the test suites read every
 # such guard as a setting all installs require, and these only exist here.
 
 services:
   nim-llm:
     image: ${VLLM_ENGINE_IMAGE}
-    entrypoint: ["/bin/sh", "-c", "exec vllm serve \"$$VLLM_ENGINE_MODEL\" --host 0.0.0.0 --port 8000 $$VLLM_ENGINE_ARGS"]
+    entrypoint: ["/bin/sh", "-c", "exec vllm serve \"$$VLLM_ENGINE_MODEL\" --served-model-name \"$$VLLM_ENGINE_MODEL\" --host 0.0.0.0 --port 8000 $$VLLM_ENGINE_ARGS"]
     environment:
       VLLM_ENGINE_MODEL: ${VLLM_ENGINE_MODEL}
       VLLM_ENGINE_ARGS: ${VLLM_ENGINE_ARGS}
