@@ -538,25 +538,51 @@ check_images_are_pinned() {
     done <<< "$(env_keys)"
 }
 
-# A model a box can be told to serve names the engine that serves it, and, when
-# that engine is vLLM, the image by its digest: the same entry must start the
-# same engine on every box.
-check_every_model_names_its_engine() {
-    local entry id engine image
+# A model is served by one of its variants, NIM or vLLM, each pinned by digest: the
+# same entry must start the same engine on every box.
+entry_value() { sed -n "s/^$2=\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" "$1"; }
+
+check_every_model_has_a_pinned_variant() {
+    local entry id nim vllm
     for entry in "$REPO_ROOT"/models/*.env; do
         [[ -f "$entry" ]] || continue
         id=$(basename "$entry" .env)
-        engine=$(sed -n 's/^MODEL_ENGINE="\{0,1\}\([a-z]*\)"\{0,1\}$/\1/p' "$entry")
-        case "$engine" in
-            nim) ;;
-            vllm)
-                image=$(sed -n 's/^VLLM_ENGINE_IMAGE="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$entry")
-                [[ "$image" == *@sha256:* ]] \
-                    || report "model-image-not-pinned:${id}" \
-                        "models/${id}.env serves vLLM from ${image:-no image at all}, not pinned by digest" ;;
-            *) report "model-without-engine:${id}" \
-                    "models/${id}.env says MODEL_ENGINE=${engine:-nothing}: nim or vllm, nothing else" ;;
-        esac
+        nim=$(grep -c '^NIM_LLM_MODEL_PATH=' "$entry" || true)
+        vllm=$(grep -c '^VLLM_ENGINE_IMAGE=' "$entry" || true)
+        (( nim + vllm > 0 )) || report "model-without-variant:${id}" "models/${id}.env has neither a NIM nor a vLLM variant"
+        if (( nim )); then
+            [[ "$(entry_value "$entry" NIM_IMAGE)" == *@sha256:* ]] \
+                || report "model-image-not-pinned:${id}.nim" "models/${id}.env's NIM variant does not pin NIM_IMAGE by digest"
+        fi
+        if (( vllm )); then
+            [[ "$(entry_value "$entry" VLLM_ENGINE_IMAGE)" == *@sha256:* ]] \
+                || report "model-image-not-pinned:${id}.vllm" "models/${id}.env's vLLM variant does not pin its image by digest"
+        fi
+    done
+}
+
+# A proof stands for the image it was made with. Moving an entry to another digest
+# without a new trial would leave the proof vouching for an engine nobody tried.
+check_every_proof_names_the_image_it_proves() {
+    local proof name id engine entry image
+    for proof in "$REPO_ROOT"/models/proven/*.md; do
+        [[ -f "$proof" ]] || continue
+        name=$(basename "$proof" .md)
+        id=${name%.*.*}
+        engine=${name#"$id".}; engine=${engine%%.*}
+        entry="$REPO_ROOT/models/${id}.env"
+        image=""
+        if [[ -f "$entry" ]]; then
+            case "$engine" in
+                nim)  image=$(entry_value "$entry" NIM_IMAGE) ;;
+                vllm) image=$(entry_value "$entry" VLLM_ENGINE_IMAGE) ;;
+            esac
+        fi
+        if [[ -z "$image" ]]; then
+            report "proof-of-nothing:${name}" "models/proven/${name}.md proves a variant no entry has"
+        elif ! grep -qF "${image##*@}" "$proof"; then
+            report "proof-of-another-image:${name}" "models/proven/${name}.md does not name ${image##*@}, the image models/${id}.env serves"
+        fi
     done
 }
 
@@ -566,7 +592,7 @@ check_the_shipped_model_agrees_with_the_release() {
     local entry="$REPO_ROOT/models/qwen3.8-27b-nvfp4.env" line key
     [[ -f "$entry" ]] || { report "shipped-model-missing" "models/qwen3.8-27b-nvfp4.env is gone"; return; }
     while IFS= read -r line; do
-        case "$line" in MODEL_ENGINE=*|'#'*|'') continue ;; esac
+        case "$line" in '#'*|'') continue ;; esac
         key=${line%%=*}
         grep -qxF "$line" "$RELEASE_ENV" \
             || report "shipped-model-drifted:${key}" "models/qwen3.8-27b-nvfp4.env and release.env disagree on ${key}"
@@ -787,7 +813,8 @@ main() {
     check_ut_send_uses_only_the_standard_library
     check_images_are_pinned
     check_compose_images_are_pinned
-    check_every_model_names_its_engine
+    check_every_model_has_a_pinned_variant
+    check_every_proof_names_the_image_it_proves
     check_the_shipped_model_agrees_with_the_release
     check_the_recorder_is_bounded
     check_services_that_mount_a_release_file_follow_the_release
