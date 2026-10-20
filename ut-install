@@ -48,6 +48,7 @@ REPORTING_TOKEN_FILE=""
 REPORTING_RECEIVER_CERT=""
 REPORTING_EVERY=""
 INFERENCE_FROM=""
+COMPUTE_ADDRESS=""
 INFERENCE_KEY_FILE=""
 INFERENCE_CA_FILE=""
 MODEL_ID=""
@@ -133,6 +134,11 @@ Options
                        vLLM; refused, with what is proven here, when neither is.
                        Kept by later runs, which apply its entry again.
   --engine nim|vllm    Take that variant of the model, if it is proven here.
+  --compute ADDRESS    Serve inference only, to a control plane that reaches this
+                       machine at ADDRESS: a DNS name or an IP, never a .local
+                       name, which the control plane's containers cannot resolve.
+                       Starts the engine and Caddy's keyed surface on port 8444,
+                       no platform. Kept by later runs.
   --inference-from URL, --inference-key-file PATH, --inference-ca-file PATH
                        Take the inference from a compute node: its address
                        (https://<node>:8444), its VLLM_API_KEY and its Caddy
@@ -572,6 +578,12 @@ read_domain() {
     current=$(configured_domain)
     suggested="${current:-$FALLBACK_DOMAIN}"
 
+    if [[ -n "$COMPUTE_ADDRESS" ]] || this_machine_is_a_compute_node; then
+        DOMAIN="$suggested"
+        log_info "A compute node serves no platform: its address is not asked, ${DOMAIN} is kept"
+        return 0
+    fi
+
     if [[ ! -t 0 ]]; then
         DOMAIN="$suggested"
         if [[ -n "$current" ]]; then
@@ -973,6 +985,8 @@ problem_with_the_compute_node_given() {
         echo "--inference-key-file and --inference-ca-file only go with --inference-from"
     elif [[ ! "$INFERENCE_FROM" =~ ^https://[^/]+ ]]; then
         echo "--inference-from must be an https address, got ${INFERENCE_FROM}"
+    elif names_an_mdns_host "$(host_of_url "$INFERENCE_FROM")"; then
+        echo "--inference-from names a .local host, which this machine's containers cannot resolve: give the node's IP or a DNS name"
     elif ! the_key_file_holds_one_key "$INFERENCE_KEY_FILE"; then
         echo "--inference-key-file must hold the node's VLLM_API_KEY, one line, nothing else"
     elif ! openssl x509 -in "$INFERENCE_CA_FILE" -noout 2>/dev/null; then
@@ -982,6 +996,51 @@ problem_with_the_compute_node_given() {
     else
         return 1
     fi
+}
+
+host_of_url() {
+    local rest=${1#*://}
+    rest=${rest%%/*}
+    printf '%s' "${rest%:*}"
+}
+
+names_an_mdns_host() {
+    local host
+    host=$(printf '%s' "${1%.}" | tr '[:upper:]' '[:lower:]')
+    [[ "$host" == *.local ]]
+}
+
+problem_with_the_compute_role_given() {
+    [[ -n "$COMPUTE_ADDRESS" ]] || return 1
+    if $NO_GPU || [[ -n "$INFERENCE_FROM" ]]; then
+        echo "--compute serves the inference on this machine's GPU; it goes with neither --no-gpu nor --inference-from"
+    elif [[ "$COMPUTE_ADDRESS" == */* || "$COMPUTE_ADDRESS" == *:* ]]; then
+        echo "--compute takes a name or an IP, such as 10.42.0.7, not ${COMPUTE_ADDRESS}"
+    elif names_an_mdns_host "$COMPUTE_ADDRESS"; then
+        echo "--compute ${COMPUTE_ADDRESS}: a control plane's containers cannot resolve a .local name; give this machine's IP or a DNS name"
+    else
+        return 1
+    fi
+}
+
+die_on_a_compute_role_given_wrong() {
+    local problem
+    problem=$(problem_with_the_compute_role_given) || return 0
+    log_error "$problem"
+    exit 1
+}
+
+write_the_settings_a_compute_role_needs() {
+    local local_file=$1 compose_files
+    [[ -n "$COMPUTE_ADDRESS" ]] || return 0
+    env_set "$local_file" UT_INFERENCE_ADDRESS "$COMPUTE_ADDRESS"
+    compose_files=$(env_get "$local_file" COMPOSE_FILE 2>/dev/null || true)
+    [[ -n "$compose_files" ]] || compose_files=$(release_declares COMPOSE_FILE || echo "compose.yaml")
+    case "$compose_files" in
+        *compose.compute.yaml*) ;;
+        *) env_set "$local_file" COMPOSE_FILE "${compose_files}:compose.compute.yaml" ;;
+    esac
+    log_info "Compute node, reached at https://${COMPUTE_ADDRESS}:8444 by its control plane"
 }
 
 die_on_a_compute_node_given_wrong() {
@@ -1403,6 +1462,7 @@ step_configure() {
         move_the_allowed_origins_to_the_new_domain "$local_file" "$previous_domain"
     fi
 
+    write_the_settings_a_compute_role_needs "$local_file"
     write_the_settings_the_model_needs "$local_file"
     write_the_settings_a_compute_node_needs "$local_file"
     if this_machine_goes_without_its_accelerator; then
@@ -1443,7 +1503,25 @@ give_the_api_the_openai_key_it_needs_to_start() {
     log_info "  A real OpenAI key, if one is ever needed, goes in ${local_file}"
 }
 
+step_check_resolution_of_the_inference_address() {
+    local address
+    address=$(env_get "$INSTALL_DIR/.env" UT_INFERENCE_ADDRESS 2>/dev/null || echo "$DOMAIN")
+    log_step "Checking how ${address} resolves"
+    if [[ "$address" =~ ^[0-9.]+$ ]]; then
+        log_info "${address} is an address: the control plane needs no record to reach it"
+    elif getent hosts "$address" >/dev/null 2>&1; then
+        log_info "${address} resolves"
+    else
+        log_warn "${address} does not resolve yet. The control plane needs one record:"
+        log_warn "    ${address}.      A   <this machine's address>"
+    fi
+}
+
 step_check_resolution() {
+    if this_machine_is_a_compute_node; then
+        step_check_resolution_of_the_inference_address
+        return 0
+    fi
     log_step "Checking how ${DOMAIN} resolves"
 
     if [[ "$DOMAIN" == *.local ]]; then
@@ -1962,6 +2040,7 @@ parse_arguments() {
             --reporting-receiver-cert) REPORTING_RECEIVER_CERT="${2:?--reporting-receiver-cert needs a path}"; shift ;;
             --reporting-every)         REPORTING_EVERY="${2:?--reporting-every needs minutes}"; shift ;;
             --inference-from)     INFERENCE_FROM="${2:?--inference-from needs an address}"; shift ;;
+            --compute)            COMPUTE_ADDRESS="${2:?--compute needs the address the control plane reaches this machine at}"; shift ;;
             --inference-key-file) INFERENCE_KEY_FILE="${2:?--inference-key-file needs a path}"; shift ;;
             --inference-ca-file)  INFERENCE_CA_FILE="${2:?--inference-ca-file needs a path}"; shift ;;
             --model)              MODEL_ID="${2:?--model needs one of the models in models/}"; shift ;;
@@ -1976,6 +2055,7 @@ parse_arguments() {
 main() {
     parse_arguments "$@"
     die_on_a_compute_node_given_wrong
+    die_on_a_compute_role_given_wrong
     resolve_install_dir
     die_on_a_model_nobody_listed
 

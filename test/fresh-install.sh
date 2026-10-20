@@ -197,7 +197,7 @@ state_setup() {
         model_kept_by_name)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'UT_MODEL="qwen3.8-27b-nvfp4"\nNIM_LLM_PASSTHROUGH_ARGS=--gpu-memory-utilization 0.10\n'"'"' > /etc/understandtech/local.env' ;;
         # The walk image has no public roots of its own; this one stands for them.
-        pointed_at_a_compute_node|compute_node_over_http)
+        pointed_at_a_compute_node|compute_node_over_http|pointed_at_an_mdns_node)
             echo 'install -d /etc/ssl/certs && cp /w/compute/public.pem /etc/ssl/certs/ca-certificates.crt' ;;
         compute_node_from_a_machine_without_gpu)
             echo 'rm -f /stub/nvidia-smi && install -d /etc/ssl/certs && cp /w/compute/public.pem /etc/ssl/certs/ca-certificates.crt' ;;
@@ -567,6 +567,28 @@ the_node_s_key_stays_out_of_the_output() {
     key=$(tr -d '\n' < "$WORK_DIR/compute/key")
     grep -qF "$key" <<< "$(output_of pointed_at_a_compute_node)" || return 0
     echo "the compute node's key appears in the install output"
+    return 1
+}
+
+refused_before_anything_is_written() {
+    local state=$1 reason=$2 output
+    output=$(output_of "$state")
+    grep -qF -- "$reason" <<< "$output" && ! grep -q '^EXIT=0$' <<< "$output" \
+        && [[ ! -s "$WORK_DIR/$state/local-env" ]] && return 0
+    echo "$output" | tail -5
+    return 1
+}
+
+a_compute_node_is_installed_with_one_flag() {
+    local output settings
+    output=$(output_of compute_by_flag)
+    settings=$(cat "$WORK_DIR/compute_by_flag/local-env" 2>/dev/null)
+    grep -qE '^COMPOSE_FILE="?[^"]*compose\.compute\.yaml' <<< "$settings" \
+        && grep -qE '^UT_INFERENCE_ADDRESS="?192\.0\.2\.10"?$' <<< "$settings" \
+        && grep -qF 'compute node — serves inference at https://192.0.2.10:8444/v1' <<< "$output" \
+        && grep -q '^EXIT=0$' <<< "$output" && return 0
+    grep -E '^(COMPOSE_FILE|UT_INFERENCE_ADDRESS)=' <<< "$settings"
+    grep -E 'Role|\[fail\]|EXIT=' <<< "$output" | tail -4
     return 1
 }
 
@@ -1047,6 +1069,12 @@ WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --inference-from http
     run_install_from_state compute_node_from_a_machine_without_gpu
 WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --inference-from http://node.example.test:8444 --inference-key-file /w/compute/key --inference-ca-file /w/compute/root.crt" \
     run_install_from_state compute_node_over_http
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --inference-from https://node.local:8444 --inference-key-file /w/compute/key --inference-ca-file /w/compute/root.crt" \
+    run_install_from_state pointed_at_an_mdns_node
+PULL_EXIT=0 STEP_CA_RUNS=no INSTALL_COMMAND="ut-install --compute 192.0.2.10" \
+    run_install_from_state compute_by_flag -
+INSTALL_COMMAND="ut-install --compute node.local" run_install_from_state compute_named_by_mdns
+INSTALL_COMMAND="ut-install --compute 192.0.2.10 --no-gpu" run_install_from_state compute_without_its_gpu
 run_install_from_state already_set
 run_install_from_state no_settings_dir
 MONGO_VOLUME_EXISTS=yes run_install_from_state orphan_volume
@@ -1143,6 +1171,14 @@ property "a compute node's summary hands the control plane what it needs" \
     a_compute_node_hands_the_control_plane_what_it_needs
 property "a node reached over plain http is refused before anything is written" \
     a_compute_node_over_http_is_refused
+property "a node named by mDNS is refused before anything is written" \
+    refused_before_anything_is_written pointed_at_an_mdns_node "names a .local host"
+property "a compute node is installed with one flag, and asked for no domain" \
+    a_compute_node_is_installed_with_one_flag
+property "a compute node named by mDNS is refused before anything is written" \
+    refused_before_anything_is_written compute_named_by_mdns "cannot resolve a .local name"
+property "a compute node without its GPU is refused before anything is written" \
+    refused_before_anything_is_written compute_without_its_gpu "goes with neither --no-gpu nor --inference-from"
 
 printf '\n%sA settings file that exists but says nothing%s\n' "$BOLD" "$NC"
 property "it is filled rather than kept" \
