@@ -953,7 +953,19 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
 
     install_walk_discriminates "a model's arguments rewritten in double quotes" \
         "a model on vLLM brings its engine, and its arguments whole" \
-        "sed -i.bak 's|\\[A-Z_\\]\\*=\\*) put_the_line_in_place_of_its_key \"\\\$local_file\" \"\\\$line\" ;;|[A-Z_]*=*) env_set \"\$local_file\" \"\${line%%=*}\" \"\${line#*=}\" ;;|' ut-install"
+        "sed -i.bak 's|\"\\\$chosen\"\\*=\\*) put_the_line_in_place_of_its_key \"\\\$local_file\" \"\\\$line\" ;;|\"\$chosen\"*=*) env_set \"\$local_file\" \"\${line%%=*}\" \"\${line#*=}\" ;;|' ut-install"
+
+    install_walk_discriminates "a model chosen without its proof" \
+        "a model is chosen only on a GPU it is proven on" \
+        "sed -i.bak 's| \\&\\& \\[\\[ -f \"\\\$(proof_of \"\\\$id\" \"\\\$engine\" \"\\\$family\")\" \\]\\]||' ut-install"
+
+    install_walk_discriminates "a model kept by its values rather than its name" \
+        "a model kept by name follows its entry on the next install" \
+        "sed -i.bak '/MODEL_ID=\\\$(env_get \"\\\$local_file\" UT_MODEL/d' ut-install"
+
+    install_walk_discriminates "a control plane asked for an engine it does not run" \
+        "a control plane takes the names of a model served elsewhere, and no engine" \
+        "sed -i.bak 's|^    if ! this_machine_goes_without_its_accelerator \\&\\& \\[\\[ -z \"\\\$INFERENCE_FROM\" \\]\\]; then\$|    if true; then|' ut-install"
 
     install_walk_discriminates "a model nobody listed taken at its word" \
         "a model nobody listed is refused before anything is written" \
@@ -1033,9 +1045,21 @@ if grep -q 'checkouts_holding_settings' "$REPO_ROOT/ut-install"; then
         "every variable the stack requires has a value" \
         "sed -i.bak 's| GPU_VM_API_TOKEN\\([ )]\\)|\\1|' ut-install"
 
-discriminates "a model entry with an engine nobody knows" \
-    "model-without-engine" \
-    "sed -i.bak 's/^MODEL_ENGINE=\"nim\"/MODEL_ENGINE=\"tgi\"/' models/qwen3.8-27b-nvfp4.env"
+discriminates "a model entry with no variant" \
+    "model-without-variant" \
+    "sed -i.bak '/^NIM_LLM_MODEL_PATH=/d' models/qwen3.8-27b-nvfp4.env"
+
+discriminates "a model's image named by tag only" \
+    "model-image-not-pinned" \
+    "sed -i.bak 's|^\\(NIM_IMAGE=\"[^@]*\\)@sha256:[0-9a-f]*\"|\\1\"|' models/qwen3.8-27b-nvfp4.env"
+
+discriminates "a proof vouching for another image" \
+    "proof-of-another-image" \
+    "sed -i.bak 's/sha256:20e10652/sha256:20e10653/' models/proven/qwen3.8-27b-nvfp4.nim.gb10.md"
+
+discriminates "a proof of a model no entry has" \
+    "proof-of-nothing" \
+    "cp models/proven/qwen3.8-27b-nvfp4.nim.gb10.md models/proven/gone.nim.gb10.md"
 
 discriminates "the shipped model's entry drifting from the release" \
     "shipped-model-drifted" \

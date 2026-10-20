@@ -186,13 +186,27 @@ in `models/`:
 sudo ut-install --model qwen3.8-27b-nvfp4
 ```
 
-Each file there is one model, with every setting it needs and `MODEL_ENGINE`,
-the engine that serves it: `nim`, or `vllm` for a model NIM cannot serve. On
-`vllm` the install adds `compose.engine-vllm.yaml`, which runs the engine from
-`VLLM_ENGINE_IMAGE`, pinned by digest, as `vllm serve <VLLM_ENGINE_MODEL>
-<VLLM_ENGINE_ARGS>`, under the same service name, GPU, port and cache. A name
-that is not in `models/` is refused, with the list of those that are. The choice
-is kept in `local.env`: a later install without `--model` serves the same model.
+Each file there is one model: the names the platform asks it by, and one or two
+**variants**, NIM (`NIM_IMAGE`, `NIM_LLM_MODEL_PATH`, `NIM_LLM_PASSTHROUGH_ARGS`) or
+vLLM (`VLLM_ENGINE_IMAGE`, `VLLM_ENGINE_MODEL`, `VLLM_ENGINE_ARGS`), each image
+pinned by digest.
+
+A variant is only used on a GPU it has been **proven** on: a file
+`models/proven/<model>.<nim|vllm>.<family>.md` records the trial, and names the
+image it was made with. The family is the GPU's name without the vendor, `gb10` for
+an NVIDIA GB10. The install takes the NIM variant when it is proven on this machine,
+else the vLLM one, and says which. `--engine nim` or `--engine vllm` asks for one;
+it is still taken only if proven here. When neither is, the install stops and lists
+the models proven on this GPU.
+
+On vLLM it adds `compose.engine-vllm.yaml`, which runs the engine from
+`VLLM_ENGINE_IMAGE` as `vllm serve <VLLM_ENGINE_MODEL> <VLLM_ENGINE_ARGS>`, under the
+same service name, GPU, port and cache. A machine that starts no engine of its own,
+installed with `--no-gpu` or `--inference-from`, takes the model's names only.
+
+The model is kept by name, as `UT_MODEL` in `local.env`, and its entry is applied
+again on every install: a release that moves a model to a new engine version
+reaches the boxes that chose it.
 
 `VLLM_ENGINE_ARGS` is split on spaces: a JSON argument goes in bare, with no space
 inside and no quotes around it.

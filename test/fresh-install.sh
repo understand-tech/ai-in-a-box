@@ -186,7 +186,14 @@ state_setup() {
         openai_key_given)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'OA_KEY="sk-test-kept"\n'"'"' > /etc/understandtech/local.env' ;;
         # An entry a team adds to the registry, served by vLLM.
-        model_on_vllm) echo 'cp /w/models/test-vllm.env /usr/share/understandtech/models/' ;;
+        model_on_vllm|test_vllm_forced_on_nim)
+            echo 'cp /w/models/test-vllm.env /usr/share/understandtech/models/ && cp /w/models/proven/test-vllm.vllm.gb10.md /usr/share/understandtech/models/proven/' ;;
+        # A GPU no model has been proven on: the stub answers H100 rather than GB10.
+        model_on_an_unproven_gpu)
+            echo 'printf "#!/bin/sh\ncase \"\$1\" in -L) echo \"GPU 0: NVIDIA H100 80GB HBM3 (UUID: GPU-test)\" ;; *) echo \"NVIDIA H100 80GB HBM3\" ;; esac\n" > /stub/nvidia-smi && chmod +x /stub/nvidia-smi' ;;
+        # A box installed with --model, whose entry the release has since changed.
+        model_kept_by_name)
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'UT_MODEL="qwen3.8-27b-nvfp4"\nNIM_LLM_PASSTHROUGH_ARGS=--gpu-memory-utilization 0.10\n'"'"' > /etc/understandtech/local.env' ;;
         # The walk image has no public roots of its own; this one stands for them.
         pointed_at_a_compute_node|compute_node_over_http)
             echo 'install -d /etc/ssl/certs && cp /w/compute/public.pem /etc/ssl/certs/ca-certificates.crt' ;;
@@ -421,6 +428,44 @@ a_model_on_vllm_brings_its_engine_and_its_arguments_whole() {
         && grep -q 'Model test-vllm, served by vLLM' <<< "$(output_of model_on_vllm)" && return 0
     grep -E '^(VLLM_ENGINE_ARGS|COMPOSE_FILE)=' <<< "$settings"
     output_of model_on_vllm | tail -4
+    return 1
+}
+
+a_model_is_chosen_only_where_it_is_proven() {
+    local output
+    output=$(output_of model_on_an_unproven_gpu)
+    grep -q 'has not been proven on h100-80gb-hbm3' <<< "$output" && ! grep -q '^EXIT=0$' <<< "$output" \
+        && ! grep -q '^UT_MODEL=' "$WORK_DIR/model_on_an_unproven_gpu/local-env" 2>/dev/null && return 0
+    echo "$output" | grep -E 'fail|proven|EXIT' | tail -5
+    return 1
+}
+
+an_engine_forced_is_taken_only_if_proven() {
+    local output
+    output=$(output_of test_vllm_forced_on_nim)
+    grep -q 'test-vllm on nim has not been proven on gb10' <<< "$output" && grep -q 'test-vllm, on vllm' <<< "$output" \
+        && ! grep -q '^EXIT=0$' <<< "$output" && return 0
+    echo "$output" | grep -E 'fail|proven|EXIT|on vllm' | tail -5
+    return 1
+}
+
+a_model_kept_by_name_follows_its_entry() {
+    local settings
+    settings=$(cat "$WORK_DIR/model_kept_by_name/local-env" 2>/dev/null)
+    grep -qxF "$(grep '^NIM_LLM_PASSTHROUGH_ARGS=' "$REPO_ROOT/models/qwen3.8-27b-nvfp4.env")" <<< "$settings" \
+        && [[ $(grep -c '^NIM_LLM_PASSTHROUGH_ARGS=' <<< "$settings") == 1 ]] && return 0
+    grep -E '^(UT_MODEL|NIM_LLM_PASSTHROUGH_ARGS)=' <<< "$settings" | cut -c1-100
+    return 1
+}
+
+a_control_plane_takes_the_names_of_a_model_served_elsewhere() {
+    local settings
+    settings=$(cat "$WORK_DIR/model_on_a_control_plane/local-env" 2>/dev/null)
+    grep -qx 'LLM_MODEL="nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB"' <<< "$settings" \
+        && ! grep -q '^VLLM_ENGINE_' <<< "$settings" && ! grep -q 'compose.engine-vllm.yaml' <<< "$settings" \
+        && grep -q 'its names only' <<< "$(output_of model_on_a_control_plane)" && return 0
+    grep -E '^(LLM_MODEL|VLLM_ENGINE_IMAGE|COMPOSE_FILE)=' <<< "$settings" | cut -c1-100
+    output_of model_on_a_control_plane | grep -E 'Model|fail' | tail -3
     return 1
 }
 
@@ -777,13 +822,14 @@ prepare_a_vllm_entry() {
     mkdir -p "$WORK_DIR/models"
     cat > "$WORK_DIR/models/test-vllm.env" <<'ENTRY'
 # A model served by vLLM, for the walk.
-MODEL_ENGINE="vllm"
 VLLM_ENGINE_IMAGE="registry.example/vllm@sha256:0000000000000000000000000000000000000000000000000000000000000000"
 VLLM_ENGINE_MODEL="org/model"
 VLLM_ENGINE_ARGS=--trust-remote-code --override-generation-config {"temperature":0.2,"top_p":0.9}
 LLM_MODEL="org/model"
 VLLM_LLM_MODEL="org/model"
 ENTRY
+    mkdir -p "$WORK_DIR/models/proven"
+    printf 'Image: sha256:%064d, proven on gb10 for the walk.\n' 0 > "$WORK_DIR/models/proven/test-vllm.vllm.gb10.md"
     chmod -R a+r "$WORK_DIR/models"
 }
 
@@ -964,6 +1010,10 @@ run_install_from_state origins_on_an_old_domain
 INSTALL_COMMAND="ut-install --model qwen3.8-27b-nvfp4" run_install_from_state model_on_nim
 INSTALL_COMMAND="ut-install --model test-vllm" run_install_from_state model_on_vllm
 INSTALL_COMMAND="ut-install --model nope" run_install_from_state unknown_model
+INSTALL_COMMAND="ut-install --model qwen3.8-27b-nvfp4" run_install_from_state model_on_an_unproven_gpu
+INSTALL_COMMAND="ut-install --model test-vllm --engine nim" run_install_from_state test_vllm_forced_on_nim
+run_install_from_state model_kept_by_name
+INSTALL_COMMAND="ut-install --no-gpu --model nemotron-3.5-bolt-74b" run_install_from_state model_on_a_control_plane
 PULL_EXIT=0 WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --inference-from https://node.example.test:8444 --inference-key-file /w/compute/key --inference-ca-file /w/compute/root.crt" \
     run_install_from_state pointed_at_a_compute_node
 WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --inference-from https://node.example.test:8444 --inference-key-file /w/compute/key --inference-ca-file /w/compute/root.crt" \
@@ -1032,6 +1082,14 @@ property "a model on vLLM brings its engine, and its arguments whole" \
     a_model_on_vllm_brings_its_engine_and_its_arguments_whole
 property "and what it wrote renders a stack" \
     the_settings_render_a_stack model_on_vllm
+property "a model is chosen only on a GPU it is proven on" \
+    a_model_is_chosen_only_where_it_is_proven
+property "an engine asked for is taken only where it is proven" \
+    an_engine_forced_is_taken_only_if_proven
+property "a model kept by name follows its entry on the next install" \
+    a_model_kept_by_name_follows_its_entry
+property "a control plane takes the names of a model served elsewhere, and no engine" \
+    a_control_plane_takes_the_names_of_a_model_served_elsewhere
 property "a model nobody listed is refused before anything is written" \
     a_model_nobody_listed_is_refused_before_anything_is_written
 property "the allowed origins follow the address when it changes" \

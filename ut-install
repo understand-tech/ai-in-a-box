@@ -51,6 +51,7 @@ INFERENCE_FROM=""
 INFERENCE_KEY_FILE=""
 INFERENCE_CA_FILE=""
 MODEL_ID=""
+ENGINE_CHOICE=""
 HOST_CA_BUNDLE="${UT_HOST_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}"
 UT_SEND="${UT_SEND:-ut-send}"
 CURRENT_STEP=""
@@ -127,8 +128,11 @@ Options
                        the accelerator check, never a driver that stopped
                        answering. A settings file already carrying
                        compose.no-gpu.yaml says the same thing.
-  --model ID           Serve one of the models in models/, on the engine its
-                       entry names, NIM or vLLM. Kept by later runs.
+  --model ID           Serve one of the models in models/: on NIM when its entry
+                       has a NIM variant proven on this machine's GPU, else on
+                       vLLM; refused, with what is proven here, when neither is.
+                       Kept by later runs, which apply its entry again.
+  --engine nim|vllm    Take that variant of the model, if it is proven here.
   --inference-from URL, --inference-key-file PATH, --inference-ca-file PATH
                        Take the inference from a compute node: its address
                        (https://<node>:8444), its VLLM_API_KEY and its Caddy
@@ -1015,10 +1019,60 @@ models_listed() {
 }
 
 die_on_a_model_nobody_listed() {
+    if [[ -n "$ENGINE_CHOICE" && "$ENGINE_CHOICE" != nim && "$ENGINE_CHOICE" != vllm ]]; then
+        log_error "--engine takes nim or vllm, not ${ENGINE_CHOICE}"
+        exit 1
+    fi
     [[ -z "$MODEL_ID" || -f "$INSTALL_DIR/models/${MODEL_ID}.env" ]] && return 0
     log_error "No model called ${MODEL_ID} in ${INSTALL_DIR}/models. This release serves:"
     models_listed | sed 's/^/  /' >&2
     log_error "  Give one of those to --model, or leave it out to keep the model already set."
+    exit 1
+}
+
+# The name nvidia-smi gives, lowered, without the vendor: "NVIDIA GB10" is gb10.
+# A proof is kept per family, so that is what a model is chosen by.
+gpu_family() {
+    an_accelerator_answers || return 0
+    nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 \
+        | tr '[:upper:]' '[:lower:]' | sed 's/^nvidia //; s/[^a-z0-9]\{1,\}/-/g; s/-$//'
+}
+
+entry_has_variant() {
+    local entry=$1 engine=$2
+    case "$engine" in
+        nim)  grep -q '^NIM_LLM_MODEL_PATH=' "$entry" ;;
+        vllm) grep -q '^VLLM_ENGINE_IMAGE=' "$entry" ;;
+    esac
+}
+
+proof_of() {
+    local id=$1 engine=$2 family=$3
+    printf '%s/models/proven/%s.%s.%s.md' "$INSTALL_DIR" "$id" "$engine" "$family"
+}
+
+engine_proven_for() {
+    local id=$1 family=$2 engine entry="$INSTALL_DIR/models/$1.env"
+    for engine in ${ENGINE_CHOICE:-nim vllm}; do
+        entry_has_variant "$entry" "$engine" && [[ -f "$(proof_of "$id" "$engine" "$family")" ]] \
+            && { printf '%s' "$engine"; return 0; }
+    done
+    return 1
+}
+
+die_on_a_model_not_proven_here() {
+    local family=$1 id engine proven=""
+    log_error "${MODEL_ID}${ENGINE_CHOICE:+ on ${ENGINE_CHOICE}} has not been proven on ${family:-an unknown GPU}."
+    while read -r id; do
+        [[ -n "$id" ]] || continue
+        engine=$(ENGINE_CHOICE="" engine_proven_for "$id" "$family") && proven+="  ${id}, on ${engine}"$'\n'
+    done <<< "$(models_listed)"
+    if [[ -n "$proven" ]]; then
+        log_error "  Proven on ${family}:"
+        printf '%s' "$proven" >&2
+    else
+        log_error "  No model of this release has been proven on ${family:-it} yet."
+    fi
     exit 1
 }
 
@@ -1035,17 +1089,35 @@ put_the_line_in_place_of_its_key() {
     rm -f "$tmp"
 }
 
+# The model is kept by name, and its entry applied again on every install: a
+# release that moves an entry to a new engine reaches the boxes that chose it.
 write_the_settings_the_model_needs() {
-    local local_file=$1 entry engine line compose_files
+    local local_file=$1 entry engine="" family line compose_files chosen
+    [[ -n "$MODEL_ID" ]] || MODEL_ID=$(env_get "$local_file" UT_MODEL 2>/dev/null || true)
+    [[ -n "$ENGINE_CHOICE" ]] || ENGINE_CHOICE=$(env_get "$local_file" UT_MODEL_ENGINE 2>/dev/null || true)
     [[ -n "$MODEL_ID" ]] || return 0
     entry="$INSTALL_DIR/models/${MODEL_ID}.env"
-    engine=$(env_get "$entry" MODEL_ENGINE)
+    [[ -f "$entry" ]] || die_on_a_model_nobody_listed
+
+    if ! this_machine_goes_without_its_accelerator && [[ -z "$INFERENCE_FROM" ]]; then
+        family=$(gpu_family)
+        engine=$(engine_proven_for "$MODEL_ID" "$family") || die_on_a_model_not_proven_here "$family"
+    fi
+
+    case "$engine" in
+        nim)  chosen=NIM_ ;;
+        vllm) chosen=VLLM_ENGINE_ ;;
+        *)    chosen=none ;;
+    esac
     while IFS= read -r line || [[ -n "$line" ]]; do
         case "$line" in
-            MODEL_ENGINE=*) ;;
+            "$chosen"*=*) put_the_line_in_place_of_its_key "$local_file" "$line" ;;
+            NIM_*=*|VLLM_ENGINE_*=*) ;;
             [A-Z_]*=*) put_the_line_in_place_of_its_key "$local_file" "$line" ;;
         esac
     done < "$entry"
+    env_set "$local_file" UT_MODEL "$MODEL_ID"
+    [[ -z "$ENGINE_CHOICE" ]] || env_set "$local_file" UT_MODEL_ENGINE "$ENGINE_CHOICE"
 
     compose_files=$(env_get "$local_file" COMPOSE_FILE 2>/dev/null || true)
     [[ -n "$compose_files" ]] || compose_files=$(release_declares COMPOSE_FILE || echo "compose.yaml")
@@ -1054,7 +1126,11 @@ write_the_settings_the_model_needs() {
         vllm:*) env_set "$local_file" COMPOSE_FILE "${compose_files}:compose.engine-vllm.yaml" ;;
         *:*compose.engine-vllm.yaml*) env_set "$local_file" COMPOSE_FILE "${compose_files//:compose.engine-vllm.yaml/}" ;;
     esac
-    log_info "Model ${MODEL_ID}, served by $( [[ "$engine" == vllm ]] && echo vLLM || echo NIM )"
+    if [[ -z "$engine" ]]; then
+        log_info "Model ${MODEL_ID}: its names only, generation comes from another machine"
+    else
+        log_info "Model ${MODEL_ID}, served by $( [[ "$engine" == vllm ]] && echo vLLM || echo NIM ), proven on ${family} ($(basename "$(proof_of "$MODEL_ID" "$engine" "$family")"))"
+    fi
 }
 
 BACKUP_DESTINATION_MARKER=".understandtech-backup-destination"
@@ -1837,6 +1913,7 @@ parse_arguments() {
             --inference-key-file) INFERENCE_KEY_FILE="${2:?--inference-key-file needs a path}"; shift ;;
             --inference-ca-file)  INFERENCE_CA_FILE="${2:?--inference-ca-file needs a path}"; shift ;;
             --model)              MODEL_ID="${2:?--model needs one of the models in models/}"; shift ;;
+            --engine)             ENGINE_CHOICE="${2:?--engine needs nim or vllm}"; shift ;;
             -h|--help)        usage; exit 0 ;;
             *)                log_error "Unknown option: $1"; usage; exit 2 ;;
         esac
