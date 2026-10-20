@@ -329,8 +329,8 @@ running_from_the_package() {
     [[ "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" == "/usr/bin" ]]
 }
 
-directory_the_script_sits_in() {
-    ( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )
+checkout_the_script_sits_in() {
+    ( cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd )
 }
 
 # Both marks are required: a directory holding only one of them is something
@@ -342,7 +342,7 @@ looks_like_a_checkout() {
 resolve_install_dir() {
     [[ -n "$INSTALL_DIR" ]] && return 0
     local here
-    here=$(directory_the_script_sits_in)
+    here=$(checkout_the_script_sits_in)
     if looks_like_a_checkout "$here"; then
         INSTALL_DIR="$here"
     elif running_from_the_package && [[ -f "$PACKAGE_SHARE_DIR/compose.yaml" ]]; then

@@ -92,16 +92,16 @@ stamp_the_release_version() {
 stage_commands() {
     local root=$1
     install -d "$root/usr/bin"
-    install -m 755 "$REPO_ROOT/ut-install" "$root/usr/bin/"
-    install -m 755 "$REPO_ROOT/ut-certificate" "$root/usr/bin/"
-    install -m 755 "$REPO_ROOT/ut-logs-archive" "$root/usr/bin/"
-    install -m 755 "$REPO_ROOT/ut-verify" "$root/usr/bin/"
-    install -m 755 "$REPO_ROOT/ut-get" "$root/usr/bin/"
-    install -m 755 "$REPO_ROOT/ut-license" "$root/usr/bin/"
-    install -m 755 "$REPO_ROOT/ut-status" "$root/usr/bin/"
-    install -m 755 "$REPO_ROOT/ut-report" "$root/usr/bin/"
-    install -m 755 "$REPO_ROOT/ut-send" "$root/usr/bin/"
-    install -m 755 "$REPO_ROOT/ut-setup" "$root/usr/bin/"
+    install -m 755 "$REPO_ROOT/bin/ut-install" "$root/usr/bin/"
+    install -m 755 "$REPO_ROOT/bin/ut-certificate" "$root/usr/bin/"
+    install -m 755 "$REPO_ROOT/bin/ut-logs-archive" "$root/usr/bin/"
+    install -m 755 "$REPO_ROOT/bin/ut-verify" "$root/usr/bin/"
+    install -m 755 "$REPO_ROOT/bin/ut-get" "$root/usr/bin/"
+    install -m 755 "$REPO_ROOT/bin/ut-license" "$root/usr/bin/"
+    install -m 755 "$REPO_ROOT/bin/ut-status" "$root/usr/bin/"
+    install -m 755 "$REPO_ROOT/bin/ut-report" "$root/usr/bin/"
+    install -m 755 "$REPO_ROOT/bin/ut-send" "$root/usr/bin/"
+    install -m 755 "$REPO_ROOT/bin/ut-setup" "$root/usr/bin/"
 }
 
 stage_builds_of() {

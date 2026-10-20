@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 
 PACKAGE_LIB_DIR="/usr/lib/understandtech"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CHECKOUT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 architecture() {
     case "$(uname -m)" in
@@ -16,7 +16,7 @@ architecture() {
 main() {
     local arch dir
     arch=$(architecture) || { echo "ut-send: no build for $(uname -m)" >&2; exit 1; }
-    for dir in "$PACKAGE_LIB_DIR" "$SCRIPT_DIR/dist/ut-send"; do
+    for dir in "$PACKAGE_LIB_DIR" "$CHECKOUT_DIR/dist/ut-send"; do
         [[ -x "$dir/ut-send-linux-$arch" ]] && exec "$dir/ut-send-linux-$arch" "$@"
     done
     echo "ut-send: ut-send-linux-$arch is not installed — run packaging/build-ut-send.sh from a checkout" >&2

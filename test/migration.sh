@@ -62,7 +62,7 @@ lay_out_both_versions() {
 
 load_installer() {
     set +u
-    INSTALL_DIR="$BEFORE" source "$REPO_ROOT/ut-install" >/dev/null 2>&1
+    INSTALL_DIR="$BEFORE" source "$REPO_ROOT/bin/ut-install" >/dev/null 2>&1
     set -u +eE
     trap - ERR
 }

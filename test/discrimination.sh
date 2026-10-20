@@ -31,7 +31,7 @@ fresh_copy() {
     ( cd "$REPO_ROOT" && tar -cf - release.env compose.yaml compose.appbuilder.yaml \
         compose.compute.yaml compose.no-gpu.yaml compose.backup-mount.yaml compose.backup-network.yaml compose.remote-inference.yaml compose.engine-vllm.yaml models \
         Caddyfile caddy metrics backup-files.sh \
-        setup-autostart.sh ut-logs-archive ut-install ut-certificate ut-verify ut-get ut-license ut-status ut-report ut-send ut-setup go.mod cmd appbuilder docs \
+        setup-autostart.sh bin go.mod cmd appbuilder docs \
         packaging README.md test .github 2>/dev/null ) | tar -xf - -C "$COPY" 2>/dev/null
 }
 
@@ -196,8 +196,12 @@ fi
 if grep -q 'check_every_tool_ships' "$REPO_ROOT/test/invariants.sh"; then
     discriminates "an operator tool left out of the package" \
         "tool-not-shipped:ut-report" \
-        "sed -i.bak '/REPO_ROOT\\/ut-report/d' packaging/build-deb.sh"
+        "sed -i.bak '/REPO_ROOT\\/bin\\/ut-report/d' packaging/build-deb.sh"
 fi
+
+discriminates "an operator tool left at the root of the repository" \
+    "tool-at-the-root:ut-status" \
+    "cp bin/ut-status ut-status"
 
 if grep -q 'check_ut_send_uses_only_the_standard_library' "$REPO_ROOT/test/invariants.sh"; then
     discriminates "a Go module pulled into ut-send" \
@@ -208,7 +212,7 @@ fi
 if grep -q 'check_the_install_starts_the_stack_as_boot_does' "$REPO_ROOT/test/invariants.sh"; then
     discriminates "an install that leaves a retired service running" \
         "install-keeps-retired-containers" \
-        "sed -i.bak 's|compose_in_dir up -d --remove-orphans|compose_in_dir up -d|' ut-install"
+        "sed -i.bak 's|compose_in_dir up -d --remove-orphans|compose_in_dir up -d|' bin/ut-install"
 fi
 
 discriminates "verbose logs in the template" \
@@ -314,51 +318,51 @@ ingress_discriminates() {
 
 printf '\n%sCapabilities, seen failing%s\n\n' "$BOLD" "$NC"
 
-if grep -q 'role_is_waited_for' "$REPO_ROOT/ut-install"; then
+if grep -q 'role_is_waited_for' "$REPO_ROOT/bin/ut-install"; then
     capability_discriminates "the install waiting for the models again" \
         "handed back while the models are still loading" \
-        "sed -i.bak 's|^    \\[\\[ \"\$1\" != \"inference\".*|    return 0|' ut-install"
+        "sed -i.bak 's|^    \\[\\[ \"\$1\" != \"inference\".*|    return 0|' bin/ut-install"
 
     capability_discriminates "nothing waited for at all" \
         "a control plane service still starting is waited for" \
-        "sed -i.bak 's|^    \\[\\[ \"\$1\" != \"inference\".*|    return 1|' ut-install"
+        "sed -i.bak 's|^    \\[\\[ \"\$1\" != \"inference\".*|    return 1|' bin/ut-install"
 
     # An engine that gave up and one still loading must not leave by the same
     # door: treating both as loading is how an install claims a success it does
     # not have.
     capability_discriminates "an engine that failed treated as one still loading" \
         "inference engine that failed is not reported as a success" \
-        "sed -i.bak 's|elif \\[\\[ \"\$health\" == \"starting\" \\]\\]; then|elif true; then|' ut-install"
+        "sed -i.bak 's|elif \\[\\[ \"\$health\" == \"starting\" \\]\\]; then|elif true; then|' bin/ut-install"
 
     capability_discriminates "the wait counting without naming" \
         "names what is late" \
-        "sed -i.bak 's|still starting: %s (%dm elapsed)|still starting (%dm elapsed)|; s|\"\$(names_in \"\$pending\")\" \\\\||' ut-install"
+        "sed -i.bak 's|still starting: %s (%dm elapsed)|still starting (%dm elapsed)|; s|\"\$(names_in \"\$pending\")\" \\\\||' bin/ut-install"
 fi
 
-if grep -q 'say_each_image_as_it_lands' "$REPO_ROOT/ut-install"; then
+if grep -q 'say_each_image_as_it_lands' "$REPO_ROOT/bin/ut-install"; then
     capability_discriminates "every layer counted as an image" \
         "the download says each image as it lands" \
-        "sed -i.bak '/^        \[\[ \"\$line\" == \*'\"'\"'\"id\":\"Image '\"'\"'\* \]\] || continue\$/d' ut-install"
+        "sed -i.bak '/^        \[\[ \"\$line\" == \*'\"'\"'\"id\":\"Image '\"'\"'\* \]\] || continue\$/d' bin/ut-install"
 
     capability_discriminates "a failed download that goes on" \
         "a download that fails still stops the install" \
-        "sed -i.bak 's#^        compose_in_dir --progress json pull 2>\\&1 | #        { compose_in_dir --progress json pull 2>\\&1 || true; } | #' ut-install"
+        "sed -i.bak 's#^        compose_in_dir --progress json pull 2>\\&1 | #        { compose_in_dir --progress json pull 2>\\&1 || true; } | #' bin/ut-install"
 
     capability_discriminates "progress read where Compose does not write it" \
         "the download says each image as it lands" \
-        "sed -i.bak 's#compose_in_dir --progress json pull 2>\\&1 | #compose_in_dir --progress json pull | #' ut-install"
+        "sed -i.bak 's#compose_in_dir --progress json pull 2>\\&1 | #compose_in_dir --progress json pull | #' bin/ut-install"
 
     capability_discriminates "a project Compose refuses that goes unsaid" \
         "a project Compose refuses is named" \
-        "sed -i.bak 's#^        if \[\[ \"\$line\" == \*'\"'\"'\"error\":true'\"'\"'\* \]\]; then\$#        if false; then#' ut-install"
+        "sed -i.bak 's#^        if \[\[ \"\$line\" == \*'\"'\"'\"error\":true'\"'\"'\* \]\]; then\$#        if false; then#' bin/ut-install"
 
     capability_discriminates "JSON progress asked of a Compose that refuses it" \
         "a Compose without JSON progress downloads as before" \
-        "sed -i.bak 's|^    if compose_reports_progress_as_json; then\$|    if true; then|' ut-install"
+        "sed -i.bak 's|^    if compose_reports_progress_as_json; then\$|    if true; then|' bin/ut-install"
 
     capability_discriminates "a last screen that forgets how long it took" \
         "the last screen says how long it took" \
-        "sed -i.bak 's|Installation complete in \$(( SECONDS / 60 )) min|Installation complete|' ut-install"
+        "sed -i.bak 's|Installation complete in \$(( SECONDS / 60 )) min|Installation complete|' bin/ut-install"
 fi
 
 capability_discriminates "a builder that waits for an llm a panel does not run" \
@@ -405,84 +409,84 @@ capability_discriminates "a caller of the compute node left on the public roots"
     "every service that calls a compute node trusts its root" \
     "sed -i.bak '/^  api-customer: \\*trusts-the-compute-node\$/d' compose.remote-inference.yaml"
 
-if grep -q 'record_this_install' "$REPO_ROOT/ut-install"; then
+if grep -q 'record_this_install' "$REPO_ROOT/bin/ut-install"; then
     capability_discriminates "an install run nobody keeps" \
         "every install run is kept, from its first step" \
-        "sed -i.bak '/trap record_this_install EXIT/d' ut-install"
+        "sed -i.bak '/trap record_this_install EXIT/d' bin/ut-install"
 
     capability_discriminates "a failed install kept as a success" \
         "a failed install is kept, with the step it stopped at" \
-        "sed -i.bak 's|outcome=\"failed\"|outcome=\"done\"|' ut-install"
+        "sed -i.bak 's|outcome=\"failed\"|outcome=\"done\"|' bin/ut-install"
 
     capability_discriminates "the history written over at each install" \
         "a second install is added after the first, never over it" \
-        "sed -i.bak 's|>> \"\\\$history\"|> \"\\\$history\"|' ut-install"
+        "sed -i.bak 's|>> \"\\\$history\"|> \"\\\$history\"|' bin/ut-install"
 
     capability_discriminates "a verdict kept without the memory left" \
         "a status verdict is kept beside the installs" \
-        "sed -i.bak 's/,\"available_bytes\":%s//' ut-status"
+        "sed -i.bak 's/,\"available_bytes\":%s//' bin/ut-status"
 
     capability_discriminates "a status verdict nobody keeps" \
         "a status verdict is kept beside the installs" \
-        "sed -i.bak '/keep_the_verdict \"/d' ut-status"
+        "sed -i.bak '/keep_the_verdict \"/d' bin/ut-status"
 
     capability_discriminates "a timer that does not run, said as if all were well" \
         "it says whether usage reports go out" \
-        "sed -i.bak 's/) log_warn \"\$line\" ;;/) log_info \"\$line\" ;;/' ut-status"
+        "sed -i.bak 's/) log_warn \"\$line\" ;;/) log_info \"\$line\" ;;/' bin/ut-status"
 fi
 
-if [[ -x "$REPO_ROOT/ut-report" ]]; then
+if [[ -x "$REPO_ROOT/bin/ut-report" ]]; then
     capability_discriminates "a report written where nothing was installed" \
         "a directory with no install gets no report" \
-        "sed -i.bak 's|^    \[\[ -f \"\$INSTALL_DIR/compose.yaml\" \]\].*|    :|' ut-report"
+        "sed -i.bak 's|^    \[\[ -f \"\$INSTALL_DIR/compose.yaml\" \]\].*|    :|' bin/ut-report"
 
     capability_discriminates "the recorder asked at an address it does not answer" \
         "the report finds the engine the recorder holds" \
-        "sed -i.bak 's|\"query?query=|\"query=|' ut-report"
+        "sed -i.bak 's|\"query?query=|\"query=|' bin/ut-report"
 
     capability_discriminates "a report that names who asked" \
         "the report holds no key outside its schema" \
-        "sed -i.bak 's|\"install_id\": \"%s\",|\"install_id\": \"%s\", \"user\": \"someone@example.com\",|' ut-report"
+        "sed -i.bak 's|\"install_id\": \"%s\",|\"install_id\": \"%s\", \"user\": \"someone@example.com\",|' bin/ut-report"
 
     capability_discriminates "requests with nobody behind them, unremarked" \
         "requests served with no user counted are flagged" \
-        "sed -i.bak '/users-missing:/d' ut-report"
+        "sed -i.bak '/users-missing:/d' bin/ut-report"
 
     capability_discriminates "a missing series reported as a quiet hour" \
         "a series the recorder does not have is flagged" \
-        "sed -i.bak '/series-missing:/d' ut-report"
+        "sed -i.bak '/series-missing:/d' bin/ut-report"
 
     capability_discriminates "the minutes requests waited left out of the report" \
         "the minutes requests waited for the engine are counted" \
-        "sed -i.bak 's/ waiting_peak saturated_minutes / waiting_peak /' ut-report"
+        "sed -i.bak 's/ waiting_peak saturated_minutes / waiting_peak /' bin/ut-report"
 
     capability_discriminates "a stopped recorder reported as an idle machine" \
         "an engine nobody recorded is flagged" \
-        "sed -i.bak '/recorder-missing:/d' ut-report"
+        "sed -i.bak '/recorder-missing:/d' bin/ut-report"
 
     capability_discriminates "a forecast that never warns" \
         "a recorder that will outgrow its cap is flagged before it does" \
-        "sed -i.bak 's|if (kept < wanted)|if (kept < 0)|' ut-report"
+        "sed -i.bak 's|if (kept < wanted)|if (kept < 0)|' bin/ut-report"
 
     capability_discriminates "a retention read up to its first unit only" \
         "a cap written in other units is read the same" \
-        "sed -i.bak 's|while (match(d,|if (match(d,|' ut-report"
+        "sed -i.bak 's|while (match(d,|if (match(d,|' bin/ut-report"
 
     capability_discriminates "a forecast drawn from an hour of write-ahead log" \
         "a recorder too young to judge raises nothing" \
-        "sed -i.bak 's|covered < 1 |covered < 0 |' ut-report"
+        "sed -i.bak 's|covered < 1 |covered < 0 |' bin/ut-report"
 
     capability_discriminates "a report silent about memory" \
         "the report gives each service its memory peak and limit" \
-        "sed -i.bak '/\"memory\": %s/d' ut-report"
+        "sed -i.bak '/\"memory\": %s/d' bin/ut-report"
 
     capability_discriminates "an unreadable memory peak reported as nothing" \
         "a memory peak nobody can read is flagged" \
-        "sed -i.bak '/memory-peak-unknown:/d' ut-report"
+        "sed -i.bak '/memory-peak-unknown:/d' bin/ut-report"
 
     capability_discriminates "a manifest that vouches for nothing" \
         "the manifest carries the report's checksum" \
-        "sed -i.bak 's|sha256 \${checksum}|sha256 unknown|' ut-report"
+        "sed -i.bak 's|sha256 \${checksum}|sha256 unknown|' bin/ut-report"
 fi
 
 if grep -q 'install_status_timer' "$REPO_ROOT/setup-autostart.sh"; then
@@ -509,19 +513,19 @@ capability_discriminates "the machine surface pointed at something else" \
 
 capability_discriminates "a folder image taken without proving it is the one the release names" \
     "a folder holding an image the release does not name is refused" \
-    "sed -i.bak 's/\\[\\[ \"\\\$(sha256_of \"\\\$dir\/named.json\")\" == \"\\\${reference#\\*@}\" \\]\\] || return 1/:/' ut-install"
+    "sed -i.bak 's/\\[\\[ \"\\\$(sha256_of \"\\\$dir\/named.json\")\" == \"\\\${reference#\\*@}\" \\]\\] || return 1/:/' bin/ut-install"
 
 capability_discriminates "a folder tool loaded whatever it turns out to be" \
     "a folder whose tool is not the one the release names is refused" \
-    "sed -i.bak 's/^        \\[\\[ -n \"\\\$config\" && /        [[ -n \"\$config\" || /' ut-install"
+    "sed -i.bak 's/^        \\[\\[ -n \"\\\$config\" && /        [[ -n \"\$config\" || /' bin/ut-install"
 
 capability_discriminates "folder images named by tag rather than by digest" \
     "images from a prepared folder start under the digest the release names" \
-    "sed -i.bak 's|        env_set \"\\\$local_file\" \"\\\$key\" \"\\\$local_name\"|        env_set \"\\\$local_file\" \"\\\$key\" \"\\\${local_name%@*}:from-a-folder\"|' ut-install"
+    "sed -i.bak 's|        env_set \"\\\$local_file\" \"\\\$key\" \"\\\$local_name\"|        env_set \"\\\$local_file\" \"\\\$key\" \"\\\${local_name%@*}:from-a-folder\"|' bin/ut-install"
 
 capability_discriminates "ut-get preparing with another tool than ut-install loads with" \
     "ut-get prepares with the tools ut-install loads with" \
-    "sed -i.bak 's|^FOLDER_SKOPEO_TOOL=.*|FOLDER_SKOPEO_TOOL=\"quay.io/skopeo/stable:v1.19.0@sha256:0000000000000000000000000000000000000000000000000000000000000000\"|' ut-get"
+    "sed -i.bak 's|^FOLDER_SKOPEO_TOOL=.*|FOLDER_SKOPEO_TOOL=\"quay.io/skopeo/stable:v1.19.0@sha256:0000000000000000000000000000000000000000000000000000000000000000\"|' bin/ut-get"
 
 capability_discriminates "a database port declared again, which Docker never publishes" \
     "no service declares a port Docker never publishes" \
@@ -553,60 +557,60 @@ if grep -q 'mdns_applies' "$REPO_ROOT/setup-autostart.sh"; then
         "sed -i.bak 's|^        withdraw_mdns_publisher$|        :|' setup-autostart.sh"
 fi
 
-if grep -q 'read_domain' "$REPO_ROOT/ut-install"; then
+if grep -q 'read_domain' "$REPO_ROOT/bin/ut-install"; then
     capability_discriminates "the address defaulted silently again" \
         "an unattended install falls back to the mDNS name" \
-        "sed -i.bak 's|^DOMAIN=\"\${UT_DOMAIN:-}\"|DOMAIN=\"\${UT_DOMAIN:-understand.local}\"|' ut-install"
+        "sed -i.bak 's|^DOMAIN=\"\${UT_DOMAIN:-}\"|DOMAIN=\"\${UT_DOMAIN:-understand.local}\"|' bin/ut-install"
 
     capability_discriminates "the address given up front overwritten by the fallback" \
         "an address given up front is taken as it is" \
-        "sed -i.bak 's|^    \[\[ -n \"\$DOMAIN\" \]\] \&\& return 0$|    :|' ut-install"
+        "sed -i.bak 's|^    \[\[ -n \"\$DOMAIN\" \]\] \&\& return 0$|    :|' bin/ut-install"
 
     capability_discriminates "the address already on the machine ignored" \
         "an address the machine already answers on is never replaced" \
-        "sed -i.bak 's|^    suggested=\"\${current:-\$FALLBACK_DOMAIN}\"$|    suggested=\"\$FALLBACK_DOMAIN\"|' ut-install"
+        "sed -i.bak 's|^    suggested=\"\${current:-\$FALLBACK_DOMAIN}\"$|    suggested=\"\$FALLBACK_DOMAIN\"|' bin/ut-install"
 
     capability_discriminates "the preflight resolving the fallback instead" \
         "the preflight resolves the address in use" \
-        "sed -i.bak 's#candidate=\$(configured_domain)#candidate=\"\"#' ut-install"
+        "sed -i.bak 's#candidate=\$(configured_domain)#candidate=\"\"#' bin/ut-install"
 
     if command -v python3 >/dev/null 2>&1; then
         capability_discriminates "the typed answer discarded" \
             "the address typed at the prompt is the one it takes" \
-            "sed -i.bak 's|^    DOMAIN=\"\${answer:-\$suggested}\"$|    DOMAIN=\"\$suggested\"|' ut-install"
+            "sed -i.bak 's|^    DOMAIN=\"\${answer:-\$suggested}\"$|    DOMAIN=\"\$suggested\"|' bin/ut-install"
 
         capability_discriminates "the prompt offering the fallback over the configured address" \
             "answering nothing at the prompt keeps what the machine already answers on" \
-            "sed -i.bak 's|^    suggested=\"\${current:-\$FALLBACK_DOMAIN}\"$|    suggested=\"\$FALLBACK_DOMAIN\"|' ut-install"
+            "sed -i.bak 's|^    suggested=\"\${current:-\$FALLBACK_DOMAIN}\"$|    suggested=\"\$FALLBACK_DOMAIN\"|' bin/ut-install"
     fi
 fi
 
-if grep -q '^step_reporting()' "$REPO_ROOT/ut-install"; then
+if grep -q '^step_reporting()' "$REPO_ROOT/bin/ut-install"; then
     capability_discriminates "reports switched on when nobody was there to answer" \
         "with no answer and no terminal to ask on, nothing is sent" \
-        "sed -i.bak 's|^            REPORTING=\"no\"\$|            REPORTING=\"yes\"|' ut-install"
+        "sed -i.bak 's|^            REPORTING=\"no\"\$|            REPORTING=\"yes\"|' bin/ut-install"
 
     capability_discriminates "the question asked again on every run" \
         "an answer given once is not asked for again" \
-        "sed -i.bak 's|^    \\[\\[ \"\\\$said\" != \"Reporting: not decided\" \\]\\]\$|    false|' ut-install"
+        "sed -i.bak 's|^    \\[\\[ \"\\\$said\" != \"Reporting: not decided\" \\]\\]\$|    false|' bin/ut-install"
 
     capability_discriminates "a prompt that takes Enter for an answer" \
         "the prompt and the options hand ut-send the same answers" \
-        "sed -i.bak 's|^    while \\[\\[ \"\\\$answer\" != \"yes\" \\&\\& \"\\\$answer\" != \"no\" \\]\\]; do\$|    while false; do|' ut-install"
+        "sed -i.bak 's|^    while \\[\\[ \"\\\$answer\" != \"yes\" \\&\\& \"\\\$answer\" != \"no\" \\]\\]; do\$|    while false; do|' bin/ut-install"
 
     capability_discriminates "an install stopped by reports it could not set up" \
         "reporting that cannot be set up does not stop the install" \
-        "sed -i.bak 's|^    log_warn \"Usage reports could not be set up|    die \"Usage reports could not be set up|' ut-install"
+        "sed -i.bak 's|^    log_warn \"Usage reports could not be set up|    die \"Usage reports could not be set up|' bin/ut-install"
 
     capability_discriminates "a period the installer keeps to itself" \
         "a period given to the installer reaches ut-send" \
-        "sed -i.bak '/--every \"\$REPORTING_EVERY\"/d' ut-install"
+        "sed -i.bak '/--every \"\$REPORTING_EVERY\"/d' bin/ut-install"
 fi
 
 if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
     capability_discriminates "a command left out of the package" \
         "the release installs as a package" \
-        "sed -i.bak 's|install -m 755 \"\$REPO_ROOT/ut-install\" \"\$root/usr/bin/\"|true|' packaging/build-deb.sh"
+        "sed -i.bak 's|install -m 755 \"\$REPO_ROOT/bin/ut-install\" \"\$root/usr/bin/\"|true|' packaging/build-deb.sh"
 
     capability_discriminates "the settings directory left world-readable" \
         "the settings directory is prepared" \
@@ -626,11 +630,11 @@ if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
 
     capability_discriminates "the installed command cloning over its own release" \
         "installed from the package, it clones nothing" \
-        "sed -i.bak 's|        INSTALL_DIR=\"\$PACKAGE_SHARE_DIR\"|        INSTALL_DIR=\"\$CHECKOUT_INSTALL_DIR\"|' ut-install"
+        "sed -i.bak 's|        INSTALL_DIR=\"\$PACKAGE_SHARE_DIR\"|        INSTALL_DIR=\"\$CHECKOUT_INSTALL_DIR\"|' bin/ut-install"
 
     capability_discriminates "the registry token asked for on every run" \
         "a registry login already stored is not asked for a second time" \
-        "sed -i.bak 's|^release_is_present() { checkout_exists .. release_comes_from_the_package_manager; }|release_is_present() { checkout_exists; }|' ut-install"
+        "sed -i.bak 's|^release_is_present() { checkout_exists .. release_comes_from_the_package_manager; }|release_is_present() { checkout_exists; }|' bin/ut-install"
 
     capability_discriminates "a dependency nobody calls" \
         "every dependency it declares" \
@@ -707,62 +711,62 @@ if [[ -x "$REPO_ROOT/packaging/release-bom.sh" ]]; then
         "sed -i.bak 's|understandtech-appliance \${VERSION}|understandtech-appliance \${VERSION}\${RANDOM}|' packaging/release-bom.sh"
 fi
 
-if [[ -x "$REPO_ROOT/ut-verify" ]]; then
+if [[ -x "$REPO_ROOT/bin/ut-verify" ]]; then
     capability_discriminates "a verification that refuses what the release signed" \
         "a package the release signed is accepted" \
-        "sed -i.bak 's|-signature \"\$signature\"|-signature /dev/null|' ut-verify"
+        "sed -i.bak 's|-signature \"\$signature\"|-signature /dev/null|' bin/ut-verify"
 
     capability_discriminates "a verification that accepts anything" \
         "not signed at all is refused" \
-        "sed -i.bak 's|^    if openssl dgst .*; then$|    if true; then|' ut-verify"
+        "sed -i.bak 's|^    if openssl dgst .*; then$|    if true; then|' bin/ut-verify"
 
     capability_discriminates "a fingerprint taken of a key file never written" \
         "never fingerprints as the hash of nothing" \
-        "sed -i.bak -e 's/ || return 1\$//' -e 's/ || fail \"Cannot write the key to a temporary file\"//' -e 's/|| { rm -f \"\$key\"; fail \"openssl could not read the key\"; }/|| true/' ut-verify"
+        "sed -i.bak -e 's/ || return 1\$//' -e 's/ || fail \"Cannot write the key to a temporary file\"//' -e 's/|| { rm -f \"\$key\"; fail \"openssl could not read the key\"; }/|| true/' bin/ut-verify"
 
     # The regression this guards is a key fetched rather than carried: it
     # passes on a developer's machine and fails on the only machine that counts.
     capability_discriminates "a key fetched instead of carried" \
         "and it verifies with no network at all" \
-        "sed -i.bak 's|^RELEASE_PUBLIC_KEY=.*|RELEASE_PUBLIC_KEY=\$(wget -qO- https://example.invalid/key)|' ut-verify"
+        "sed -i.bak 's|^RELEASE_PUBLIC_KEY=.*|RELEASE_PUBLIC_KEY=\$(wget -qO- https://example.invalid/key)|' bin/ut-verify"
 
     capability_discriminates "a shipped key that is not the signing key" \
         "the key ut-verify carries is the key the release is signed with" \
         "openssl ecparam -name prime256v1 -genkey -noout -out /tmp/other-\$\$.pem 2>/dev/null && openssl ec -in /tmp/other-\$\$.pem -pubout -out packaging/release.pub 2>/dev/null"
 fi
 
-if [[ -x "$REPO_ROOT/ut-get" ]]; then
+if [[ -x "$REPO_ROOT/bin/ut-get" ]]; then
     capability_discriminates "a launcher that installs whatever it is given" \
         "nothing is installed from a release that was altered" \
-        "sed -i.bak 's|^    if openssl dgst .*; then$|    if true; then|' ut-get"
+        "sed -i.bak 's|^    if openssl dgst .*; then$|    if true; then|' bin/ut-get"
 
     capability_discriminates "a launcher that installs before it checks" \
         "nothing is installed from a release that was altered" \
-        "sed -i.bak 's|^    verify_signature \"\$package\" \\\\$|    true \\\\|' ut-get"
+        "sed -i.bak 's|^    verify_signature \"\$package\" \\\\$|    true \\\\|' bin/ut-get"
 
     capability_discriminates "a launcher that drops what it was asked to pass on" \
         "a release we signed is installed, then handed to ut-install" \
-        "sed -i.bak 's|^    exec \"\$NEXT\" .*|    exec \"\$NEXT\"|' ut-get"
+        "sed -i.bak 's|^    exec \"\$NEXT\" .*|    exec \"\$NEXT\"|' bin/ut-get"
 
     capability_discriminates "a launcher that ignores --browser" \
         "with --browser, it hands over to ut-setup" \
-        "sed -i.bak 's|--browser) NEXT=ut-setup ;;|--browser) ;;|' ut-get"
+        "sed -i.bak 's|--browser) NEXT=ut-setup ;;|--browser) ;;|' bin/ut-get"
 
     capability_discriminates "a launcher that carries another key than ut-verify" \
         "the key ut-get carries is the key ut-verify carries" \
-        "sed -i.bak 's|^62Aggan6|62Aggan7|' ut-get"
+        "sed -i.bak 's|^62Aggan6|62Aggan7|' bin/ut-get"
 
     capability_discriminates "a launcher that always takes the latest" \
         "a release named by --version is installed rather than the latest" \
-        "sed -i.bak 's|^            --version) VERSION=.*|            --version) shift ;;|' ut-get"
+        "sed -i.bak 's|^            --version) VERSION=.*|            --version) shift ;;|' bin/ut-get"
 
     capability_discriminates "a launcher that downloads again what it has" \
         "a release already downloaded installs again with its server gone" \
-        "sed -i.bak '/^        \[\[ -f \"\$dir\/\$name\" \]\] \&\& continue$/d' ut-get"
+        "sed -i.bak '/^        \[\[ -f \"\$dir\/\$name\" \]\] \&\& continue$/d' bin/ut-get"
 
     capability_discriminates "a launcher that takes any version it is given" \
         "nothing is fetched and the reason is said" \
-        "sed -i.bak 's|^is_a_release_version() {.*|is_a_release_version() { return 0; }|' ut-get"
+        "sed -i.bak 's|^is_a_release_version() {.*|is_a_release_version() { return 0; }|' bin/ut-get"
 
     capability_discriminates "a release that does not publish the launcher" \
         "every release publishes ut-get beside the package" \
@@ -774,13 +778,13 @@ if [[ -x "$REPO_ROOT/ut-get" ]]; then
 
     capability_discriminates "a launcher that reads a version where GitHub names none" \
         "nothing is fetched and the reason is said" \
-        "sed -i.bak 's|^    \[\[ \"\$tag_url\" == \*/releases/tag/v\* \]\] \\\\$|    true \\\\|' ut-get"
+        "sed -i.bak 's|^    \[\[ \"\$tag_url\" == \*/releases/tag/v\* \]\] \\\\$|    true \\\\|' bin/ut-get"
 fi
 
-if [[ -x "$REPO_ROOT/ut-license" ]]; then
+if [[ -x "$REPO_ROOT/bin/ut-license" ]]; then
     capability_discriminates "an unreachable Keygen taken for a refusal" \
         "a machine that cannot reach Keygen says so apart" \
-        "sed -i.bak 's#; exit 3; }\$#; exit 1; }#' ut-license"
+        "sed -i.bak 's#; exit 3; }\$#; exit 1; }#' bin/ut-license"
 
     capability_discriminates "a license file sent back that anyone can read" \
         "a machine activated from its request alone gets a license file it accepts" \
@@ -792,7 +796,7 @@ if [[ -x "$REPO_ROOT/ut-license" ]]; then
 
     capability_discriminates "an unreachable Keygen taken for a refusal" \
         "a machine that cannot reach Keygen says so apart" \
-        "sed -i.bak 's#; exit 3; }\$#; exit 1; }#' ut-license"
+        "sed -i.bak 's#; exit 3; }\$#; exit 1; }#' bin/ut-license"
 
     capability_discriminates "a license file sent back that anyone can read" \
         "a machine activated from its request alone gets a license file it accepts" \
@@ -804,67 +808,67 @@ if [[ -x "$REPO_ROOT/ut-license" ]]; then
 
     capability_discriminates "a suspended license, still taken" \
         "a license that ended or is suspended is refused" \
-        "sed -i.bak 's#elif (\$license.status // \"\") == \"SUSPENDED\" or (\$license.status // \"\") == \"BANNED\" then \"suspended\"#elif false then \"suspended\"#' ut-license"
+        "sed -i.bak 's#elif (\$license.status // \"\") == \"SUSPENDED\" or (\$license.status // \"\") == \"BANNED\" then \"suspended\"#elif false then \"suspended\"#' bin/ut-license"
 
     capability_discriminates "a key of the old format sent to Keygen as if it were one" \
         "says why it is not activated" \
-        "sed -i.bak 's#\[\[ \"\$key\" != UT1.\* \]\] || fail#true || fail#' ut-license"
+        "sed -i.bak 's#\[\[ \"\$key\" != UT1.\* \]\] || fail#true || fail#' bin/ut-license"
 
     capability_discriminates "a key of the old format read as a forged license file" \
         "checked as a license file, says what to ask for" \
-        "sed -i.bak '/head -c 4 \"\$machine_file\"/d' ut-license"
+        "sed -i.bak '/head -c 4 \"\$machine_file\"/d' bin/ut-license"
 
     capability_discriminates "a key that passes its settings to curl" \
         "a key that would carry settings to curl is refused" \
-        "sed -i.bak 's#\[\[ \"\$key\" =~ .* \]\] || fail#true || fail#' ut-license"
+        "sed -i.bak 's#\[\[ \"\$key\" =~ .* \]\] || fail#true || fail#' bin/ut-license"
 
     capability_discriminates "a license file written for anyone to read" \
         "activating binds the license to this machine" \
-        "sed -i.bak 's#install -m 600 \"\$staged\"#install -m 644 \"\$staged\"#' ut-license"
+        "sed -i.bak 's#install -m 600 \"\$staged\"#install -m 644 \"\$staged\"#' bin/ut-license"
 
     capability_discriminates "an activation and a check that compute two fingerprints" \
         "activating binds the license to this machine" \
-        "sed -i.bak 's#^    fingerprint=\$(machine_fingerprint)\$#    fingerprint=\$(machine_fingerprint)x#' ut-license"
+        "sed -i.bak 's#^    fingerprint=\$(machine_fingerprint)\$#    fingerprint=\$(machine_fingerprint)x#' bin/ut-license"
 
     capability_discriminates "a file that only needs renewing, refused like a forged one" \
         "only needs renewing is told apart from a refused one" \
-        "sed -i.bak 's#^renewable() { warn \"\$\*\"; exit 2; }#renewable() { warn \"\$*\"; exit 1; }#' ut-license"
+        "sed -i.bak 's#^renewable() { warn \"\$\*\"; exit 2; }#renewable() { warn \"\$*\"; exit 1; }#' bin/ut-license"
 
     capability_discriminates "a license check that refuses what Keygen signed" \
         "a license file Keygen signed for this machine is accepted" \
-        "sed -i.bak 's|-sigfile \"\$work/signature\"|-sigfile /dev/null|' ut-license"
+        "sed -i.bak 's|-sigfile \"\$work/signature\"|-sigfile /dev/null|' bin/ut-license"
 
     capability_discriminates "a license check that accepts any file that parses" \
         "is not a license file at all is refused" \
-        "sed -i.bak '/openssl pkeyutl -verify/d' ut-license"
+        "sed -i.bak '/openssl pkeyutl -verify/d' bin/ut-license"
 
     capability_discriminates "a license file that works on any machine" \
         "a license file made for another machine is refused" \
-        "sed -i.bak 's#if .data.attributes.fingerprint != \$fingerprint then \"elsewhere\"#if false then \"elsewhere\"#' ut-license"
+        "sed -i.bak 's#if .data.attributes.fingerprint != \$fingerprint then \"elsewhere\"#if false then \"elsewhere\"#' bin/ut-license"
 
     capability_discriminates "a clock behind the file, taken for a good one" \
         "a clock set before the file was issued is named" \
-        "sed -i.bak 's#elif now + \$tolerance < (.meta.issued | epoch) then \"clock\"#elif false then \"clock\"#' ut-license"
+        "sed -i.bak 's#elif now + \$tolerance < (.meta.issued | epoch) then \"clock\"#elif false then \"clock\"#' bin/ut-license"
 
     capability_discriminates "a license that ended, still taken" \
         "a license that ended or is suspended is refused" \
-        "sed -i.bak 's#and (\$license.expiry | epoch) < now then \"ended\"#and false then \"ended\"#' ut-license"
+        "sed -i.bak 's#and (\$license.expiry | epoch) < now then \"ended\"#and false then \"ended\"#' bin/ut-license"
 
     capability_discriminates "a license file that never ends" \
         "a license file past its own end says how to get a new one" \
-        "sed -i.bak 's#elif (.meta.expiry | epoch) < now then \"file_ended\"#elif false then \"file_ended\"#' ut-license"
+        "sed -i.bak 's#elif (.meta.expiry | epoch) < now then \"file_ended\"#elif false then \"file_ended\"#' bin/ut-license"
 
     capability_discriminates "an activation that does not say the license is bound elsewhere" \
         "says why it is not activated" \
-        "sed -i.bak 's#FINGERPRINT_SCOPE_MISMATCH|TOO_MANY_MACHINES|MACHINE_LIMIT_EXCEEDED|FINGERPRINT_TAKEN)#NEVER)#' ut-license"
+        "sed -i.bak 's#FINGERPRINT_SCOPE_MISMATCH|TOO_MANY_MACHINES|MACHINE_LIMIT_EXCEEDED|FINGERPRINT_TAKEN)#NEVER)#' bin/ut-license"
 
     capability_discriminates "a license key handed to curl on its command line" \
         "nor reach a command line" \
-        "sed -i.bak 's#\"\${KEYGEN_API}\${path}\"#\"\${KEYGEN_API}\${path}?k=\${key}\"#' ut-license"
+        "sed -i.bak 's#\"\${KEYGEN_API}\${path}\"#\"\${KEYGEN_API}\${path}?k=\${key}\"#' bin/ut-license"
 
     capability_discriminates "a license check that shows what the license carries" \
         "never come out, nor reach a command line" \
-        "sed -i.bak 's#^    valid_dataset \"\$machine_file\" \"\$dataset\"\$#&; cat \"\$dataset\" >\&2#' ut-license"
+        "sed -i.bak 's#^    valid_dataset \"\$machine_file\" \"\$dataset\"\$#&; cat \"\$dataset\" >\&2#' bin/ut-license"
 
     capability_discriminates "a license that quietly defaults to an end date nobody chose" \
         "no machine or no end date is never issued" \
@@ -888,11 +892,11 @@ if [[ -x "$REPO_ROOT/ut-license" ]]; then
 
     capability_discriminates "a status that never mentions the license" \
         "it says how the license stands" \
-        "sed -i.bak '/^    say_how_the_license_stands\$/d' ut-status"
+        "sed -i.bak '/^    say_how_the_license_stands\$/d' bin/ut-status"
 
     capability_discriminates "a status that calls an ended license fine" \
         "it says how the license stands" \
-        "sed -i.bak 's|log_warn \"\${line#|log_info \"\${line#|' ut-status"
+        "sed -i.bak 's|log_warn \"\${line#|log_info \"\${line#|' bin/ut-status"
 
     capability_discriminates "a license issued without a machine" \
         "no machine or no end date is never issued" \
@@ -936,7 +940,7 @@ if [[ -x "$REPO_ROOT/ut-license" ]]; then
 
     capability_discriminates "an installer that drops library/ from Docker Hub's short names" \
         "the installer and the issuer name every image of the release alike" \
-        "sed -i.bak 's|reference=\"library/\${reference}\"|reference=\"\${reference}\"|' ut-install"
+        "sed -i.bak 's|reference=\"library/\${reference}\"|reference=\"\${reference}\"|' bin/ut-install"
 
     capability_discriminates "a license for another registry issued without trying it" \
         "a license for another registry names it, and is checked against it" \
@@ -1027,223 +1031,223 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
 
     install_walk_discriminates "a login with some other token than the license's" \
         "logs in with the token it carries" \
-        "sed -i.bak 's|^    REGISTRY_TOKEN=\$(\"\$tool\" field registry_token \"\$machine\" 2>/dev/null)|    REGISTRY_TOKEN=some-other-token|' ut-install"
+        "sed -i.bak 's|^    REGISTRY_TOKEN=\$(\"\$tool\" field registry_token \"\$machine\" 2>/dev/null)|    REGISTRY_TOKEN=some-other-token|' bin/ut-install"
 
     install_walk_discriminates "a license file read without being checked" \
         "an altered license file stops the install before any request" \
-        "sed -i.bak 's|^        \"\$tool\" check \"\$machine\" \|\| checked=\$?|        true|' ut-install"
+        "sed -i.bak 's|^        \"\$tool\" check \"\$machine\" \|\| checked=\$?|        true|' bin/ut-install"
 
     install_walk_discriminates "a license file replaced from Keygen rather than checked" \
         "an altered license file stops the install before any request" \
-        "sed -i.bak 's|^    if \[\[ -s \"\$MACHINE_FILE\" \]\] \&\& stored_license_is \"\$key\"; then|    if false; then|' ut-install"
+        "sed -i.bak 's|^    if \[\[ -s \"\$MACHINE_FILE\" \]\] \&\& stored_license_is \"\$key\"; then|    if false; then|' bin/ut-install"
 
     install_walk_discriminates "a license file that ended, refused instead of renewed" \
         "a license file that has ended is renewed from Keygen" \
-        "sed -i.bak 's|(( checked == 0 \|\| checked == 2 ))|(( checked == 0 ))|' ut-install"
+        "sed -i.bak 's|(( checked == 0 \|\| checked == 2 ))|(( checked == 0 ))|' bin/ut-install"
 
     install_walk_discriminates "a machine with no network told nothing of what to do" \
         "a machine that cannot reach Keygen writes its request" \
-        "sed -i.bak 's#^            ask_for_the_license_by_file \"\$tool\"\$#            :#' ut-install"
+        "sed -i.bak 's#^            ask_for_the_license_by_file \"\$tool\"\$#            :#' bin/ut-install"
 
     install_walk_discriminates "a request that carries the license key" \
         "a machine that cannot reach Keygen writes its request" \
-        "sed -i.bak 's#\"\$tool\" request > \"\$LICENSE_REQUEST\"#{ \"\$tool\" request; cat \"\$LICENSE_FILE\"; } > \"\$LICENSE_REQUEST\"#' ut-install"
+        "sed -i.bak 's#\"\$tool\" request > \"\$LICENSE_REQUEST\"#{ \"\$tool\" request; cat \"\$LICENSE_FILE\"; } > \"\$LICENSE_REQUEST\"#' bin/ut-install"
 
     install_walk_discriminates "a license file given by hand, taken unchecked" \
         "an altered license file sent back is refused" \
-        "sed -i.bak '/cat \"\$MACHINE_FILE_GIVEN\" > \"\$machine\"/{n;s/\"\$tool\" check/true/;}' ut-install"
+        "sed -i.bak '/cat \"\$MACHINE_FILE_GIVEN\" > \"\$machine\"/{n;s/\"\$tool\" check/true/;}' bin/ut-install"
 
     install_walk_discriminates "a machine with no network told nothing of what to do" \
         "a machine that cannot reach Keygen writes its request" \
-        "sed -i.bak 's#^            ask_for_the_license_by_file \"\$tool\"\$#            :#' ut-install"
+        "sed -i.bak 's#^            ask_for_the_license_by_file \"\$tool\"\$#            :#' bin/ut-install"
 
     install_walk_discriminates "a request that carries the license key" \
         "a machine that cannot reach Keygen writes its request" \
-        "sed -i.bak 's#\"\$tool\" request > \"\$LICENSE_REQUEST\"#{ \"\$tool\" request; cat \"\$LICENSE_FILE\"; } > \"\$LICENSE_REQUEST\"#' ut-install"
+        "sed -i.bak 's#\"\$tool\" request > \"\$LICENSE_REQUEST\"#{ \"\$tool\" request; cat \"\$LICENSE_FILE\"; } > \"\$LICENSE_REQUEST\"#' bin/ut-install"
 
     install_walk_discriminates "a license file given by hand, taken unchecked" \
         "an altered license file sent back is refused" \
-        "sed -i.bak '/cat \"\$MACHINE_FILE_GIVEN\" > \"\$machine\"/{n;s/\"\$tool\" check/true/;}' ut-install"
+        "sed -i.bak '/cat \"\$MACHINE_FILE_GIVEN\" > \"\$machine\"/{n;s/\"\$tool\" check/true/;}' bin/ut-install"
 
     install_walk_discriminates "a license that is not kept for the next update" \
         "kept for updates, readable by root alone" \
-        "sed -i.bak 's|^    install -m 600 \"\$key\" \"\$LICENSE_STORE\"|    :|' ut-install"
+        "sed -i.bak 's|^    install -m 600 \"\$key\" \"\$LICENSE_STORE\"|    :|' bin/ut-install"
 
     install_walk_discriminates "a license file that is not kept for the next update" \
         "kept for updates, readable by root alone" \
-        "sed -i.bak 's|^    install -m 600 \"\$machine\" \"\$MACHINE_FILE\"|    :|' ut-install"
+        "sed -i.bak 's|^    install -m 600 \"\$machine\" \"\$MACHINE_FILE\"|    :|' bin/ut-install"
 
     install_walk_discriminates "a registry login with the images already here" \
         "a license needs no registry login" \
-        "sed -i.bak 's|^    if ! \$DO_PULL; then\$|    if false; then|' ut-install"
+        "sed -i.bak 's|^    if ! \$DO_PULL; then\$|    if false; then|' bin/ut-install"
 
     install_walk_discriminates "the carried token written to the log" \
         "never reach the output" \
-        "sed -i.bak 's|^    REGISTRY_USER=\${licensed_user:-\$REGISTRY_USER}|&; log_info \"\$REGISTRY_TOKEN\"|' ut-install"
+        "sed -i.bak 's|^    REGISTRY_USER=\${licensed_user:-\$REGISTRY_USER}|&; log_info \"\$REGISTRY_TOKEN\"|' bin/ut-install"
 
     install_walk_discriminates "a token alone accepted without a word" \
         "a registry token alone still installs, and says a license will be needed" \
-        "sed -i.bak 's|is accepted by this version only|works|' ut-install"
+        "sed -i.bak 's|is accepted by this version only|works|' bin/ut-install"
 
     install_walk_discriminates "a registry the license names, then ignored" \
         "a license that names a registry pulls every image from it" \
-        "sed -i.bak '/^        REGISTRY=\$licensed_registry\$/d' ut-install"
+        "sed -i.bak '/^        REGISTRY=\$licensed_registry\$/d' bin/ut-install"
 
     install_walk_discriminates "a login to the licensed registry, and images still named elsewhere" \
         "a license that names a registry pulls every image from it" \
-        "sed -i.bak 's|\"\$REGISTRY\" != \"ghcr.io\" \&\& \"\$line\"|\"\$REGISTRY\" == \"never\" \&\& \"\$line\"|' ut-install"
+        "sed -i.bak 's|\"\$REGISTRY\" != \"ghcr.io\" \&\& \"\$line\"|\"\$REGISTRY\" == \"never\" \&\& \"\$line\"|' bin/ut-install"
 
     install_walk_discriminates "writing through a link whose directory is gone" \
         "it is recreated rather than reported as a broken link" \
-        "sed -i.bak 's|^    install -d -m 750 |    : |' ut-install"
+        "sed -i.bak 's|^    install -d -m 750 |    : |' bin/ut-install"
 
     install_walk_discriminates "an empty settings file kept as if configured" \
         "and the result still renders" \
-        "sed -i.bak 's|^render_settings() {$|render_settings() { return 0;|' ut-install"
+        "sed -i.bak 's|^render_settings() {$|render_settings() { return 0;|' bin/ut-install"
 
     install_walk_discriminates "a disk floor that lets every machine through" \
         "the refusal names what is free and what is needed" \
-        "sed -i.bak 's|^MIN_DISK_BYTES=.*|MIN_DISK_BYTES=0|' ut-install"
+        "sed -i.bak 's|^MIN_DISK_BYTES=.*|MIN_DISK_BYTES=0|' bin/ut-install"
 
     # The clock check reads one value out of release.env. Make that read fail and
     # it skips in silence, which is the shape the defect would really take.
     install_walk_discriminates "an install that lets the operator find out from a traceback" \
         "it gives the API the OA_KEY it needs to start" \
-        "sed -i.bak 's|^give_the_api_the_openai_key_it_needs_to_start() {\$|give_the_api_the_openai_key_it_needs_to_start() { return 0;|' ut-install"
+        "sed -i.bak 's|^give_the_api_the_openai_key_it_needs_to_start() {\$|give_the_api_the_openai_key_it_needs_to_start() { return 0;|' bin/ut-install"
 
     install_walk_discriminates "an OpenAI key replaced by the placeholder" \
         "an OpenAI key already given is never replaced" \
-        "sed -i.bak '/^    \\[\\[ -n \"\\\$(env_get \"\\\$env_file\" OA_KEY/d' ut-install"
+        "sed -i.bak '/^    \\[\\[ -n \"\\\$(env_get \"\\\$env_file\" OA_KEY/d' bin/ut-install"
 
     install_walk_discriminates "a model on vLLM left on NIM's engine" \
         "a model on vLLM brings its engine, and its arguments whole" \
-        "sed -i.bak '/^        vllm:\\*) env_set /d' ut-install"
+        "sed -i.bak '/^        vllm:\\*) env_set /d' bin/ut-install"
 
     install_walk_discriminates "a model's arguments rewritten in double quotes" \
         "a model on vLLM brings its engine, and its arguments whole" \
-        "sed -i.bak 's|\"\\\$chosen\"\\*=\\*) put_the_line_in_place_of_its_key \"\\\$local_file\" \"\\\$line\" ;;|\"\$chosen\"*=*) env_set \"\$local_file\" \"\${line%%=*}\" \"\${line#*=}\" ;;|' ut-install"
+        "sed -i.bak 's|\"\\\$chosen\"\\*=\\*) put_the_line_in_place_of_its_key \"\\\$local_file\" \"\\\$line\" ;;|\"\$chosen\"*=*) env_set \"\$local_file\" \"\${line%%=*}\" \"\${line#*=}\" ;;|' bin/ut-install"
 
     install_walk_discriminates "a model chosen without its proof" \
         "a model is chosen only on a GPU it is proven on" \
-        "sed -i.bak 's| \\&\\& \\[\\[ -f \"\\\$(proof_of \"\\\$id\" \"\\\$engine\" \"\\\$family\")\" \\]\\]||' ut-install"
+        "sed -i.bak 's| \\&\\& \\[\\[ -f \"\\\$(proof_of \"\\\$id\" \"\\\$engine\" \"\\\$family\")\" \\]\\]||' bin/ut-install"
 
     install_walk_discriminates "a model kept by its values rather than its name" \
         "a model kept by name follows its entry on the next install" \
-        "sed -i.bak '/MODEL_ID=\\\$(env_get \"\\\$local_file\" UT_MODEL/d' ut-install"
+        "sed -i.bak '/MODEL_ID=\\\$(env_get \"\\\$local_file\" UT_MODEL/d' bin/ut-install"
 
     install_walk_discriminates "a control plane asked for an engine it does not run" \
         "a control plane takes the names of a model served elsewhere, and no engine" \
-        "sed -i.bak 's|^    if ! this_machine_goes_without_its_accelerator \\&\\& \\[\\[ -z \"\\\$INFERENCE_FROM\" \\]\\]; then\$|    if true; then|' ut-install"
+        "sed -i.bak 's|^    if ! this_machine_goes_without_its_accelerator \\&\\& \\[\\[ -z \"\\\$INFERENCE_FROM\" \\]\\]; then\$|    if true; then|' bin/ut-install"
 
     install_walk_discriminates "a model nobody listed taken at its word" \
         "a model nobody listed is refused before anything is written" \
-        "sed -i.bak 's|^die_on_a_model_nobody_listed() {\$|die_on_a_model_nobody_listed() { return 0;|' ut-install"
+        "sed -i.bak 's|^die_on_a_model_nobody_listed() {\$|die_on_a_model_nobody_listed() { return 0;|' bin/ut-install"
 
     install_walk_discriminates "allowed origins left on the old address" \
         "the allowed origins follow the address when it changes" \
-        "sed -i.bak '/^        move_the_allowed_origins_to_the_new_domain /d' ut-install"
+        "sed -i.bak '/^        move_the_allowed_origins_to_the_new_domain /d' bin/ut-install"
 
     install_walk_discriminates "an engine key nobody generates" \
         "the engine gets a key of its own" \
-        "sed -i.bak 's| VLLM_API_KEY)|)|' ut-install"
+        "sed -i.bak 's| VLLM_API_KEY)|)|' bin/ut-install"
 
     install_walk_discriminates "an engine key an older release shipped, kept as it was" \
         "an engine key an older release left as EMPTY is replaced" \
-        "sed -i.bak 's| \"EMPTY\"\$||' ut-install"
+        "sed -i.bak 's| \"EMPTY\"\$||' bin/ut-install"
 
     install_walk_discriminates "a control plane told the node's key and keeping its own" \
         "it takes the node's address and key" \
-        "sed -i.bak '/env_set \"\$local_file\" VLLM_API_KEY /d' ut-install"
+        "sed -i.bak '/env_set \"\$local_file\" VLLM_API_KEY /d' bin/ut-install"
 
     install_walk_discriminates "a bundle without the node's root" \
         "it trusts the node's root beside the public ones" \
-        "sed -i.bak 's|cat \"\$HOST_CA_BUNDLE\" \"\$INFERENCE_CA_FILE\" >|cat \"\$HOST_CA_BUNDLE\" >|' ut-install"
+        "sed -i.bak 's|cat \"\$HOST_CA_BUNDLE\" \"\$INFERENCE_CA_FILE\" >|cat \"\$HOST_CA_BUNDLE\" >|' bin/ut-install"
 
     install_walk_discriminates "a bundle with the node's root alone" \
         "it trusts the node's root beside the public ones" \
-        "sed -i.bak 's|cat \"\$HOST_CA_BUNDLE\" \"\$INFERENCE_CA_FILE\" >|cat \"\$INFERENCE_CA_FILE\" >|' ut-install"
+        "sed -i.bak 's|cat \"\$HOST_CA_BUNDLE\" \"\$INFERENCE_CA_FILE\" >|cat \"\$INFERENCE_CA_FILE\" >|' bin/ut-install"
 
     install_walk_discriminates "the node's key written to the install log" \
         "the node's key stays out of the install output" \
-        "sed -i.bak 's|with its key, trusting its root\"|with key \$(cat \"\$INFERENCE_KEY_FILE\"), trusting its root\"|' ut-install"
+        "sed -i.bak 's|with its key, trusting its root\"|with key \$(cat \"\$INFERENCE_KEY_FILE\"), trusting its root\"|' bin/ut-install"
 
     install_walk_discriminates "a compute node reached over plain http" \
         "a node reached over plain http is refused before anything is written" \
-        "sed -i.bak 's|\\^https://\\[\\^/\\]+|^https?://[^/]+|' ut-install"
+        "sed -i.bak 's|\\^https://\\[\\^/\\]+|^https?://[^/]+|' bin/ut-install"
 
     install_walk_discriminates "a folder taken without checking it holds every image" \
         "a folder that lacks an image is refused before anything is written" \
-        "sed -i.bak 's|^die_on_a_folder_that_misses_an_image() {\$|die_on_a_folder_that_misses_an_image() { return 0;|' ut-install"
+        "sed -i.bak 's|^die_on_a_folder_that_misses_an_image() {\$|die_on_a_folder_that_misses_an_image() { return 0;|' bin/ut-install"
 
     install_walk_discriminates "a box online again that keeps the names of a folder" \
         "an install that downloads again forgets the names a folder gave its images" \
-        "sed -i.bak 's|^forget_the_images_of_a_folder() {\$|forget_the_images_of_a_folder() { return 0;|' ut-install"
+        "sed -i.bak 's|^forget_the_images_of_a_folder() {\$|forget_the_images_of_a_folder() { return 0;|' bin/ut-install"
 
     install_walk_discriminates "a control plane pointed at a node only mDNS can name" \
         "a node named by mDNS is refused before anything is written" \
-        "sed -i.bak '/^    elif names_an_mdns_host \"\\\$(host_of_url/d' ut-install"
+        "sed -i.bak '/^    elif names_an_mdns_host \"\\\$(host_of_url/d' bin/ut-install"
 
     install_walk_discriminates "--compute that leaves the compute overlay out" \
         "a compute node is installed with one flag, and asked for no domain" \
-        "sed -i.bak '/^        \*) env_set \"\\\$local_file\" COMPOSE_FILE \"\\\${compose_files}:compose.compute.yaml\" ;;\$/d' ut-install"
+        "sed -i.bak '/^        \*) env_set \"\\\$local_file\" COMPOSE_FILE \"\\\${compose_files}:compose.compute.yaml\" ;;\$/d' bin/ut-install"
 
     install_walk_discriminates "--compute that takes a .local name" \
         "a compute node named by mDNS is refused before anything is written" \
-        "sed -i.bak 's|^names_an_mdns_host() {\$|names_an_mdns_host() { return 1;|' ut-install"
+        "sed -i.bak 's|^names_an_mdns_host() {\$|names_an_mdns_host() { return 1;|' bin/ut-install"
 
     install_walk_discriminates "--compute that takes --no-gpu too" \
         "a compute node without its GPU is refused before anything is written" \
-        "sed -i.bak 's|^    if \$NO_GPU \|\| \[\[ -n \"\\\$INFERENCE_FROM\" \]\]; then\$|    if false; then|' ut-install"
+        "sed -i.bak 's|^    if \$NO_GPU \|\| \[\[ -n \"\\\$INFERENCE_FROM\" \]\]; then\$|    if false; then|' bin/ut-install"
 
     install_walk_discriminates "a control plane with a GPU stripped of it" \
         "a control plane with a GPU keeps it for llm and starts no engine" \
-        "sed -i.bak 's|\\[\\[ -n \"\\\$INFERENCE_FROM\" \\]\\] \\&\\& ! an_accelerator_answers|[[ -n \"\$INFERENCE_FROM\" ]]|' ut-install"
+        "sed -i.bak 's|\\[\\[ -n \"\\\$INFERENCE_FROM\" \\]\\] \\&\\& ! an_accelerator_answers|[[ -n \"\$INFERENCE_FROM\" ]]|' bin/ut-install"
 
     install_walk_discriminates "a control plane without a GPU asking for one" \
         "a control plane without a GPU is installed as with --no-gpu" \
-        "sed -i.bak 's|^    \\[\\[ -n \"\\\$INFERENCE_FROM\" \\]\\] \\&\\& ! an_accelerator_answers\$|    false|' ut-install"
+        "sed -i.bak 's|^    \\[\\[ -n \"\\\$INFERENCE_FROM\" \\]\\] \\&\\& ! an_accelerator_answers\$|    false|' bin/ut-install"
 
     install_walk_discriminates "a role read from the overlay rather than from where generation comes from" \
         "the summary says where generation comes from" \
-        "sed -i.bak 's|printf .control plane — generation comes from %s.|printf \"appliance — inference runs on this machine\"|' ut-install"
+        "sed -i.bak 's|printf .control plane — generation comes from %s.|printf \"appliance — inference runs on this machine\"|' bin/ut-install"
 
     install_walk_discriminates "a compute node held to an authority it does not run" \
         "a compute node installs to the end, with no authority of its own" \
-        "sed -i.bak '/^step_certificate_policy() {\$/,/^    fi\$/ s|this_machine_is_a_compute_node|false|' ut-install"
+        "sed -i.bak '/^step_certificate_policy() {\$/,/^    fi\$/ s|this_machine_is_a_compute_node|false|' bin/ut-install"
 
     install_walk_discriminates "a compute node handed the summary of a platform it does not run" \
         "a compute node's summary hands the control plane what it needs" \
-        "sed -i.bak '/^print_summary() {\$/,/^    fi\$/ s|this_machine_is_a_compute_node|false|' ut-install"
+        "sed -i.bak '/^print_summary() {\$/,/^    fi\$/ s|this_machine_is_a_compute_node|false|' bin/ut-install"
 
     install_walk_discriminates "a machine without a GPU left to find out its documents get no answer" \
         "a machine without a GPU is told its documents get no answer" \
-        "sed -i.bak '/chats over documents answer nothing on this machine/d' ut-install"
+        "sed -i.bak '/chats over documents answer nothing on this machine/d' bin/ut-install"
 
     install_walk_discriminates "a clock nothing compares to anything" \
         "the preflight stops rather than issue certificates nothing will accept" \
-        "sed -i.bak 's|^release_declares() {\$|release_declares() { return 1;|' ut-install"
+        "sed -i.bak 's|^release_declares() {\$|release_declares() { return 1;|' bin/ut-install"
 fi
 
-if grep -q 'checkouts_holding_settings' "$REPO_ROOT/ut-install"; then
+if grep -q 'checkouts_holding_settings' "$REPO_ROOT/bin/ut-install"; then
     install_walk_discriminates "an install blind to the checkout it replaces" \
         "its settings are carried over, not regenerated" \
-        "sed -i.bak 's|^checkouts_holding_settings() {\$|checkouts_holding_settings() { return 0;|' ut-install"
+        "sed -i.bak 's|^checkouts_holding_settings() {\$|checkouts_holding_settings() { return 0;|' bin/ut-install"
 
     install_walk_discriminates "the address decided again instead of read" \
         "the address it already answers on is kept" \
-        "sed -i.bak 's|^configured_domain() {\$|configured_domain() { return 0;|' ut-install"
+        "sed -i.bak 's|^configured_domain() {\$|configured_domain() { return 0;|' bin/ut-install"
 
     install_walk_discriminates "an address no URL is allowed to name" \
         "an install too old to name its address has it read from its URLs" \
-        "sed -i.bak 's|^domain_named_by_the_urls() {\$|domain_named_by_the_urls() { return 1;|' ut-install"
+        "sed -i.bak 's|^domain_named_by_the_urls() {\$|domain_named_by_the_urls() { return 1;|' bin/ut-install"
 
     install_walk_discriminates "a migration that takes the checkout with it" \
         "the checkout itself is left untouched" \
-        "sed -i.bak 's|migrate_existing_settings_into_local \"\$source_settings\" \"\$local_file\"|& \&\& rm -f \"\$source_settings\"|' ut-install"
+        "sed -i.bak 's|migrate_existing_settings_into_local \"\$source_settings\" \"\$local_file\"|& \&\& rm -f \"\$source_settings\"|' bin/ut-install"
 
     install_walk_discriminates "a required variable nobody generates" \
         "every variable the stack requires has a value" \
-        "sed -i.bak 's| GPU_VM_API_TOKEN\\([ )]\\)|\\1|' ut-install"
+        "sed -i.bak 's| GPU_VM_API_TOKEN\\([ )]\\)|\\1|' bin/ut-install"
 
 discriminates "a model entry with no variant" \
     "model-without-variant" \
@@ -1271,115 +1275,115 @@ if grep -q 'check_the_package_stamps_the_commit_it_was_built_from' "$REPO_ROOT/t
         "sed -i.bak 's|UT_RELEASE_VERSION=\\\\\"\${stamp}|UT_RELEASE_VERSION=\\\\\"\${version}|' packaging/build-deb.sh"
 fi
 
-if grep -q 'if ! terminal_is_reachable' "$REPO_ROOT/ut-install"; then
+if grep -q 'if ! terminal_is_reachable' "$REPO_ROOT/bin/ut-install"; then
     install_walk_discriminates "a terminal assumed rather than opened" \
         "it finishes, and says so" \
-        "sed -i.bak 's|^terminal_is_reachable() .*$|terminal_is_reachable() { [[ -w /dev/tty ]]; }|' ut-install"
+        "sed -i.bak 's|^terminal_is_reachable() .*$|terminal_is_reachable() { [[ -w /dev/tty ]]; }|' bin/ut-install"
 
     install_walk_discriminates "an install that finishes without saying where the secrets are" \
         "the secrets can be found afterwards" \
-        "sed -i.bak 's|^        log_info \"No terminal here.*$|        :|' ut-install"
+        "sed -i.bak 's|^        log_info \"No terminal here.*$|        :|' bin/ut-install"
 fi
 
-if grep -q 'looks_like_a_checkout' "$REPO_ROOT/ut-install"; then
+if grep -q 'looks_like_a_checkout' "$REPO_ROOT/bin/ut-install"; then
     install_walk_discriminates "an installer blind to the checkout it stands in" \
         "it takes the checkout it is standing in, and asks for no token" \
-        "sed -i.bak 's|^    \[\[ -f \"\$1/compose.yaml\" && -d \"\$1/.git\" \]\]$|    false|' ut-install"
+        "sed -i.bak 's|^    \[\[ -f \"\$1/compose.yaml\" && -d \"\$1/.git\" \]\]$|    false|' bin/ut-install"
 
     # The guard this change stands next to without touching. A neighbouring
     # correction that quietly opens the way in is exactly what it must not do.
     install_walk_discriminates "a way in that no longer needs a key" \
         "but a machine with no credentials is still asked for a key" \
-        "sed -i.bak 's|^    release_is_present && registry_credentials_stored && return 1$|    release_is_present \&\& return 1|' ut-install"
+        "sed -i.bak 's|^    release_is_present && registry_credentials_stored && return 1$|    release_is_present \&\& return 1|' bin/ut-install"
 fi
 
     install_walk_discriminates "a database nobody has the password for, accepted" \
         "the install stops, and says which volume and what to do" \
-        "sed -i.bak 's|^    \[\[ -n \"\$(env_get \"\$env_file\" MONGODB_PASSWORD .*$|    true|' ut-install"
+        "sed -i.bak 's|^    \[\[ -n \"\$(env_get \"\$env_file\" MONGODB_PASSWORD .*$|    true|' bin/ut-install"
 
     install_walk_discriminates "a password refused for the way it looks" \
         "the install carries on, because that password is the right one" \
-        "sed -i.bak 's#^    \[\[ -n .*MONGODB_PASSWORD.*\$#    ! is_shipped_placeholder \"\$(env_get \"\$env_file\" MONGODB_PASSWORD || true)\"#' ut-install"
+        "sed -i.bak 's#^    \[\[ -n .*MONGODB_PASSWORD.*\$#    ! is_shipped_placeholder \"\$(env_get \"\$env_file\" MONGODB_PASSWORD || true)\"#' bin/ut-install"
 
     install_walk_discriminates "full address pools noticed only when it is too late" \
         "the preflight stops before anything is written" \
-        "sed -i.bak 's|^    elif docker_can_still_allocate_a_network; then$|    elif true; then|' ut-install"
+        "sed -i.bak 's|^    elif docker_can_still_allocate_a_network; then$|    elif true; then|' bin/ut-install"
 
     install_walk_discriminates "two machines given the same secret" \
         "two installs do not share a secret" \
-        "sed -i.bak 's|^random_alphanumeric() {$|random_alphanumeric() { printf %s the-same-everywhere; return 0;|' ut-install"
+        "sed -i.bak 's|^random_alphanumeric() {$|random_alphanumeric() { printf %s the-same-everywhere; return 0;|' bin/ut-install"
 
     install_walk_discriminates "a token key the App Builder cannot read" \
         "the App Builder's token key is one Fernet accepts" \
-        "sed -i.bak 's|^random_fernet_key() {$|random_fernet_key() { random_alphanumeric 44; return 0;|' ut-install"
+        "sed -i.bak 's|^random_fernet_key() {$|random_fernet_key() { random_alphanumeric 44; return 0;|' bin/ut-install"
 
     install_walk_discriminates "two machines given the same token key" \
         "two installs do not share a secret" \
-        "sed -i.bak 's|^random_fernet_key() {$|random_fernet_key() { printf %s the-same-everywhere; return 0;|' ut-install"
+        "sed -i.bak 's|^random_fernet_key() {$|random_fernet_key() { printf %s the-same-everywhere; return 0;|' bin/ut-install"
 
     install_walk_discriminates "a carried token key replaced by a new one" \
         "the App Builder's token key comes along" \
-        "sed -i.bak 's|^    local local_file=\$1 key rotated=()\$|&; env_set \"\$local_file\" APP_BUILDER_TOKEN_ENCRYPTION_KEY \"\"|' ut-install"
+        "sed -i.bak 's|^    local local_file=\$1 key rotated=()\$|&; env_set \"\$local_file\" APP_BUILDER_TOKEN_ENCRYPTION_KEY \"\"|' bin/ut-install"
 
     install_walk_discriminates "a declared machine refused anyway" \
         "the install goes on when the inference is served elsewhere" \
-        "sed -i.bak 's|^the_inference_is_served_by_another_machine() {\$|the_inference_is_served_by_another_machine() { return 1;|' ut-install"
+        "sed -i.bak 's|^the_inference_is_served_by_another_machine() {\$|the_inference_is_served_by_another_machine() { return 1;|' bin/ut-install"
 
     install_walk_discriminates "an accelerator waived on its absence alone" \
         "the preflight stops when nothing says the inference is elsewhere" \
-        "sed -i.bak 's|^the_inference_is_served_by_another_machine() {\$|the_inference_is_served_by_another_machine() { return 0;|' ut-install"
+        "sed -i.bak 's|^the_inference_is_served_by_another_machine() {\$|the_inference_is_served_by_another_machine() { return 0;|' bin/ut-install"
 
     install_walk_discriminates "a control plane asked for the storage of an appliance" \
         "the disk floor follows what the machine will actually hold" \
-        "sed -i.bak 's|^MIN_DISK_BYTES_NO_INFERENCE=.*|MIN_DISK_BYTES_NO_INFERENCE=\$MIN_DISK_BYTES|' ut-install"
+        "sed -i.bak 's|^MIN_DISK_BYTES_NO_INFERENCE=.*|MIN_DISK_BYTES_NO_INFERENCE=\$MIN_DISK_BYTES|' bin/ut-install"
 
     install_walk_discriminates "an accelerator waived without the settings that follow" \
         "the flag writes a configuration that asks docker for no GPU" \
-        "sed -i.bak 's|^    \$NO_GPU && write_the_settings_a_machine_without_an_accelerator_needs.*|    :|' ut-install"
+        "sed -i.bak 's|^    \$NO_GPU && write_the_settings_a_machine_without_an_accelerator_needs.*|    :|' bin/ut-install"
 
     capability_discriminates "a status tool that calls an empty directory healthy" \
         "a directory with no install is refused, not called healthy" \
-        "sed -i.bak 's|^    \[\[ -f \"\$INSTALL_DIR/compose.yaml\" \]\].*|    :|' ut-status"
+        "sed -i.bak 's|^    \[\[ -f \"\$INSTALL_DIR/compose.yaml\" \]\].*|    :|' bin/ut-status"
 
     install_walk_discriminates "an address prepared in local.env read too late to count" \
         "it stays quiet when the address already names another machine" \
-        "sed -i.bak '/local.env\" VLLM_LLM_BASE_URL/d' ut-install"
+        "sed -i.bak '/local.env\" VLLM_LLM_BASE_URL/d' bin/ut-install"
 
     install_walk_discriminates "a pull the walk no longer stops" \
         "the walk stops where the images would download" \
-        "sed -i.bak 's#compose_in_dir --progress json pull 2>\\&1#compose_in_dir --progress=json pull 2>\\&1#' ut-install"
+        "sed -i.bak 's#compose_in_dir --progress json pull 2>\\&1#compose_in_dir --progress=json pull 2>\\&1#' bin/ut-install"
 
     install_walk_discriminates "an inference address left pointing at a service nothing starts" \
         "it says the inference address still points at nothing" \
-        "sed -i.bak 's|^    if the_inference_url_names_a_service_this_machine_will_not_run; then|    if false; then|' ut-install"
+        "sed -i.bak 's|^    if the_inference_url_names_a_service_this_machine_will_not_run; then|    if false; then|' bin/ut-install"
 
     install_walk_discriminates "a backup destination on the machine's own disk taken for a mounted one" \
         "one on the machine's own disk stops the install" \
-        "sed -i.bak 's|^    \[\[ \"\$filesystem\" != .*|    true|' ut-install"
+        "sed -i.bak 's|^    \[\[ \"\$filesystem\" != .*|    true|' bin/ut-install"
 
     install_walk_discriminates "an SFTP destination left without its way out" \
         "an S3 or SFTP destination gets its way out" \
-        "sed -i.bak 's|\"\${compose_files}:compose.backup-network.yaml\"|\"\${compose_files}\"|' ut-install"
+        "sed -i.bak 's|\"\${compose_files}:compose.backup-network.yaml\"|\"\${compose_files}\"|' bin/ut-install"
 
     install_walk_discriminates "every repository taken for one over the network" \
         "the default destination adds no way out" \
-        "sed -i.bak 's#^        s3:\*|sftp:\*|.*#        *) return 0 ;;#' ut-install"
+        "sed -i.bak 's#^        s3:\*|sftp:\*|.*#        *) return 0 ;;#' bin/ut-install"
 
     capability_discriminates "a backup that does not work holding the install back" \
         "does not hold the install back" \
-        "sed -i.bak 's/ \\&\\& \"\\\$1\" != \"backup\"//' ut-install"
+        "sed -i.bak 's/ \\&\\& \"\\\$1\" != \"backup\"//' bin/ut-install"
 
     install_walk_discriminates "a destination gone during an update stopping it" \
         "gone during an update" \
-        "sed -i.bak 's|^                return 0 ;;\$|                : ;;|' ut-install"
+        "sed -i.bak 's|^                return 0 ;;\$|                : ;;|' bin/ut-install"
 
     install_walk_discriminates "two destinations checked only after one is written" \
         "two destinations stops the install, before" \
-        "sed -i.bak '/^    die_on_two_backup_destinations \"\$local_file\"\$/d' ut-install"
+        "sed -i.bak '/^    die_on_two_backup_destinations \"\$local_file\"\$/d' bin/ut-install"
 
     install_walk_discriminates "two backup destinations let through" \
         "naming two destinations stops the install" \
-        "sed -i.bak '/both say where the backup goes/,/exit 1/ s/exit 1/:/' ut-install"
+        "sed -i.bak '/both say where the backup goes/,/exit 1/ s/exit 1/:/' bin/ut-install"
 fi
 
 if [[ -x "$REPO_ROOT/test/ingress.sh" ]]; then
