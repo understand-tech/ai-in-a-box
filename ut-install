@@ -1697,12 +1697,13 @@ say_each_image_as_it_lands() {
 # Compose draws its progress bars only on a terminal, and start_logging sends
 # everything through tee: without JSON, a pull of tens of GB shows "0B" per layer.
 # The JSON comes on stderr, beside any error that is not JSON.
-# The tools a folder carries, as ut-get --prepare names them, in OCI archives. A
-# loaded tool is taken only under one of these image IDs: its config digest,
-# which overlay2 reports, or its arm64 manifest, which the containerd store does.
+# The tools a folder carries, as ut-get --prepare names them, as docker archives:
+# overlay2 loads no OCI archive skopeo writes. A tool is loaded only when its
+# config has one of these arm64 digests; docker load then refuses any layer the
+# config does not list, in either store.
 FOLDER_REGISTRY_TOOL="ghcr.io/distribution/distribution:3.0.0@sha256:4ba3adf47f5c866e9a29288c758c5328ef03396cb8f5f6454463655fa8bc83e2"
 FOLDER_SKOPEO_TOOL="quay.io/skopeo/stable:v1.20.0@sha256:47853bb9fb24202af9110531ebd6e43c5f97701254ca290596640290d17942f4"
-FOLDER_TOOL_IDS="sha256:ab30a3bba4ba93e95d10e1805239b169e9ac0c0a8a25df9715192ac98cdcb261 sha256:0c6d5447416fc0dd34bdd6c01128d77130bcbca88762fcef369b6c22ba824ba4 sha256:376e07f615c23241d20f43a5816d9e5faec33b44838cef233ee30faf70b882f6 sha256:f42bdedcd3939726c896ecad0b2fe2a4071be93a8c0ce068d78fc104b60a207c"
+FOLDER_TOOL_CONFIGS="sha256:ab30a3bba4ba93e95d10e1805239b169e9ac0c0a8a25df9715192ac98cdcb261 sha256:376e07f615c23241d20f43a5816d9e5faec33b44838cef233ee30faf70b882f6"
 FOLDER_REGISTRY_ADDRESS="127.0.0.1:15000"
 FOLDER_LOADER="ut-images-from-a-folder"
 
@@ -1775,14 +1776,21 @@ die_on_a_folder_that_misses_an_image() {
     exit 1
 }
 
+config_digest_of_the_archive() {
+    local config
+    config=$(tar -xOf "$1" manifest.json 2>/dev/null | sed -n 's/.*"Config" *: *"\([^"]*\)".*/\1/p')
+    [[ -n "$config" ]] || return 1
+    sha256_of <(tar -xOf "$1" "$config")
+}
+
 load_the_folder_tools() {
-    local tool archive id
+    local tool archive config
     for tool in "$FOLDER_REGISTRY_TOOL" "$FOLDER_SKOPEO_TOOL"; do
         archive="$IMAGES_FROM/tools/$(basename "${tool%%:*}").tar"
-        docker load -q -i "$archive" >/dev/null || die "Could not load ${archive}"
-        id=$(docker image inspect --format '{{.Id}}' "${tool%@*}" 2>/dev/null)
-        [[ " $FOLDER_TOOL_IDS " == *" $id "* ]] \
+        config=$(config_digest_of_the_archive "$archive" || true)
+        [[ -n "$config" && " $FOLDER_TOOL_CONFIGS " == *" $config "* ]] \
             || die "${archive} is not the ${tool%@*} this release loads images with — prepare the folder again"
+        docker load -q -i "$archive" >/dev/null || die "Could not load ${archive}"
     done
 }
 

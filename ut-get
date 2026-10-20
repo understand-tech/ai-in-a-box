@@ -218,7 +218,7 @@ copy_the_tools_into() {
         [[ -f "$folder/tools/$name" ]] && continue
         skopeo_in "$folder" "$auth" --override-os linux --override-arch "$BOX_ARCHITECTURE" \
             copy -q "docker://$(fully_qualified "$(repository_of "$tool")@${tool#*@}")" \
-            "oci-archive:/folder/tools/$name.part:$(fully_qualified "${tool%@*}")" \
+            "docker-archive:/folder/tools/$name.part:${tool%@*}" \
             || fail "Could not copy the tool ${tool%@*}"
         mv "$folder/tools/$name.part" "$folder/tools/$name"
     done

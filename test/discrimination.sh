@@ -513,7 +513,7 @@ capability_discriminates "a folder image taken without proving it is the one the
 
 capability_discriminates "a folder tool loaded whatever it turns out to be" \
     "a folder whose tool is not the one the release names is refused" \
-    "sed -i.bak 's/^        \\[\\[ \" \\\$FOLDER_TOOL_IDS \" == \\*\" \\\$id \"\\* \\]\\] \\\\\$/        true || \\\\/' ut-install"
+    "sed -i.bak 's/^        \\[\\[ -n \"\\\$config\" && /        [[ -n \"\$config\" || /' ut-install"
 
 capability_discriminates "folder images named by tag rather than by digest" \
     "images from a prepared folder start under the digest the release names" \
