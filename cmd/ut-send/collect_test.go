@@ -61,7 +61,8 @@ func machineAnswering(t *testing.T, answers map[string]string) machine {
 
 var everyAnswer = map[string]string{
 	"docker ps -aq --filter label=com.docker.compose.project=understandtech": "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\n",
-	"docker inspect": inspected,
+	"docker inspect":                                     inspected,
+	"docker container inspect":                           "/usr/share/understandtech/compose.yaml\n",
 	"docker exec eeee redis-cli SMEMBERS rq:queues":      "rq:queue:default\n",
 	"docker exec eeee redis-cli LLEN rq:queue:default":   "3\n",
 	"docker exec eeee redis-cli ZCARD rq:failed:default": "1\n",
@@ -116,6 +117,22 @@ func TestTheHealthOfTheStackIsReadTheWayThePrototypeReadIt(t *testing.T) {
 	}
 }
 
+func TestAVLLMEngineDeclaresTheModelItServesNotTheNIMSettingsItInherits(t *testing.T) {
+	answers := map[string]string{
+		"docker ps -aq --filter label=com.docker.compose.project=understandtech": "ffff\n",
+		"docker inspect": "nim-llm running healthy 0 false ffff\n",
+		"docker exec ffff curl -sf --max-time 5 http://127.0.0.1:8000/v1/models": `{"data": [{"id": "nemotron"}]}`,
+		"docker exec ffff printenv VLLM_ENGINE_MODEL":                            "nemotron\n",
+		"docker exec ffff printenv NIM_SERVED_MODEL_NAME":                        "qwen\n",
+		"docker exec ffff sh -c":                                                 "hf://Inferact/Qwen3.8-27B-NVFP4\n",
+	}
+	health, _ := machineAnswering(t, answers).health()
+	engine := health.Engines[0]
+	if engine.DeclaredModel == nil || *engine.DeclaredModel != "nemotron" || engine.CachedModel != nil || engine.ModelPath != nil {
+		t.Fatalf("engine %+v", engine)
+	}
+}
+
 func TestAnUnreadableSourceIsNamedNotGuessed(t *testing.T) {
 	answers := map[string]string{
 		"docker ps -aq --filter label=com.docker.compose.project=understandtech": "ffff\nhhhh\n",
@@ -167,7 +184,8 @@ func TestCollectQueuesUtReportsReportWithHealthAndTools(t *testing.T) {
 	if err := json.Unmarshal(content, &report); err != nil {
 		t.Fatal(err)
 	}
-	if report["schema"] != float64(3) || report["health"] == nil || report["tools"] == nil || report["release"] != "2026.10.0" {
+	if report["schema"] != float64(4) || report["health"] == nil || report["tools"] == nil || report["release"] != "2026.10.0" ||
+		!reflect.DeepEqual(report["topology"], map[string]any{"role": "complete", "inference_roots": []any{}}) {
 		t.Fatalf("report %v", report)
 	}
 	warnings := report["warnings"].([]any)

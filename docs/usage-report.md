@@ -29,8 +29,8 @@ minutes as `--every` says, from 1 to 1440 — it:
    the platform's address replaced by the name of the surface it serves
    (`app`, `llms`, …);
 2. once an hour — or at every pass, when passes are more than an hour apart —
-   puts in line the report described below, with the health of the stack and
-   the use of each tool;
+   puts in line the report described below, with the health of the stack, the
+   use of each tool, and the machine's place in the deployment;
 3. sends what is in line to the receiver, over HTTPS, trusting only the
    receiver's certificate it was given.
 
@@ -38,6 +38,14 @@ What the receiver does not accept stays in line and is tried again on the next
 pass, for up to 7 days or 200 MB, the oldest given up first. A token the
 receiver refuses stops the sending until a new one is given with
 `ut-send configure`.
+
+The machine's place in the deployment is its role — `complete`, `compute` for a
+compute node, `control-plane` for a machine whose inference runs elsewhere — and
+the SHA-256 fingerprint of the root certificate of its inference link: a compute
+node sends its own, a control plane the one of the compute node it trusts. Two
+machines that send the same fingerprint work together; no address is sent. What
+could not be read is named under `warnings`, as `topology-unreadable:role` or
+`topology-unreadable:inference-root`.
 
 A no stops and removes the timer, deletes what was waiting to be sent, and
 forgets the receiver and the token.
