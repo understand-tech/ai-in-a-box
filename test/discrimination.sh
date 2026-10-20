@@ -507,6 +507,22 @@ capability_discriminates "the machine surface pointed at something else" \
     "the machine-facing surface takes its certificate from that authority" \
     "sed -i.bak 's|step-ca:9000/acme|acme-v02.api.letsencrypt.org|' caddy/internal-surface.caddy"
 
+capability_discriminates "a folder image taken without proving it is the one the release names" \
+    "a folder holding an image the release does not name is refused" \
+    "sed -i.bak 's/\\[\\[ \"\\\$(sha256_of \"\\\$dir\/named.json\")\" == \"\\\${reference#\\*@}\" \\]\\] || return 1/:/' ut-install"
+
+capability_discriminates "a folder tool loaded whatever it turns out to be" \
+    "a folder whose tool is not the one the release names is refused" \
+    "sed -i.bak 's/^        \\[\\[ -n \"\\\$config\" && /        [[ -n \"\$config\" || /' ut-install"
+
+capability_discriminates "folder images named by tag rather than by digest" \
+    "images from a prepared folder start under the digest the release names" \
+    "sed -i.bak 's|        env_set \"\\\$local_file\" \"\\\$key\" \"\\\$local_name\"|        env_set \"\\\$local_file\" \"\\\$key\" \"\\\${local_name%@*}:from-a-folder\"|' ut-install"
+
+capability_discriminates "ut-get preparing with another tool than ut-install loads with" \
+    "ut-get prepares with the tools ut-install loads with" \
+    "sed -i.bak 's|^FOLDER_SKOPEO_TOOL=.*|FOLDER_SKOPEO_TOOL=\"quay.io/skopeo/stable:v1.19.0@sha256:0000000000000000000000000000000000000000000000000000000000000000\"|' ut-get"
+
 capability_discriminates "a database port declared again, which Docker never publishes" \
     "no service declares a port Docker never publishes" \
     "sed -i.bak 's|^    container_name: \${CONTAINER_PREFIX:-ut}-mongodb\$|&\\n    ports:\\n      - \"127.0.0.1:27018:27017\"|' compose.yaml"
@@ -1106,6 +1122,14 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
     install_walk_discriminates "a compute node reached over plain http" \
         "a node reached over plain http is refused before anything is written" \
         "sed -i.bak 's|\\^https://\\[\\^/\\]+|^https?://[^/]+|' ut-install"
+
+    install_walk_discriminates "a folder taken without checking it holds every image" \
+        "a folder that lacks an image is refused before anything is written" \
+        "sed -i.bak 's|^die_on_a_folder_that_misses_an_image() {\$|die_on_a_folder_that_misses_an_image() { return 0;|' ut-install"
+
+    install_walk_discriminates "a box online again that keeps the names of a folder" \
+        "an install that downloads again forgets the names a folder gave its images" \
+        "sed -i.bak 's|^forget_the_images_of_a_folder() {\$|forget_the_images_of_a_folder() { return 0;|' ut-install"
 
     install_walk_discriminates "a control plane pointed at a node only mDNS can name" \
         "a node named by mDNS is refused before anything is written" \

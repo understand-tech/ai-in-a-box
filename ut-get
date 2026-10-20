@@ -18,7 +18,16 @@ fi
 RELEASES_URL="${UT_RELEASES_URL:-https://github.com/understand-tech/ai-in-a-box/releases}"
 DOWNLOAD_DIR="/var/cache/understandtech/releases"
 RELEASE_DIR=""
+PREPARE_DIR=""
+TOKEN_FILE=""
+REGISTRY_USER="${UT_REGISTRY_USER:-dgx-access}"
 VERSION=""
+
+# The two tools a folder carries to load its images on the box. ut-install
+# names the same digests: a capability holds the two equal.
+FOLDER_REGISTRY_TOOL="ghcr.io/distribution/distribution:3.0.0@sha256:4ba3adf47f5c866e9a29288c758c5328ef03396cb8f5f6454463655fa8bc83e2"
+FOLDER_SKOPEO_TOOL="quay.io/skopeo/stable:v1.20.0@sha256:47853bb9fb24202af9110531ebd6e43c5f97701254ca290596640290d17942f4"
+BOX_ARCHITECTURE="arm64"
 NEXT=ut-install
 INSTALL_ARGUMENTS=()
 
@@ -28,11 +37,20 @@ ut-get — installs UnderstandTech AI in a Box from a release, then runs ut-inst
 
   sudo ./ut-get [--version <version>] [ut-install options]
   sudo ./ut-get --from <directory> [ut-install options]
+  ./ut-get --prepare <directory> [--version <version>] --token-file <file>
 
   --version <version>  the release to install, 2026.09.1 for example.
                        Without it, the latest one.
   --from <directory>   the release, carried in by hand: the package and its
-                       .sig beside it. Nothing is downloaded.
+                       .sig beside it, and the images when --prepare put them
+                       there. Nothing is downloaded.
+  --prepare <directory>
+                       on a connected Linux or macOS machine with Docker, not
+                       the box: download the release and every image it runs
+                       into the directory, for a box with no network to install
+                       with --from. Runs again where it stopped.
+  --token-file <file>  with --prepare, the registry token UnderstandTech gave
+                       with the license. Read from the file, never shown.
   --browser            continue in a browser on this machine (ut-setup)
                        rather than in this terminal (ut-install).
 
@@ -51,6 +69,8 @@ parse_arguments() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --from)    RELEASE_DIR="${2:?--from needs a directory}"; shift ;;
+            --prepare) PREPARE_DIR="${2:?--prepare needs a directory}"; shift ;;
+            --token-file) TOKEN_FILE="${2:?--token-file needs a file}"; shift ;;
             --version) VERSION="${2:?--version needs a version}"; shift ;;
             --browser) NEXT=ut-setup ;;
             -h|--help) usage; exit 0 ;;
@@ -78,9 +98,10 @@ latest_version() {
 }
 
 download_release() {
-    local version=$1 dir="$DOWNLOAD_DIR/$1" name
+    local version=$1 dir=${2:-$DOWNLOAD_DIR/$1} name
+    shift $(( $# < 2 ? $# : 2 ))
     mkdir -p "$dir"
-    for name in "understandtech_${version}_all.deb" "understandtech_${version}_all.deb.sig"; do
+    for name in "understandtech_${version}_all.deb" "understandtech_${version}_all.deb.sig" "$@"; do
         [[ -f "$dir/$name" ]] && continue
         fetch --location --continue-at - --output "$dir/$name.part" "$RELEASES_URL/download/v${version}/$name" \
             || fail "Could not download ${name} — run the same command again to resume"
@@ -121,6 +142,115 @@ verify_signature() {
     return 1
 }
 
+# One line per image the release runs, "<repository>@<digest>", read from its bill
+# of materials. Nothing here is trusted: the box checks every image against the
+# release.env of the signed package.
+images_of_the_bill() {
+    sed -n 's|.*"purl": "pkg:oci/[^@]*@\(sha256:[0-9a-f]\{64\}\)?repository_url=\([^&"]*\).*|\2@\1|p' "$1"
+}
+
+# The folder names an image by repository and digest, without its tag: the bill
+# of materials has no tag, release.env has one. ut-install computes the same path.
+repository_of() {
+    local repository=${1%@*} last
+    last=${repository##*/}
+    [[ "$last" == *:* ]] && repository=${repository%:*}
+    printf '%s' "$repository"
+}
+
+folder_path_of() {
+    printf 'images/%s/%s' "$(repository_of "$1" | tr '/:' '__')" "${1#*@sha256:}"
+}
+
+# skopeo resolves no short name: caddy is docker.io/library/caddy.
+fully_qualified() {
+    local repository first=${1%%/*}
+    if [[ "$1" == */* && ( "$first" == *.* || "$first" == *:* || "$first" == localhost ) ]]; then
+        printf '%s' "$1"
+    elif [[ "$1" == */* ]]; then
+        printf 'docker.io/%s' "$1"
+    else
+        printf 'docker.io/library/%s' "$1"
+    fi
+}
+
+write_registry_auth() {
+    local dir=$1 token=$2
+    mkdir -m 700 "$dir"
+    printf '{"auths":{"ghcr.io":{"auth":"%s"}}}\n' "$(printf '%s:%s' "$REGISTRY_USER" "$token" | base64 | tr -d '\n')" > "$dir/auth.json"
+    chmod 600 "$dir/auth.json"
+}
+
+skopeo_in() {
+    local folder=$1 auth=$2; shift 2
+    docker run --rm -v "$folder":/folder -v "$auth":/auth:ro "$FOLDER_SKOPEO_TOOL" "$@" --authfile /auth/auth.json
+}
+
+# Per image, the manifest the release names as it is, then the box's own image
+# only: two requests to the registry instead of one per platform, which Docker
+# Hub's anonymous limit did not survive on 2026-10-20. The box proves the second
+# belongs to the first.
+copy_the_images_into() {
+    local folder=$1 auth=$2 reference path source
+    while read -r reference; do
+        [[ -n "$reference" ]] || continue
+        path=$(folder_path_of "$reference")
+        if [[ -f "$folder/$path/named.json" && -f "$folder/$path/box/manifest.json" ]]; then
+            log_info "${reference%@*} already in the folder"
+            continue
+        fi
+        rm -rf "${folder:?}/$path"
+        mkdir -p "$folder/$path"
+        source="docker://$(fully_qualified "$reference")"
+        skopeo_in "$folder" "$auth" inspect --raw "$source" > "$folder/$path/named.json" \
+            && skopeo_in "$folder" "$auth" --override-os linux --override-arch "$BOX_ARCHITECTURE" \
+                copy -q --preserve-digests "$source" "dir:/folder/$path/box" \
+            || fail "Could not copy ${reference%@*} — check the token and the network, then run the same command again"
+        log_info "${reference%@*} copied"
+    done
+}
+
+copy_the_tools_into() {
+    local folder=$1 auth=$2 tool name
+    mkdir -p "$folder/tools"
+    for tool in "$FOLDER_REGISTRY_TOOL" "$FOLDER_SKOPEO_TOOL"; do
+        name=$(basename "${tool%%:*}").tar
+        [[ -f "$folder/tools/$name" ]] && continue
+        skopeo_in "$folder" "$auth" --override-os linux --override-arch "$BOX_ARCHITECTURE" \
+            copy -q "docker://$(fully_qualified "$(repository_of "$tool")@${tool#*@}")" \
+            "docker-archive:/folder/tools/$name.part:${tool%@*}" \
+            || fail "Could not copy the tool ${tool%@*}"
+        mv "$folder/tools/$name.part" "$folder/tools/$name"
+    done
+    log_info "The registry and skopeo the box loads its images with are in the folder"
+}
+
+prepare_a_folder() {
+    command -v docker >/dev/null 2>&1 || fail "--prepare needs Docker on this machine"
+    [[ -n "$TOKEN_FILE" && -r "$TOKEN_FILE" ]] || fail "--prepare needs --token-file: the registry token given with the license"
+    [[ -n "$VERSION" ]] || VERSION=$(latest_version) || exit 1
+    is_a_release_version "$VERSION" || fail "${VERSION:-nothing} is not a release version — expected one like 2026.09.1"
+
+    local folder package auth token
+    mkdir -p "$PREPARE_DIR"
+    folder=$(cd "$PREPARE_DIR" && pwd)
+    log_step "Downloading release ${VERSION} into ${folder}"
+    download_release "$VERSION" "$folder" "understandtech_${VERSION}.cdx.json" >/dev/null || exit 1
+    package=$(the_only_package_in "$folder") || exit 1
+    verify_signature "$package" || fail "$(basename "$package") is NOT signed by UnderstandTech — delete ${folder} and run again"
+
+    auth=$(mktemp -d)/auth
+    token=$(tr -d '\r\n' < "$TOKEN_FILE")
+    write_registry_auth "$auth" "$token"
+    log_step "Copying every image release ${VERSION} runs"
+    images_of_the_bill "$folder/understandtech_${VERSION}.cdx.json" | copy_the_images_into "$folder" "$auth"
+    copy_the_tools_into "$folder" "$auth"
+    rm -rf "$(dirname "$auth")"
+
+    log_step "Ready: $(du -sh "$folder" | cut -f1) in ${folder}"
+    printf '  Carry it to the box, then run there:  sudo ut-get --from <where it is>\n'
+}
+
 install_package() {
     local package=$1
     log_step "Installing $(basename "$package")"
@@ -130,6 +260,10 @@ install_package() {
 
 main() {
     parse_arguments "$@"
+    if [[ -n "$PREPARE_DIR" ]]; then
+        prepare_a_folder
+        return 0
+    fi
     [[ $EUID -eq 0 ]] || fail "Run with sudo: sudo $0 $*"
 
     if [[ -z "$RELEASE_DIR" ]]; then
@@ -147,6 +281,9 @@ main() {
     verify_signature "$package" \
         || fail "$(basename "$package") is NOT signed by UnderstandTech — nothing was installed. If it was downloaded, delete ${RELEASE_DIR} and run again"
     install_package "$package"
+    if [[ -d "$RELEASE_DIR/images" ]]; then
+        INSTALL_ARGUMENTS+=(--images-from "$(cd "$RELEASE_DIR" && pwd)")
+    fi
     exec "$NEXT" ${INSTALL_ARGUMENTS[@]+"${INSTALL_ARGUMENTS[@]}"}
 }
 
