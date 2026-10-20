@@ -214,6 +214,77 @@ PROBE
     return 1
 }
 
+# A folder written the way ut-get --prepare writes it, then loaded the way a box
+# with no network loads it, ut-install's own functions on both sides. The two
+# images are first removed, so whatever starts afterwards came from the folder.
+folder_load_report() {
+    local probe="$WORK_DIR/folder-probe" tamper=${1:-}
+    rm -rf "$probe"; mkdir -p "$probe/folder" "$probe/install" "$probe/auth"
+    printf 'BUSYBOX_IMAGE="%s"\nALPINE_INDEX_IMAGE="%s"\nUT_RELEASE_VERSION="0.0.0"\n' "$BUSYBOX_IMAGE" "$ALPINE_INDEX_IMAGE" > "$probe/install/release.env"
+    : > "$probe/install/.env"; : > "$probe/install/local.env"
+    printf '{"auths":{}}\n' > "$probe/auth/auth.json"
+    (
+        set +u; source "$REPO_ROOT/ut-get"
+        printf '%s\n' "${BUSYBOX_IMAGE%%:*}@${BUSYBOX_IMAGE#*@}" "${ALPINE_INDEX_IMAGE%%:*}@${ALPINE_INDEX_IMAGE#*@}" \
+            | copy_the_images_into "$probe/folder" "$probe/auth"
+        copy_the_tools_into "$probe/folder" "$probe/auth"
+    ) >/dev/null 2>&1 || { echo "PREPARE FAILED"; return 0; }
+    [[ -n "$tamper" ]] && eval "$tamper"
+    docker rmi -f "$BUSYBOX_IMAGE" "$ALPINE_INDEX_IMAGE" >/dev/null 2>&1
+    docker image ls --digests --format '{{.Repository}}@{{.Digest}}' \
+        | grep -F -e "${BUSYBOX_IMAGE%%:*}@${BUSYBOX_IMAGE#*@}" -e "${ALPINE_INDEX_IMAGE%%:*}@${ALPINE_INDEX_IMAGE#*@}" | sed 's/^/STILL THERE: /'
+    (
+        set +u; UT_INSTALL_DIR="$probe/install" source "$REPO_ROOT/ut-install" >/dev/null 2>&1
+        set +eE; trap - ERR
+        INSTALL_DIR="$probe/install"; IMAGES_FROM="$probe/folder"; DO_PULL=false
+        die_on_a_folder_that_misses_an_image && step_images_from_a_folder
+    ) 2>&1
+    echo "--- local.env"; cat "$probe/install/local.env"
+    echo "--- run"
+    local ref
+    for ref in $(sed -n 's/^[A-Z_]*_IMAGE="\(.*\)"$/\1/p' "$probe/install/local.env"); do
+        docker run --rm --pull never --network none "$ref" true && echo "$ref: ran"
+    done
+}
+
+images_from_a_folder_start_under_their_digest() {
+    local report
+    report=$(folder_load_report)
+    grep -qE '^BUSYBOX_IMAGE="127\.0\.0\.1:15000/prometheus/busybox@sha256:[0-9a-f]{64}"$' <<< "$report" \
+        && grep -qE '^ALPINE_INDEX_IMAGE="127\.0\.0\.1:15000/linuxcontainers/alpine@sha256:[0-9a-f]{64}"$' <<< "$report" \
+        && [[ $(grep -c ': ran$' <<< "$report") -eq 2 ]] \
+        && ! grep -q 'STILL THERE' <<< "$report" && return 0
+    echo "$report" | tail -15
+    return 1
+}
+
+a_folder_image_the_release_does_not_name_is_refused() {
+    local report
+    report=$(folder_load_report 'sed -i.bak "s/linux/linux /" "$probe"/folder/images/ghcr.io_linuxcontainers_alpine/*/named.json; rm -f "$probe"/folder/images/*/*/named.json.bak')
+    grep -q 'missing or not the one the release names' <<< "$report" \
+        && ! grep -q 'IMAGE="127.0.0.1:15000' <<< "$report" && return 0
+    echo "$report" | tail -8
+    return 1
+}
+
+a_tool_the_release_does_not_name_is_refused() {
+    local report
+    report=$(folder_load_report 'docker pull -q "$BUSYBOX_IMAGE" >/dev/null && docker tag "$BUSYBOX_IMAGE" ghcr.io/distribution/distribution:3.0.0 && docker save -o "$probe/folder/tools/distribution.tar" ghcr.io/distribution/distribution:3.0.0 && docker rmi ghcr.io/distribution/distribution:3.0.0 >/dev/null')
+    grep -q 'is not the ghcr.io/distribution/distribution:3.0.0 this release loads images with' <<< "$report" \
+        && ! grep -q 'IMAGE="127.0.0.1:15000' <<< "$report" && return 0
+    echo "$report" | tail -8
+    return 1
+}
+
+the_folder_tools_are_those_ut_get_carries() {
+    local key installer getter
+    for key in FOLDER_REGISTRY_TOOL FOLDER_SKOPEO_TOOL; do
+        installer=$(sed -n "s/^${key}=\"\(.*\)\"$/\1/p" "$REPO_ROOT/ut-install")
+        getter=$(sed -n "s/^${key}=\"\(.*\)\"$/\1/p" "$REPO_ROOT/ut-get")
+        [[ -n "$installer" && "$installer" == "$getter" ]] || { echo "${key}: ut-install '${installer}', ut-get '${getter}'"; return 1; }
+    done
+}
+
 moving_off_local_withdraws_the_publisher() {
     local report
     report=$(installing_mdns_reports box.example.com yes)
@@ -2373,6 +2444,18 @@ if [[ -f "$REPO_ROOT/setup-autostart.sh" ]]; then
         a_compute_node_asks_only_for_its_inference_name
     capability "moving off .local withdraws a publisher installed earlier" \
         moving_off_local_withdraws_the_publisher
+fi
+
+if grep -q 'step_images_from_a_folder' "$REPO_ROOT/ut-install"; then
+    group "A box with no network"
+    capability "images from a prepared folder start under the digest the release names, offline" \
+        images_from_a_folder_start_under_their_digest
+    capability "a folder holding an image the release does not name is refused" \
+        a_folder_image_the_release_does_not_name_is_refused
+    capability "a folder whose tool is not the one the release names is refused" \
+        a_tool_the_release_does_not_name_is_refused
+    capability "ut-get prepares with the tools ut-install loads with" \
+        the_folder_tools_are_those_ut_get_carries
 fi
 
 if [[ -x "$REPO_ROOT/ut-install" ]]; then

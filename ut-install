@@ -49,6 +49,7 @@ REPORTING_TOKEN_FILE=""
 REPORTING_RECEIVER_CERT=""
 REPORTING_EVERY=""
 INFERENCE_FROM=""
+IMAGES_FROM=""
 COMPUTE_ADDRESS=""
 INFERENCE_KEY_FILE=""
 INFERENCE_CA_FILE=""
@@ -125,6 +126,9 @@ Options
   --no-autostart       Skip the boot service and the mDNS publisher, which is
                        installed on a .local domain only.
   --skip-pull          Do not pull images. Useful when they are already local.
+  --images-from DIR    Take every image from a folder ut-get --prepare wrote on a
+                       connected machine, under the digest the release names,
+                       and download none. ut-get --from passes it on its own.
   --no-gpu             This machine has no accelerator and serves no inference;
                        another machine does, named by VLLM_LLM_BASE_URL. Waives
                        the accelerator check, never a driver that stopped
@@ -1693,6 +1697,149 @@ say_each_image_as_it_lands() {
 # Compose draws its progress bars only on a terminal, and start_logging sends
 # everything through tee: without JSON, a pull of tens of GB shows "0B" per layer.
 # The JSON comes on stderr, beside any error that is not JSON.
+# The tools a folder carries, as ut-get --prepare names them, in OCI archives. A
+# loaded tool is taken only under one of these image IDs: its config digest,
+# which overlay2 reports, or its arm64 manifest, which the containerd store does.
+FOLDER_REGISTRY_TOOL="ghcr.io/distribution/distribution:3.0.0@sha256:4ba3adf47f5c866e9a29288c758c5328ef03396cb8f5f6454463655fa8bc83e2"
+FOLDER_SKOPEO_TOOL="quay.io/skopeo/stable:v1.20.0@sha256:47853bb9fb24202af9110531ebd6e43c5f97701254ca290596640290d17942f4"
+FOLDER_TOOL_IDS="sha256:ab30a3bba4ba93e95d10e1805239b169e9ac0c0a8a25df9715192ac98cdcb261 sha256:0c6d5447416fc0dd34bdd6c01128d77130bcbca88762fcef369b6c22ba824ba4 sha256:376e07f615c23241d20f43a5816d9e5faec33b44838cef233ee30faf70b882f6 sha256:f42bdedcd3939726c896ecad0b2fe2a4071be93a8c0ce068d78fc104b60a207c"
+FOLDER_REGISTRY_ADDRESS="127.0.0.1:15000"
+FOLDER_LOADER="ut-images-from-a-folder"
+
+repository_of() {
+    local repository=${1%@*} last
+    last=${repository##*/}
+    [[ "$last" == *:* ]] && repository=${repository%:*}
+    printf '%s' "$repository"
+}
+
+folder_path_of() {
+    printf 'images/%s/%s' "$(repository_of "$1" | tr '/:' '__')" "${1#*@sha256:}"
+}
+
+name_in_the_folder_registry() {
+    local reference=$1 repository first
+    repository=$(repository_of "$reference")
+    first=${repository%%/*}
+    [[ "$repository" == */* && ( "$first" == *.* || "$first" == *:* ) ]] && repository=${repository#*/}
+    printf '%s/%s@%s' "$FOLDER_REGISTRY_ADDRESS" "$repository" "${reference#*@}"
+}
+
+# What the stack runs: release.env, with the settings file's own choices on top
+# (a model's engine), as "<variable>=<image>" lines.
+images_the_stack_runs() {
+    local local_file line key value
+    local_file="$(settings_directory "$INSTALL_DIR/.env")/local.env"
+    while IFS= read -r line; do
+        key=${line%%=*}
+        value=$(env_get "$local_file" "$key" 2>/dev/null || true)
+        [[ -n "$value" && "$value" != "$FOLDER_REGISTRY_ADDRESS"/* ]] || value=$(env_get "$INSTALL_DIR/release.env" "$key")
+        printf '%s=%s\n' "$key" "$value"
+    done < <(grep -E '^[A-Z_]+_IMAGE=' "$INSTALL_DIR/release.env")
+    grep -E '^[A-Z_]+_IMAGE=' "$local_file" 2>/dev/null | while IFS= read -r line; do
+        key=${line%%=*}
+        grep -qE "^${key}=" "$INSTALL_DIR/release.env" && continue
+        value=$(env_get "$local_file" "$key")
+        [[ "$value" == "$FOLDER_REGISTRY_ADDRESS"/* ]] || printf '%s=%s\n' "$key" "$value"
+    done
+}
+
+sha256_of() { printf 'sha256:%s' "$(openssl dgst -sha256 -r "$1" | cut -d' ' -f1)"; }
+
+# The manifest the folder holds for the box is the one release.env names, or one
+# that manifest lists: either way its digest is proven from the signed package.
+box_digest_in_the_folder() {
+    local reference=$1 dir box
+    dir="$IMAGES_FROM/$(folder_path_of "$reference")"
+    [[ -f "$dir/named.json" && -f "$dir/box/manifest.json" ]] || return 1
+    [[ "$(sha256_of "$dir/named.json")" == "${reference#*@}" ]] || return 1
+    box=$(sha256_of "$dir/box/manifest.json")
+    [[ "$box" == "${reference#*@}" ]] || tr -d ' \n' < "$dir/named.json" | grep -qF "\"digest\":\"${box}\"" || return 1
+    printf '%s' "$box"
+}
+
+die_on_a_folder_that_misses_an_image() {
+    [[ -n "$IMAGES_FROM" ]] || return 0
+    [[ -d "$IMAGES_FROM" ]] || die "No such folder: ${IMAGES_FROM}"
+    local line missing="" tool
+    for tool in distribution.tar stable.tar; do
+        [[ -f "$IMAGES_FROM/tools/$tool" ]] || missing+="  tools/${tool}"$'\n'
+    done
+    while IFS= read -r line; do
+        box_digest_in_the_folder "${line#*=}" >/dev/null || missing+="  ${line#*=}, missing or not the one the release names"$'\n'
+    done < <(images_the_stack_runs)
+    [[ -z "$missing" ]] && return 0
+    log_error "${IMAGES_FROM} lacks what this install runs:"
+    printf '%s' "$missing" >&2
+    log_error "  Prepare it again, for this release, with: ut-get --prepare <folder> --version $(env_get "$INSTALL_DIR/release.env" UT_RELEASE_VERSION 2>/dev/null || echo '<version>')"
+    exit 1
+}
+
+load_the_folder_tools() {
+    local tool archive id
+    for tool in "$FOLDER_REGISTRY_TOOL" "$FOLDER_SKOPEO_TOOL"; do
+        archive="$IMAGES_FROM/tools/$(basename "${tool%%:*}").tar"
+        docker load -q -i "$archive" >/dev/null || die "Could not load ${archive}"
+        id=$(docker image inspect --format '{{.Id}}' "${tool%@*}" 2>/dev/null)
+        [[ " $FOLDER_TOOL_IDS " == *" $id "* ]] \
+            || die "${archive} is not the ${tool%@*} this release loads images with — prepare the folder again"
+    done
+}
+
+folder_registry_answers() {
+    local waited=0
+    while (( waited < 30 )); do
+        docker exec "$FOLDER_LOADER" wget -q -O /dev/null "http://127.0.0.1:5000/v2/" 2>/dev/null && return 0
+        sleep 1; waited=$((waited + 1))
+    done
+    return 1
+}
+
+forget_the_images_of_a_folder() {
+    local local_file=$1 tmp
+    grep -qE "^[A-Z_]+_IMAGE=\"?${FOLDER_REGISTRY_ADDRESS}/" "$local_file" 2>/dev/null || return 0
+    tmp=$(mktemp)
+    grep -vE "^[A-Z_]+_IMAGE=\"?${FOLDER_REGISTRY_ADDRESS}/" "$local_file" > "$tmp" || true
+    cat "$tmp" > "$local_file"
+    rm -f "$tmp"
+    log_info "Images come from the registry again, no longer from a folder"
+}
+
+# docker load forgets an image's digest on overlay2, the store of every box
+# measured, so the images go through a registry that lives for this step only,
+# and are pulled from it by the digest release.env names.
+step_images_from_a_folder() {
+    local local_file line key reference local_name
+    local_file="$(settings_directory "$INSTALL_DIR/.env")/local.env"
+    if [[ -z "$IMAGES_FROM" ]]; then
+        if $DO_PULL; then forget_the_images_of_a_folder "$local_file"; fi
+        return 0
+    fi
+
+    log_step "Loading the images from ${IMAGES_FROM}"
+    load_the_folder_tools
+    docker rm -f "$FOLDER_LOADER" >/dev/null 2>&1 || true
+    docker run -d --name "$FOLDER_LOADER" -p "${FOLDER_REGISTRY_ADDRESS}:5000" "${FOLDER_REGISTRY_TOOL%@*}" >/dev/null \
+        || die "Could not start the registry the images load through on ${FOLDER_REGISTRY_ADDRESS}"
+    folder_registry_answers || { docker rm -f "$FOLDER_LOADER" >/dev/null 2>&1; die "The registry on ${FOLDER_REGISTRY_ADDRESS} never answered"; }
+
+    while IFS= read -r line; do
+        key=${line%%=*}; reference=${line#*=}
+        local_name=$(name_in_the_folder_registry "$(repository_of "$reference")@$(box_digest_in_the_folder "$reference")")
+        docker run --rm --network host -v "$IMAGES_FROM":/folder:ro "${FOLDER_SKOPEO_TOOL%@*}" \
+            copy -q --preserve-digests --dest-tls-verify=false \
+            "dir:/folder/$(folder_path_of "$reference")/box" "docker://${local_name%@*}:from-a-folder" >/dev/null \
+            && docker pull -q "$local_name" >/dev/null \
+            || { docker rm -f "$FOLDER_LOADER" >/dev/null 2>&1; die "Could not load ${reference%@*} under its digest from ${IMAGES_FROM}"; }
+        env_set "$local_file" "$key" "$local_name"
+        log_info "${reference%@*}, under the digest the release names"
+    done < <(images_the_stack_runs)
+
+    docker rm -f "$FOLDER_LOADER" >/dev/null 2>&1 || true
+    render_settings "$INSTALL_DIR/.env" "$local_file"
+    log_info "Every image is here, and nothing was downloaded"
+}
+
 step_pull() {
     if ! $DO_PULL; then
         log_step "Skipping image download (--skip-pull)"
@@ -2070,6 +2217,7 @@ parse_arguments() {
             --reporting-receiver-cert) REPORTING_RECEIVER_CERT="${2:?--reporting-receiver-cert needs a path}"; shift ;;
             --reporting-every)         REPORTING_EVERY="${2:?--reporting-every needs minutes}"; shift ;;
             --inference-from)     INFERENCE_FROM="${2:?--inference-from needs an address}"; shift ;;
+            --images-from)        IMAGES_FROM="${2:?--images-from needs the folder ut-get --prepare wrote}"; DO_PULL=false; shift ;;
             --compute)            COMPUTE_ADDRESS="${2:?--compute needs the address the control plane reaches this machine at}"; shift ;;
             --inference-key-file) INFERENCE_KEY_FILE="${2:?--inference-key-file needs a path}"; shift ;;
             --inference-ca-file)  INFERENCE_CA_FILE="${2:?--inference-ca-file needs a path}"; shift ;;
@@ -2087,6 +2235,7 @@ main() {
     die_on_a_compute_node_given_wrong
     die_on_a_compute_role_given_wrong
     resolve_install_dir
+    die_on_a_folder_that_misses_an_image
     die_on_a_model_nobody_listed
 
     if [[ "$ACTION" == "check" ]]; then
@@ -2109,6 +2258,7 @@ main() {
     step_docker_group
     step_certificate_authority_root
     step_networks
+    step_images_from_a_folder
     step_pull
     step_start
     step_wait_healthy
