@@ -108,6 +108,11 @@ chmod +x /stub/docker /stub/nvidia-smi /stub/df
 mkdir -p /etc/cdi && : > /etc/cdi/nvidia.yaml
 : > /stub/docker-calls
 export PATH=/stub:$PATH
+start_a_fake_keygen() {
+    : > "/w/$1/keygen-requests"
+    python3 /w/licenses/fake-keygen.py 8765 "/w/$1/keygen-requests" /w/licenses/certificates &
+    for _ in $(seq 50); do curl -s -o /dev/null http://127.0.0.1:8765/ && return 0; sleep 0.1; done
+}
 STUBS
 }
 
@@ -142,8 +147,10 @@ cp /opt/understandtech/.env /w/$state/checkout-env 2>/dev/null || : > /w/$state/
 cp /stub/docker-calls /w/$state/docker-calls 2>/dev/null || : > /w/$state/docker-calls
 cp /stub/docker-login-stdin /w/$state/login-stdin 2>/dev/null || : > /w/$state/login-stdin
 cp /etc/understandtech/license /w/$state/license 2>/dev/null || : > /w/$state/license
+cp /etc/understandtech/machine.lic /w/$state/machine 2>/dev/null || : > /w/$state/machine
 cp /etc/understandtech/inference-ca-bundle.pem /w/$state/inference-ca-bundle 2>/dev/null || : > /w/$state/inference-ca-bundle
 stat -c '%a %U' /etc/understandtech/license > /w/$state/license-mode 2>/dev/null || : > /w/$state/license-mode
+stat -c '%a %U' /etc/understandtech/machine.lic > /w/$state/machine-mode 2>/dev/null || : > /w/$state/machine-mode
 chmod -R a+rw /w/$state
 PROBE
 
@@ -166,12 +173,21 @@ state_setup() {
         launched_from_a_checkout|checkout_but_no_key)
             echo 'install -d /srv/clone && cp -a /usr/share/understandtech/. /srv/clone/ && install -d /srv/clone/.git && cp /usr/bin/ut-install /srv/clone/ut-install' ;;
         empty_settings) echo 'install -m 600 /dev/null /etc/understandtech/.env' ;;
-        # The packaged ut-license carries the real public key; these states swap
-        # in one whose private half the suite holds, the way an issued key is.
-        licensed|license_tampered|license_ended|licensed_offline|licensed_elsewhere)
-            echo 'cp /w/licenses/ut-license /usr/bin/ut-license' ;;
-        license_stored)
-            echo 'cp /w/licenses/ut-license /usr/bin/ut-license && install -d -m 750 /etc/understandtech && install -m 600 /w/licenses/valid.lic /etc/understandtech/license' ;;
+        # The packaged ut-license trusts Keygen's key and asks Keygen; these states
+        # swap in one that trusts the suite's key and asks the fake Keygen, which
+        # runs in every one of them so that a request nobody should make is seen.
+        licensed|license_ended|license_taken|licensed_elsewhere)
+            echo "cp /w/licenses/ut-license /usr/bin/ut-license && start_a_fake_keygen $1" ;;
+        license_stored|licensed_offline)
+            echo "cp /w/licenses/ut-license /usr/bin/ut-license && start_a_fake_keygen $1 && install -d -m 750 /etc/understandtech && install -m 600 /w/licenses/keys/active.key /etc/understandtech/license && install -m 600 /w/licenses/files/valid.lic /etc/understandtech/machine.lic" ;;
+        license_tampered)
+            echo "cp /w/licenses/ut-license /usr/bin/ut-license && start_a_fake_keygen $1 && install -d -m 750 /etc/understandtech && install -m 600 /w/licenses/keys/active.key /etc/understandtech/license && install -m 600 /w/licenses/files/tampered.lic /etc/understandtech/machine.lic" ;;
+        license_renewed)
+            echo "cp /w/licenses/ut-license /usr/bin/ut-license && start_a_fake_keygen $1 && install -d -m 750 /etc/understandtech && install -m 600 /w/licenses/keys/active.key /etc/understandtech/license && install -m 600 /w/licenses/files/file_ended.lic /etc/understandtech/machine.lic" ;;
+        license_from_another_machine)
+            echo "cp /w/licenses/ut-license /usr/bin/ut-license && start_a_fake_keygen $1 && install -d -m 750 /etc/understandtech && install -m 600 /w/licenses/keys/active.key /etc/understandtech/license && install -m 600 /w/licenses/files/elsewhere.lic /etc/understandtech/machine.lic" ;;
+        license_of_the_old_format)
+            echo "cp /w/licenses/ut-license /usr/bin/ut-license && start_a_fake_keygen $1 && install -d -m 750 /etc/understandtech && install -m 600 /w/licenses/keys/old_format.key /etc/understandtech/license" ;;
         already_set)   echo 'install -m 600 /usr/share/understandtech/release.env /etc/understandtech/.env' ;;
         no_settings_dir) echo 'rm -rf /etc/understandtech' ;;
         pools_full)    echo ': # the daemon refuses through the stub' ;;
@@ -862,8 +878,9 @@ the_way_back_comes_before_the_way_out() {
 LICENSE_USER=licensed-user
 LICENSE_TOKEN=license-carried-token-0001
 
-# The walk installs the package with --force-depends, so openssl, which the
-# package declares, is not there; a license check cannot run without it.
+# The walk installs the package with --force-depends, so openssl, jq and curl,
+# which the package declares, are not there; a license check cannot run without
+# them, nor the fake Keygen without python3.
 WITH_OPENSSL_IMAGE=""
 
 prepare_a_vllm_entry() {
@@ -898,44 +915,14 @@ prepare_licenses() {
     mkdir -p "$work"
     WITH_OPENSSL_IMAGE=$(docker build -q - 2>/dev/null <<DOCKERFILE
 FROM ${DEBIAN_IMAGE}
-RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends openssl jq curl python3 && rm -rf /var/lib/apt/lists/*
 DOCKERFILE
 ) || { echo "Could not build the image the license walks run in." >&2; exit 1; }
-    openssl ecparam -name prime256v1 -genkey -noout -out "$work/license.key" 2>/dev/null
-    openssl ec -in "$work/license.key" -pubout -out "$work/license.pub" 2>/dev/null
-    python3 - "$REPO_ROOT/ut-license" "$work/license.pub" "$work/ut-license" <<'SWAP'
-import pathlib, re, sys
-original, pub, out = (pathlib.Path(a) for a in sys.argv[1:4])
-out.write_text(re.sub(r"LICENSE_PUBLIC_KEY='[^']*'",
-                      "LICENSE_PUBLIC_KEY='" + pub.read_text().strip() + "'", original.read_text(), count=1))
-SWAP
-    chmod 755 "$work/ut-license"
-    printf '%s\n' "$LICENSE_TOKEN" > "$work/token"
-    # Signed here rather than by issue-license.sh, which asks GitHub about the
-    # token first: the walk is about the installer, and runs with no network.
-    printf 'version=1\ncustomer=Walk Customer\nissued=%s\nexpires=%s\nrights=platform\nregistry_user=%s\nregistry_token=%s\n' \
-        "$(date -u +%F)" "$(( $(date -u +%Y) + 1 ))-12-31" "$LICENSE_USER" "$LICENSE_TOKEN" > "$work/valid.payload"
-    openssl dgst -sha256 -sign "$work/license.key" -out "$work/valid.sig" "$work/valid.payload"
-    printf 'UT1.%s.%s\n' "$(openssl base64 -A < "$work/valid.payload")" \
-        "$(openssl base64 -A < "$work/valid.sig")" > "$work/valid.lic"
-    python3 - "$work/valid.lic" "$work/tampered.lic" <<'TAMPER'
-import base64, sys
-fmt, payload, signature = open(sys.argv[1]).read().strip().split(".")
-renamed = base64.b64decode(payload).replace(b"customer=Walk Customer", b"customer=Someone Else", 1)
-open(sys.argv[2], "w").write(".".join([fmt, base64.b64encode(renamed).decode(), signature]) + "\n")
-TAMPER
-    printf 'version=1\ncustomer=Walk Customer\nissued=%s\nexpires=%s\nrights=platform\nregistry=registry.example.test\nregistry_user=%s\nregistry_token=%s\n' \
-        "$(date -u +%F)" "$(( $(date -u +%Y) + 1 ))-12-31" "$LICENSE_USER" "$LICENSE_TOKEN" > "$work/elsewhere.payload"
-    openssl dgst -sha256 -sign "$work/license.key" -out "$work/elsewhere.sig" "$work/elsewhere.payload"
-    printf 'UT1.%s.%s\n' "$(openssl base64 -A < "$work/elsewhere.payload")" \
-        "$(openssl base64 -A < "$work/elsewhere.sig")" > "$work/elsewhere.lic"
-    # And an ended one, as a key issued last year would have been.
-    printf 'version=1\ncustomer=Walk Customer\nissued=2019-01-01\nexpires=2020-01-01\nrights=platform\nregistry_user=%s\nregistry_token=%s\n' \
-        "$LICENSE_USER" "$LICENSE_TOKEN" > "$work/ended.payload"
-    openssl dgst -sha256 -sign "$work/license.key" -out "$work/ended.sig" "$work/ended.payload"
-    printf 'UT1.%s.%s\n' "$(openssl base64 -A < "$work/ended.payload")" \
-        "$(openssl base64 -A < "$work/ended.sig")" > "$work/ended.lic"
-    chmod 644 "$work"/*.lic
+    # Signed here rather than by Keygen: the walk is about the installer, and
+    # runs with no network.
+    docker run --rm -v "$REPO_ROOT":/src:ro -v "$WORK_DIR":/w -e KEYGEN_TEST_TOKEN="$LICENSE_TOKEN" \
+        "$WITH_OPENSSL_IMAGE" bash -c '. /src/test/keygen.sh && prepare_license_lab /src /w/licenses' \
+        || { echo "Could not sign the licenses the walks use." >&2; exit 1; }
 }
 
 of_state() { cat "$WORK_DIR/$1/$2" 2>/dev/null; }
@@ -956,47 +943,90 @@ never_logged_in() {
     return 1
 }
 
-a_license_installs_with_the_token_it_carries() {
-    reached_the_pull licensed && logged_in_with_the_license licensed
-}
-
-the_license_is_kept_for_root_alone() {
-    [[ "$(of_state licensed license-mode)" == "600 root" ]] \
-        || { echo "the stored license is '$(of_state licensed license-mode)', not 600 root"; return 1; }
-    [[ "$(of_state licensed license)" == "$(cat "$WORK_DIR/licenses/valid.lic")" ]] && return 0
-    echo "the stored license is not the key that was given"
+never_asked_keygen() {
+    local state=$1
+    [[ -z "$(of_state "$state" keygen-requests)" ]] && return 0
+    echo "it asked Keygen anyway:"; of_state "$state" keygen-requests
     return 1
 }
 
-an_update_takes_the_license_already_there() {
-    reached_the_pull license_stored && logged_in_with_the_license license_stored
+refused_with() {
+    local state=$1 words=$2
+    grep -qF "$words" <<< "$(output_of "$state")" && grep -q '^EXIT=1$' <<< "$(output_of "$state")" && return 0
+    echo "${state} did not stop on '${words}':"; output_of "$state" | tail -5
+    return 1
 }
 
-an_altered_license_stops_before_any_login() {
-    grep -q 'not issued by UnderstandTech' <<< "$(output_of license_tampered)" \
-        && grep -q '^EXIT=1$' <<< "$(output_of license_tampered)" \
-        || { echo "an altered key was not refused:"; output_of license_tampered | tail -5; return 1; }
-    never_logged_in license_tampered
+a_license_activates_this_machine_and_logs_in_with_its_token() {
+    local asked
+    asked=$(of_state licensed keygen-requests)
+    grep -q 'licenses/actions/validate-key' <<< "$asked" && grep -q '^POST machines$' <<< "$asked" \
+        && grep -q 'actions/check-out' <<< "$asked" \
+        || { echo "the machine was not activated with Keygen:"; echo "$asked"; output_of licensed | tail -5; return 1; }
+    reached_the_pull licensed && logged_in_with_the_license licensed
+}
+
+the_license_and_its_file_are_kept_for_root_alone() {
+    [[ "$(of_state licensed license-mode)" == "600 root" && "$(of_state licensed machine-mode)" == "600 root" ]] \
+        || { echo "the license is '$(of_state licensed license-mode)', its file '$(of_state licensed machine-mode)', not 600 root"; return 1; }
+    [[ "$(of_state licensed license)" == "$(cat "$WORK_DIR/licenses/keys/fresh.key")" ]] \
+        || { echo "the stored license is not the key that was given"; return 1; }
+    [[ "$(of_state licensed machine)" == "$(cat "$WORK_DIR/licenses/certificates/TEST-FRESH.lic")" ]] && return 0
+    echo "the stored license file is not the one Keygen handed over"
+    return 1
+}
+
+an_update_takes_the_license_already_there_with_no_network() {
+    reached_the_pull license_stored && logged_in_with_the_license license_stored && never_asked_keygen license_stored
+}
+
+an_altered_license_file_stops_before_any_request_or_login() {
+    refused_with license_tampered 'not issued by UnderstandTech' \
+        && never_asked_keygen license_tampered && never_logged_in license_tampered
+}
+
+a_license_file_that_ended_is_renewed_from_keygen() {
+    grep -q 'actions/check-out' <<< "$(of_state license_renewed keygen-requests)" \
+        || { echo "Keygen was never asked for a new file:"; output_of license_renewed | tail -5; return 1; }
+    [[ "$(of_state license_renewed machine)" == "$(cat "$WORK_DIR/licenses/certificates/TEST-ACTIVE.lic")" ]] \
+        || { echo "the file that ended was not replaced by the one Keygen handed over"; return 1; }
+    reached_the_pull license_renewed && logged_in_with_the_license license_renewed
+}
+
+a_license_file_from_another_machine_stops_the_install() {
+    refused_with license_from_another_machine 'made for another machine' \
+        && never_asked_keygen license_from_another_machine && never_logged_in license_from_another_machine
 }
 
 an_ended_license_stops_the_install_and_says_when() {
-    grep -q 'ended on 2020-01-01' <<< "$(output_of license_ended)" \
-        && grep -q '^EXIT=1$' <<< "$(output_of license_ended)" \
-        || { echo "an ended license was not refused:"; output_of license_ended | tail -5; return 1; }
-    never_logged_in license_ended
+    refused_with license_ended 'ended on 2020-01-01' && never_logged_in license_ended
+}
+
+a_license_activated_elsewhere_is_refused_and_says_so() {
+    refused_with license_taken 'activated on another machine' && never_logged_in license_taken
 }
 
 images_already_here_need_no_registry_login() {
-    grep -q 'Licensed to Walk Customer' <<< "$(output_of licensed_offline)" \
+    grep -q 'Licensed to Test Customer' <<< "$(output_of licensed_offline)" \
         || { echo "the license was not checked:"; output_of licensed_offline | tail -5; return 1; }
-    never_logged_in licensed_offline
+    never_logged_in licensed_offline && never_asked_keygen licensed_offline
 }
+
+a_license_of_the_old_format_says_what_to_ask_for() {
+    refused_with license_of_the_old_format 'old format' && never_logged_in license_of_the_old_format
+}
+
+LICENSE_STATES="licensed license_stored license_renewed license_tampered license_from_another_machine license_ended license_taken licensed_offline licensed_elsewhere license_of_the_old_format"
 
 the_carried_token_never_reaches_the_output() {
     local state
-    for state in licensed license_stored license_tampered license_ended licensed_offline licensed_elsewhere; do
+    for state in $LICENSE_STATES; do
         grep -qF "$LICENSE_TOKEN" <<< "$(output_of "$state")" \
             && { echo "the registry token appears in the output of ${state}"; return 1; }
+        grep -qE 'TEST-(FRESH|ACTIVE|REGISTRY|ELSEWHERE|ENDED)' <<< "$(output_of "$state")" \
+            && { echo "the license key appears in the output of ${state}"; return 1; }
+        grep -q 'SECRET_ON_A_COMMAND_LINE' <<< "$(of_state "$state" keygen-requests)" \
+            && { echo "the license key sat on a command line in ${state}"; return 1; }
     done
     return 0
 }
@@ -1091,17 +1121,21 @@ DISK_AVAIL_BYTES=$((91 * 1000 * 1000 * 1000)) \
     run_install_from_state no_accelerator_on_a_smaller_disk
 INSTALL_COMMAND="ut-install --no-gpu" run_install_from_state no_accelerator_by_flag
 INSTALL_COMMAND="ut-install --no-gpu" run_install_from_state no_accelerator_pointed_at_a_real_machine
-WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --license-file /w/licenses/valid.lic" \
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --license-file /w/licenses/keys/fresh.key" \
     run_install_from_state licensed
-WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --license-file /w/licenses/tampered.lic" \
-    run_install_from_state license_tampered
-WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --license-file /w/licenses/ended.lic" \
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --license-file /w/licenses/keys/ended.key" \
     run_install_from_state license_ended
-WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= run_install_from_state license_stored
-WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --license-file /w/licenses/elsewhere.lic" \
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --license-file /w/licenses/keys/elsewhere.key" \
+    run_install_from_state license_taken
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --license-file /w/licenses/keys/registry.key" \
     run_install_from_state licensed_elsewhere
-WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --license-file /w/licenses/valid.lic --skip-pull --health-timeout 5" \
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= run_install_from_state license_stored
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= run_install_from_state license_tampered
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= run_install_from_state license_renewed
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= run_install_from_state license_from_another_machine
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --skip-pull --health-timeout 5" \
     run_install_from_state licensed_offline
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= run_install_from_state license_of_the_old_format
 run_install_from_state backup_destination_mounted
 run_install_from_state backup_destination_not_mounted
 run_install_from_state backup_destination_gone_on_an_update
@@ -1245,24 +1279,32 @@ property "and none of them reached the log" \
     no_secret_reaches_the_log
 
 printf '\n%sA license key%s\n' "$BOLD" "$NC"
-property "a license key installs, and logs in with the token it carries" \
-    a_license_installs_with_the_token_it_carries
-property "the license is kept for updates, readable by root alone" \
-    the_license_is_kept_for_root_alone
-property "an update takes the license already on the machine" \
-    an_update_takes_the_license_already_there
-property "an altered license stops the install before any login" \
-    an_altered_license_stops_before_any_login
+property "a license key activates this machine with Keygen, and logs in with the token it carries" \
+    a_license_activates_this_machine_and_logs_in_with_its_token
+property "the license and the file Keygen signed are kept for updates, readable by root alone" \
+    the_license_and_its_file_are_kept_for_root_alone
+property "an update takes the license already on the machine, and asks Keygen nothing" \
+    an_update_takes_the_license_already_there_with_no_network
+property "a license file that has ended is renewed from Keygen, and the install goes on" \
+    a_license_file_that_ended_is_renewed_from_keygen
+property "an altered license file stops the install before any request and any login" \
+    an_altered_license_file_stops_before_any_request_or_login
+property "a license file made for another machine stops the install, and says so" \
+    a_license_file_from_another_machine_stops_the_install
 property "a license that has ended stops the install, and says when" \
     an_ended_license_stops_the_install_and_says_when
+property "a license activated on another machine is refused, and says so" \
+    a_license_activated_elsewhere_is_refused_and_says_so
 property "with the images already here, a license needs no registry login" \
     images_already_here_need_no_registry_login
 property "a license that names a registry pulls every image from it, digests kept" \
     a_license_naming_a_registry_pulls_every_image_from_it
 property "a license that names no registry leaves the images where they are" \
     a_license_naming_no_registry_leaves_the_images_where_they_are
-property "the token a license carries never reaches the output" \
+property "the token a license carries, and the license key, never reach the output" \
     the_carried_token_never_reaches_the_output
+property "a license key of the old format is refused, and says what to ask for" \
+    a_license_of_the_old_format_says_what_to_ask_for
 property "a registry token alone still installs, and says a license will be needed" \
     a_token_alone_still_installs_and_says_so
 

@@ -2,43 +2,66 @@
 
 set -Eeuo pipefail
 
-# The public half of the license signing key, kept apart from the release key so
-# that a leak of either one forges only what it signs.
-LICENSE_PUBLIC_KEY='-----BEGIN PUBLIC KEY-----
-MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEr6MNxC17yIdmZ05auhoAJnKSJlaN
-OQTxkUF51gKBJVi9fhFglrm/0oLQkmCj2GiodOirttTScG0bPk748BNtxQ==
+# Keygen keeps our licenses and signs each machine's file with this account's
+# Ed25519 key: only its public half is here, and nothing else can sign.
+KEYGEN_API='https://api.keygen.sh/v1/accounts/cdfe8998-3b6e-4f86-8f9f-c51a7cb642e0'
+KEYGEN_PUBLIC_KEY='-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEA94XRV2m33KJZeFOOIBGDlVjcZJDc2d3myTeHPx59e4s=
 -----END PUBLIC KEY-----'
 
-LICENSE_FORMAT=UT1
+# A reinstall changes /etc/machine-id, never the serial number: the license
+# follows the hardware when there is one to read.
+SERIAL_FILES='/sys/class/dmi/id/product_serial /sys/class/dmi/id/board_serial'
+MACHINE_ID_FILE='/etc/machine-id'
+
+CONTACT='contact@understand.tech'
+CLOCK_TOLERANCE_SECONDS=300
+MACHINE_FILE_SECONDS=31556952
 
 if [[ -t 1 ]]; then
-    RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; NC=$'\033[0m'
+    RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'; NC=$'\033[0m'
 else
-    RED=""; GREEN=""; NC=""
+    RED=""; GREEN=""; YELLOW=""; NC=""
 fi
 
 usage() {
     cat <<'EOF'
-ut-license — checks a license key issued by UnderstandTech.
+ut-license — binds the license UnderstandTech issued to this machine, and checks it.
 
-  ut-license check license.key       who it was issued to, and until when
-  ut-license check -                 the same, reading the key from stdin
-  ut-license field NAME license.key  one field of a valid key, for ut-install
-  ut-license --fingerprint           print the license key's fingerprint
+  ut-license activate KEY_FILE MACHINE_FILE  activate this machine with Keygen, and
+                                             write the file that proves it
+  ut-license check MACHINE_FILE              who it is licensed to, and until when
+  ut-license field NAME MACHINE_FILE         one field of a valid machine file, for ut-install
+  ut-license --fingerprint                   print the fingerprint of the key that
+                                             signs machine files
 
-Needs nothing but openssl, and no network. check never prints the registry token
-the key carries; field registry_token does, and only to whoever asked for it.
+activate needs the network once; check and field need none. Reading the machine's
+serial number needs root. No command prints the license key, and only
+field registry_token prints the registry token, to whoever asked for it.
+
+check exits 1 when it refuses the file, and 2 when the file is genuine and made
+for this machine but has ended, or its license has ended or is suspended: once
+UnderstandTech has renewed or restored it, activate fetches a new file.
 EOF
 }
 
 fail() { printf '%s[fail]%s %s\n' "$RED" "$NC" "$*" >&2; exit 1; }
+warn() { printf '%s[warn]%s %s\n' "$YELLOW" "$NC" "$*" >&2; }
+renewable() { warn "$*"; exit 2; }
+
+OLD_FORMAT="This license key is of the old format, which this version no longer reads; ask UnderstandTech for a new one: ${CONTACT}"
+
+needs_openssl_3() {
+    grep -q -- '-rawin' <<< "$(openssl pkeyutl -help 2>&1)" \
+        || fail "openssl 3.0 or later is needed to check a license file; this machine has $(openssl version 2>/dev/null)"
+}
 
 # A command substitution does not inherit set -e: without the explicit checks, a
 # key file that could not be written fingerprints as the hash of nothing.
 key_file() {
     local file
     file=$(mktemp) || return 1
-    printf '%s\n' "$LICENSE_PUBLIC_KEY" > "$file" || return 1
+    printf '%s\n' "$KEYGEN_PUBLIC_KEY" > "$file" || return 1
     printf '%s' "$file"
 }
 
@@ -51,73 +74,201 @@ print_fingerprint() {
     printf 'SHA256: %s\n' "$fingerprint"
 }
 
-read_license() {
-    local source=$1
-    if [[ "$source" == "-" ]]; then
-        tr -d ' \t\r\n'
-    else
-        [[ -f "$source" ]] || fail "No such license file: ${source}"
-        tr -d ' \t\r\n' < "$source"
-    fi
+serial_is_real() {
+    local serial=$1 lowered
+    [[ ${#serial} -ge 4 ]] || return 1
+    [[ -n "${serial//"${serial:0:1}"/}" ]] || return 1
+    lowered=$(printf '%s' "$serial" | tr '[:upper:]' '[:lower:]')
+    case "$lowered" in
+        "not specified"|"not applicable"|"not available"|none|unknown|invalid|"default string"|"to be filled by o.e.m." \
+        |"system serial number"|"chassis serial number"|0123456789|123456789)
+            return 1 ;;
+    esac
+    return 0
 }
 
-verified_payload() {
-    local license=$1 payload=$2 format encoded_payload encoded_signature rest signature key verdict
-    IFS=. read -r format encoded_payload encoded_signature rest <<< "$license"
-    [[ "$format" == "$LICENSE_FORMAT" && -n "$encoded_payload" && -n "$encoded_signature" && -z "$rest" ]] \
-        || return 1
+machine_fingerprint() {
+    local file serial
+    for file in $SERIAL_FILES; do
+        [[ -e "$file" ]] || continue
+        [[ -r "$file" ]] || fail "Reading this machine's serial number needs root: run it with sudo"
+        serial=$(sed 's/^[[:space:]]*//; s/[[:space:]]*$//' "$file")
+        serial_is_real "$serial" || continue
+        printf 'serial:%s' "$serial" | openssl dgst -sha256 -r | cut -d' ' -f1
+        return 0
+    done
+    [[ -s "$MACHINE_ID_FILE" ]] || fail "This machine has neither a serial number nor a machine id to bind a license to"
+    warn "No hardware serial number here: the license binds to ${MACHINE_ID_FILE}, which a reinstall changes"
+    printf 'machine-id:%s' "$(tr -d '[:space:]' < "$MACHINE_ID_FILE")" | openssl dgst -sha256 -r | cut -d' ' -f1
+}
 
-    signature=$(mktemp) || return 1
-    key=$(key_file) || { rm -f "$signature"; return 1; }
-    verdict=1
-    if printf '%s' "$encoded_payload" | openssl base64 -d -A > "$payload" 2>/dev/null \
-        && printf '%s' "$encoded_signature" | openssl base64 -d -A > "$signature" 2>/dev/null \
-        && openssl dgst -sha256 -verify "$key" -signature "$signature" "$payload" >/dev/null 2>&1; then
+license_key() {
+    local source=$1 key
+    [[ -r "$source" ]] || fail "No such license key file: ${source}"
+    key=$(tr -d ' \t\r\n' < "$source")
+    [[ "$key" != UT1.* ]] || fail "$OLD_FORMAT"
+    [[ "$key" =~ ^[A-Za-z0-9._/+=-]+$ ]] || fail "This is not a license key UnderstandTech issued"
+    printf '%s' "$key"
+}
+
+keygen() {
+    local method=$1 path=$2 key=$3 body=${4-}
+    # The key reaches curl through a file descriptor, never through its command line.
+    printf '%s' "$body" | curl -sS --max-time 20 -X "$method" "${KEYGEN_API}${path}" \
+        -K <(printf 'header = "Authorization: License %s"\n' "$key") \
+        -H 'Accept: application/vnd.api+json' -H 'Content-Type: application/vnd.api+json' \
+        -H 'Keygen-Version: 1.8' --data-binary @-
+}
+
+refuse_the_validation() {
+    local code=$1 answer=$2 ended
+    case "$code" in
+        FINGERPRINT_SCOPE_MISMATCH|TOO_MANY_MACHINES|MACHINE_LIMIT_EXCEEDED|FINGERPRINT_TAKEN)
+            fail "This license is activated on another machine. To move it here, ask UnderstandTech to release it: ${CONTACT}" ;;
+        *EXPIRED*)
+            ended=$(jq -r '.data.attributes.expiry // "" | .[0:10]' <<< "$answer" 2>/dev/null || true)
+            fail "This license ended${ended:+ on ${ended}}; ask UnderstandTech to renew it: ${CONTACT}" ;;
+        *SUSPENDED*|*BANNED*)
+            fail "This license is suspended; ask UnderstandTech why: ${CONTACT}" ;;
+        NOT_FOUND|*INVALID*)
+            fail "Keygen knows no such license key: check it, or ask UnderstandTech for yours: ${CONTACT}" ;;
+        *)
+            fail "Keygen refused this license (${code}); ask UnderstandTech: ${CONTACT}" ;;
+    esac
+}
+
+activate() {
+    local key_file=$1 machine_file=$2 key fingerprint answer code license_id activation certificate staged
+    command -v curl >/dev/null 2>&1 || fail "curl is required to activate this machine"
+    needs_openssl_3
+    key=$(license_key "$key_file")
+    fingerprint=$(machine_fingerprint)
+
+    answer=$(keygen POST /licenses/actions/validate-key "$key" \
+        "$(printf '%s' "$key" | jq -Rsc --arg fingerprint "$fingerprint" '{meta: {key: ., scope: {fingerprint: $fingerprint}}}')") \
+        || fail "Keygen cannot be reached to activate this machine: check its network, then try again"
+    code=$(jq -r '.meta.code // .errors[0].code // "UNREADABLE"' <<< "$answer" 2>/dev/null || echo UNREADABLE)
+    case "$code" in
+        VALID) ;;
+        NO_MACHINE|NO_MACHINES)
+            license_id=$(jq -r '.data.id // empty' <<< "$answer")
+            activation=$(keygen POST /machines "$key" "$(jq -nc --arg fingerprint "$fingerprint" \
+                --arg license "$license_id" --arg name "$(hostname)" \
+                '{data: {type: "machines", attributes: {fingerprint: $fingerprint, name: $name, platform: "linux"},
+                  relationships: {license: {data: {type: "licenses", id: $license}}}}}')") \
+                || fail "Keygen cannot be reached to activate this machine: check its network, then try again"
+            code=$(jq -r '.errors[0].code // empty' <<< "$activation" 2>/dev/null || echo UNREADABLE)
+            [[ -z "$code" ]] || refuse_the_validation "$code" "$activation"
+            ;;
+        *)  refuse_the_validation "$code" "$answer" ;;
+    esac
+
+    certificate=$(keygen POST "/machines/${fingerprint}/actions/check-out?include=license&ttl=${MACHINE_FILE_SECONDS}" "$key" "" \
+        | jq -r '.data.attributes.certificate // empty' 2>/dev/null) || certificate=""
+    [[ -n "$certificate" ]] || fail "Keygen did not hand over this machine's license file; try again, or ask ${CONTACT}"
+
+    staged=$(mktemp) || fail "Cannot write a temporary file"
+    chmod 600 "$staged"
+    printf '%s\n' "$certificate" > "$staged"
+    if ! (check "$staged" >/dev/null); then
+        rm -f "$staged"
+        fail "Keygen handed over a license file this machine does not accept"
+    fi
+    install -m 600 "$staged" "$machine_file"
+    rm -f "$staged"
+}
+
+verified_dataset() {
+    local machine_file=$1 dataset=$2 work key verdict=1
+    work=$(mktemp -d) || return 1
+    key=$(key_file) || { rm -rf "$work"; return 1; }
+    if sed '/-----/d' "$machine_file" | tr -d '\r\n' | openssl base64 -d -A > "$work/envelope" 2>/dev/null \
+        && [[ "$(jq -r '.alg // empty' "$work/envelope" 2>/dev/null)" == "base64+ed25519" ]] \
+        && printf 'machine/%s' "$(jq -r '.enc' "$work/envelope")" > "$work/signed" \
+        && jq -r '.sig' "$work/envelope" | openssl base64 -d -A > "$work/signature" 2>/dev/null \
+        && openssl pkeyutl -verify -pubin -inkey "$key" -rawin -in "$work/signed" -sigfile "$work/signature" >/dev/null 2>&1 \
+        && jq -r '.enc' "$work/envelope" | openssl base64 -d -A > "$dataset" 2>/dev/null \
+        && jq -e '.data.attributes.fingerprint and .meta.issued and .meta.expiry' "$dataset" >/dev/null 2>&1; then
         verdict=0
     fi
-    rm -f "$signature" "$key"
+    rm -rf "$work" "$key"
     return "$verdict"
 }
 
-payload_field() {
-    local payload=$1 wanted=$2 name value
-    while IFS='=' read -r name value; do
-        [[ "$name" == "$wanted" ]] && { printf '%s' "$value"; return 0; }
-    done < "$payload"
-    return 1
+# GNU and BSD date parse a timestamp differently; jq reads Keygen's UTC ones the
+# same way on the box and on the machine that runs the tests.
+verdict_of() {
+    local dataset=$1 fingerprint=$2
+    jq -r --arg fingerprint "$fingerprint" --argjson tolerance "$CLOCK_TOLERANCE_SECONDS" '
+        def epoch: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
+        ([.included[]? | select(.type == "licenses")][0].attributes // {}) as $license
+        | if .data.attributes.fingerprint != $fingerprint then "elsewhere"
+          elif now + $tolerance < (.meta.issued | epoch) then "clock"
+          elif ($license.status // "") == "SUSPENDED" or ($license.status // "") == "BANNED" then "suspended"
+          elif ($license.expiry // null) != null and ($license.expiry | epoch) < now then "ended"
+          elif (.meta.expiry | epoch) < now then "file_ended"
+          else "valid" end' "$dataset"
 }
 
-valid_payload() {
-    local source=$1 payload=$2 license
+license_value() {
+    local dataset=$1 name=$2
+    jq -r --arg name "$name" '
+        ([.included[]? | select(.type == "licenses")][0].attributes // {}) as $license
+        | ($license.metadata // {}) as $metadata
+        | {customer: ($metadata.customer // $license.name // ""),
+           expires: (($license.expiry // "") | .[0:10]),
+           registry: ($metadata.registry // ""),
+           registry_user: ($metadata.registryUser // ""),
+           registry_token: ($metadata.registryToken // "")}[$name] // ""' "$dataset"
+}
+
+valid_dataset() {
+    local machine_file=$1 dataset=$2 fingerprint issued
     command -v openssl >/dev/null 2>&1 || fail "openssl is required"
-    license=$(read_license "$source")
-    verified_payload "$license" "$payload" \
-        || fail "This license key was not issued by UnderstandTech, or was altered since"
+    command -v jq >/dev/null 2>&1 || fail "jq is required"
+    [[ -f "$machine_file" ]] || fail "No such license file: ${machine_file}"
+    [[ -r "$machine_file" ]] || fail "${machine_file} is readable by root only: run it with sudo"
+    [[ "$(head -c 4 "$machine_file")" != UT1. ]] || fail "$OLD_FORMAT"
+    needs_openssl_3
+    verified_dataset "$machine_file" "$dataset" \
+        || fail "This license file was not issued by UnderstandTech, or was altered since"
+    fingerprint=$(machine_fingerprint)
+    case "$(verdict_of "$dataset" "$fingerprint")" in
+        valid) ;;
+        elsewhere)
+            fail "This license file was made for another machine, and works on that one only; ask UnderstandTech for this machine's: ${CONTACT}" ;;
+        clock)
+            issued=$(jq -r '.meta.issued | .[0:10]' "$dataset")
+            fail "This machine's clock says $(date -u +%F), before the day its license file was issued (${issued}): set the clock, then try again" ;;
+        suspended)
+            renewable "The license of $(license_value "$dataset" customer) is suspended; ask UnderstandTech why: ${CONTACT}. Once it is restored, run ut-install with network: it fetches a new license file" ;;
+        ended)
+            renewable "The license of $(license_value "$dataset" customer) ended on $(license_value "$dataset" expires); ask UnderstandTech to renew it: ${CONTACT}. Once it is renewed, run ut-install with network: it fetches a new license file" ;;
+        file_ended)
+            renewable "This machine's license file ended on $(jq -r '.meta.expiry | .[0:10]' "$dataset"): run ut-install with network, it fetches a new one" ;;
+        *)
+            fail "This license file cannot be read" ;;
+    esac
 }
 
 check() {
-    local payload customer expires
-    payload=$(mktemp)
-    trap "rm -f '$payload'" EXIT
-    valid_payload "$1" "$payload"
-    customer=$(payload_field "$payload" customer || true)
-    expires=$(payload_field "$payload" expires || true)
-    [[ -n "$customer" && "$expires" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] \
-        || fail "This license key is signed but incomplete; ask UnderstandTech for a new one"
-    [[ "$expires" < "$(date -u +%F)" ]] \
-        && fail "The license of ${customer} ended on ${expires}; ask UnderstandTech for a new one"
-    printf '%s[ ok ]%s Licensed to %s until %s\n' "$GREEN" "$NC" "$customer" "$expires"
+    local machine_file=$1 dataset expires
+    dataset=$(mktemp) || fail "Cannot write a temporary file"
+    trap "rm -f '$dataset'" EXIT
+    valid_dataset "$machine_file" "$dataset"
+    expires=$(license_value "$dataset" expires)
+    printf '%s[ ok ]%s Licensed to %s until %s\n' "$GREEN" "$NC" "$(license_value "$dataset" customer)" "${expires:-no end date}"
 }
 
 field() {
-    local name=$1 payload value
-    [[ "$name" =~ ^(customer|expires|rights|registry|registry_user|registry_token)$ ]] \
+    local name=$1 dataset value
+    [[ "$name" =~ ^(customer|expires|registry|registry_user|registry_token)$ ]] \
         || fail "No such field: ${name}"
-    payload=$(mktemp)
-    trap "rm -f '$payload'" EXIT
-    valid_payload "$2" "$payload"
-    value=$(payload_field "$payload" "$name" || true)
-    [[ -n "$value" ]] || fail "This license key has no ${name}"
+    dataset=$(mktemp) || fail "Cannot write a temporary file"
+    trap "rm -f '$dataset'" EXIT
+    valid_dataset "$2" "$dataset"
+    value=$(license_value "$dataset" "$name")
+    [[ -n "$value" ]] || fail "This license has no ${name}"
     printf '%s\n' "$value"
 }
 
@@ -125,6 +276,7 @@ main() {
     case "${1:-}" in
         ""|-h|--help)  usage; [[ -z "${1:-}" ]] && exit 1 || exit 0 ;;
         --fingerprint) print_fingerprint ;;
+        activate)      [[ -n "${2:-}" && -n "${3:-}" ]] || { usage; exit 1; }; activate "$2" "$3" ;;
         check)         [[ -n "${2:-}" ]] || { usage; exit 1; }; check "$2" ;;
         field)         [[ -n "${2:-}" && -n "${3:-}" ]] || { usage; exit 1; }; field "$2" "$3" ;;
         *)             usage; exit 1 ;;

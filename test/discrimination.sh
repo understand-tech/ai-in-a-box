@@ -762,21 +762,77 @@ if [[ -x "$REPO_ROOT/ut-get" ]]; then
 fi
 
 if [[ -x "$REPO_ROOT/ut-license" ]]; then
-    capability_discriminates "a license check that refuses what we issued" \
-        "a license key we issued is accepted" \
-        "sed -i.bak 's|-signature \"\$signature\"|-signature /dev/null|' ut-license"
+    capability_discriminates "a suspended license, still taken" \
+        "a license that ended or is suspended is refused" \
+        "sed -i.bak 's#elif (\$license.status // \"\") == \"SUSPENDED\" or (\$license.status // \"\") == \"BANNED\" then \"suspended\"#elif false then \"suspended\"#' ut-license"
 
-    capability_discriminates "a license check that accepts any key that parses" \
-        "is not a key at all is refused" \
-        "sed -i.bak 's|&& openssl dgst -sha256 -verify .*; then$|; then|' ut-license"
+    capability_discriminates "a key of the old format sent to Keygen as if it were one" \
+        "says why it is not activated" \
+        "sed -i.bak 's#\[\[ \"\$key\" != UT1.\* \]\] || fail#true || fail#' ut-license"
+
+    capability_discriminates "a key of the old format read as a forged license file" \
+        "checked as a license file, says what to ask for" \
+        "sed -i.bak '/head -c 4 \"\$machine_file\"/d' ut-license"
+
+    capability_discriminates "a key that passes its settings to curl" \
+        "a key that would carry settings to curl is refused" \
+        "sed -i.bak 's#\[\[ \"\$key\" =~ .* \]\] || fail#true || fail#' ut-license"
+
+    capability_discriminates "a license file written for anyone to read" \
+        "activating binds the license to this machine" \
+        "sed -i.bak 's#install -m 600 \"\$staged\"#install -m 644 \"\$staged\"#' ut-license"
+
+    capability_discriminates "an activation and a check that compute two fingerprints" \
+        "activating binds the license to this machine" \
+        "sed -i.bak 's#^    fingerprint=\$(machine_fingerprint)\$#    fingerprint=\$(machine_fingerprint)x#' ut-license"
+
+    capability_discriminates "a file that only needs renewing, refused like a forged one" \
+        "only needs renewing is told apart from a refused one" \
+        "sed -i.bak 's#^renewable() { warn \"\$\*\"; exit 2; }#renewable() { warn \"\$*\"; exit 1; }#' ut-license"
+
+    capability_discriminates "a license check that refuses what Keygen signed" \
+        "a license file Keygen signed for this machine is accepted" \
+        "sed -i.bak 's|-sigfile \"\$work/signature\"|-sigfile /dev/null|' ut-license"
+
+    capability_discriminates "a license check that accepts any file that parses" \
+        "is not a license file at all is refused" \
+        "sed -i.bak '/openssl pkeyutl -verify/d' ut-license"
+
+    capability_discriminates "a license file that works on any machine" \
+        "a license file made for another machine is refused" \
+        "sed -i.bak 's#if .data.attributes.fingerprint != \$fingerprint then \"elsewhere\"#if false then \"elsewhere\"#' ut-license"
+
+    capability_discriminates "a clock behind the file, taken for a good one" \
+        "a clock set before the file was issued is named" \
+        "sed -i.bak 's#elif now + \$tolerance < (.meta.issued | epoch) then \"clock\"#elif false then \"clock\"#' ut-license"
+
+    capability_discriminates "a license that ended, still taken" \
+        "a license that ended or is suspended is refused" \
+        "sed -i.bak 's#and (\$license.expiry | epoch) < now then \"ended\"#and false then \"ended\"#' ut-license"
+
+    capability_discriminates "a license file that never ends" \
+        "a license file past its own end says how to get a new one" \
+        "sed -i.bak 's#elif (.meta.expiry | epoch) < now then \"file_ended\"#elif false then \"file_ended\"#' ut-license"
+
+    capability_discriminates "an activation that does not say the license is bound elsewhere" \
+        "says why it is not activated" \
+        "sed -i.bak 's#FINGERPRINT_SCOPE_MISMATCH|TOO_MANY_MACHINES|MACHINE_LIMIT_EXCEEDED|FINGERPRINT_TAKEN)#NEVER)#' ut-license"
+
+    capability_discriminates "a license key handed to curl on its command line" \
+        "nor reach a command line" \
+        "sed -i.bak 's#\"\${KEYGEN_API}\${path}\"#\"\${KEYGEN_API}\${path}?k=\${key}\"#' ut-license"
+
+    capability_discriminates "a license check that shows what the license carries" \
+        "never come out, nor reach a command line" \
+        "sed -i.bak 's#^    valid_dataset \"\$machine_file\" \"\$dataset\"\$#&; cat \"\$dataset\" >\&2#' ut-license"
 
     capability_discriminates "a license that quietly defaults to an end date nobody chose" \
         "a license with no customer or no end date is never issued" \
         "sed -i.bak 's|^customer=\"\" expires=\"\"|customer=\"\" expires=\"2999-12-31\"|' packaging/issue-license.sh"
 
-    capability_discriminates "a shipped license key that is not the signing key" \
+    capability_discriminates "a shipped license key that is not the one Keygen signs with" \
         "the key ut-license carries is the key licenses are signed with" \
-        "openssl ecparam -name prime256v1 -genkey -noout -out /tmp/other-\$\$.pem 2>/dev/null && openssl ec -in /tmp/other-\$\$.pem -pubout -out packaging/license.pub 2>/dev/null"
+        "openssl genpkey -algorithm ed25519 -out /tmp/other-\$\$.pem 2>/dev/null && openssl pkey -in /tmp/other-\$\$.pem -pubout -out packaging/license.pub 2>/dev/null"
 
     capability_discriminates "a boot that no longer says the license ended" \
         "at boot, a license that has ended is said" \
@@ -788,7 +844,7 @@ if [[ -x "$REPO_ROOT/ut-license" ]]; then
 
     capability_discriminates "a boot line that fails when the license ended" \
         "at boot, a license that has ended is said" \
-        "sed -i.bak 's|/etc/understandtech/license; exit 0|/etc/understandtech/license|' setup-autostart.sh"
+        "sed -i.bak 's|/etc/understandtech/machine.lic; exit 0|/etc/understandtech/machine.lic|' setup-autostart.sh"
 
     capability_discriminates "a status that never mentions the license" \
         "it says how the license stands" \
@@ -796,7 +852,7 @@ if [[ -x "$REPO_ROOT/ut-license" ]]; then
 
     capability_discriminates "a status that calls an ended license fine" \
         "it says how the license stands" \
-        "sed -i.bak 's|^        log_warn \"\${said#\*\] } Updates|        log_info \"\${said#*] } Updates|' ut-status"
+        "sed -i.bak 's|log_warn \"\${line#|log_info \"\${line#|' ut-status"
 
     capability_discriminates "a token that can write is taken for one that reads" \
         "a read-only token that pulls the release and outlives it" \
@@ -808,7 +864,7 @@ if [[ -x "$REPO_ROOT/ut-license" ]]; then
 
     capability_discriminates "a token never tried against the release" \
         "a read-only token that pulls the release and outlives it" \
-        "sed -i.bak '/^check_the_token_pulls_the_release\$/d' packaging/issue-license.sh"
+        "sed -i.bak '/^    check_the_token_pulls_the_release\$/d' packaging/issue-license.sh"
 
     capability_discriminates "a ledger that keeps the token" \
         "every license issued is written down, and never its token" \
@@ -825,10 +881,6 @@ if [[ -x "$REPO_ROOT/ut-license" ]]; then
     capability_discriminates "a license for another registry issued without trying it" \
         "a license for another registry names it, and is checked against it" \
         "sed -i.bak '/^    check_the_account_pulls_the_release_from /d' packaging/issue-license.sh"
-
-    capability_discriminates "a license check that shows what the key carries" \
-        "checking a license never prints the registry token it carries" \
-        "sed -i.bak 's|^    customer=\$(payload_field|    cat \"\$payload\" >\&2; customer=\$(payload_field|' ut-license"
 fi
 
 if [[ -d "$REPO_ROOT/.github/workflows" ]]; then
@@ -915,23 +967,35 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
 
     install_walk_discriminates "a login with some other token than the license's" \
         "logs in with the token it carries" \
-        "sed -i.bak 's|^    REGISTRY_TOKEN=\$(\"\$tool\" field registry_token \"\$key\")|    REGISTRY_TOKEN=some-other-token|' ut-install"
+        "sed -i.bak 's|^    REGISTRY_TOKEN=\$(\"\$tool\" field registry_token \"\$machine\" 2>/dev/null)|    REGISTRY_TOKEN=some-other-token|' ut-install"
 
-    install_walk_discriminates "a license read without being checked" \
-        "a license that has ended stops the install" \
-        "sed -i.bak 's|^    if ! \"\$tool\" check \"\$key\"; then|    if false; then|' ut-install"
+    install_walk_discriminates "a license file read without being checked" \
+        "an altered license file stops the install before any request" \
+        "sed -i.bak 's|^        \"\$tool\" check \"\$machine\" \|\| checked=\$?|        true|' ut-install"
+
+    install_walk_discriminates "a license file replaced from Keygen rather than checked" \
+        "an altered license file stops the install before any request" \
+        "sed -i.bak 's|^    if \[\[ -s \"\$MACHINE_FILE\" \]\] \&\& stored_license_is \"\$key\"; then|    if false; then|' ut-install"
+
+    install_walk_discriminates "a license file that ended, refused instead of renewed" \
+        "a license file that has ended is renewed from Keygen" \
+        "sed -i.bak 's|(( checked == 0 \|\| checked == 2 ))|(( checked == 0 ))|' ut-install"
 
     install_walk_discriminates "a license that is not kept for the next update" \
-        "the license is kept for updates, readable by root alone" \
+        "kept for updates, readable by root alone" \
         "sed -i.bak 's|^    install -m 600 \"\$key\" \"\$LICENSE_STORE\"|    :|' ut-install"
+
+    install_walk_discriminates "a license file that is not kept for the next update" \
+        "kept for updates, readable by root alone" \
+        "sed -i.bak 's|^    install -m 600 \"\$machine\" \"\$MACHINE_FILE\"|    :|' ut-install"
 
     install_walk_discriminates "a registry login with the images already here" \
         "a license needs no registry login" \
         "sed -i.bak 's|^    if ! \$DO_PULL; then\$|    if false; then|' ut-install"
 
     install_walk_discriminates "the carried token written to the log" \
-        "the token a license carries never reaches the output" \
-        "sed -i.bak 's|^    REGISTRY_USER=\$(\"\$tool\" field registry_user \"\$key\")|&; log_info \"\$(\"\$tool\" field registry_token \"\$key\")\"|' ut-install"
+        "never reach the output" \
+        "sed -i.bak 's|^    REGISTRY_USER=\${licensed_user:-\$REGISTRY_USER}|&; log_info \"\$REGISTRY_TOKEN\"|' ut-install"
 
     install_walk_discriminates "a token alone accepted without a word" \
         "a registry token alone still installs, and says a license will be needed" \

@@ -154,7 +154,7 @@ Priority: optional
 Architecture: all
 Maintainer: UnderstandTech <contact@understand.tech>
 Installed-Size: $size
-Depends: openssl
+Depends: openssl (>= 3.0), jq, curl
 Recommends: docker-ce | docker.io
 Homepage: https://github.com/understand-tech/ai-in-a-box
 Description: On-premise AI appliance

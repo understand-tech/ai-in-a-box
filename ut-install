@@ -41,6 +41,7 @@ REGISTRY_TOKEN="${UT_REGISTRY_TOKEN:-}"
 LICENSE_FILE=""
 LICENSE="${UT_LICENSE:-}"
 LICENSE_STORE="/etc/understandtech/license"
+MACHINE_FILE="/etc/understandtech/machine.lic"
 HEALTH_TIMEOUT="${UT_HEALTH_TIMEOUT:-3600}"
 REPORTING="${UT_REPORTING:-}"
 REPORTING_RECEIVER=""
@@ -167,8 +168,12 @@ Environment
   UT_REPORTING         yes or no, as --reporting.
 
 The license key is read from UT_LICENSE, from --license-file, from the key stored
-by an earlier install, or from a hidden prompt. It is checked before anything
-else, kept in /etc/understandtech/license, and the registry token it carries is
+by an earlier install, or from a hidden prompt, and kept in
+/etc/understandtech/license. On its first install, a machine activates the
+license with Keygen, which needs the network once, and keeps the license file
+Keygen signs for this machine in /etc/understandtech/machine.lic. Every later run
+checks that file first, with no network: an altered file, or one made for
+another machine, stops the run there. The registry token the license carries is
 never passed on a command line nor written to the log. A license that has ended
 stops an install or an update, never a platform that is running.
 EOF
@@ -654,31 +659,56 @@ ask_for_license() {
     [[ -n "$LICENSE" ]] || die "No license key supplied."
 }
 
+stored_license_is() {
+    [[ -s "$LICENSE_STORE" && "$(tr -d ' \t\r\n' < "$1")" == "$(tr -d ' \t\r\n' < "$LICENSE_STORE")" ]]
+}
+
+refuse_the_license() {
+    rm -f "$@"
+    die "The license was refused. Nothing was changed on this machine."
+}
+
+# The license file this machine already holds is checked before anything goes
+# on the network: an altered one, or one made for another machine, stops the
+# install there. Only a genuine file that has ended, or whose license has ended
+# or is suspended, is renewed from Keygen, which then says whether it may be.
 take_license() {
-    local tool key licensed_registry
+    local tool key machine checked licensed_user licensed_registry
     tool=$(license_tool)
     key=$(mktemp)
-    chmod 600 "$key"
+    machine=$(mktemp)
+    chmod 600 "$key" "$machine"
     if [[ -n "$LICENSE" ]]; then
         printf '%s\n' "$LICENSE" > "$key"
     else
-        [[ -r "$LICENSE_FILE" ]] || { rm -f "$key"; die "License file not readable: ${LICENSE_FILE}"; }
+        [[ -r "$LICENSE_FILE" ]] || { rm -f "$key" "$machine"; die "License file not readable: ${LICENSE_FILE}"; }
         cat "$LICENSE_FILE" > "$key"
     fi
-    if ! "$tool" check "$key"; then
-        rm -f "$key"
-        die "The license key was refused. Nothing was changed on this machine."
+    checked=1
+    if [[ -s "$MACHINE_FILE" ]] && stored_license_is "$key"; then
+        cat "$MACHINE_FILE" > "$machine"
+        checked=0
+        "$tool" check "$machine" || checked=$?
+        (( checked == 0 || checked == 2 )) || refuse_the_license "$key" "$machine"
     fi
-    REGISTRY_USER=$("$tool" field registry_user "$key")
-    REGISTRY_TOKEN=$("$tool" field registry_token "$key")
-    licensed_registry=$("$tool" field registry "$key" 2>/dev/null || true)
+    if (( checked != 0 )); then
+        log_info "Asking Keygen for this machine's license file"
+        "$tool" activate "$key" "$machine" || refuse_the_license "$key" "$machine"
+        "$tool" check "$machine" || refuse_the_license "$key" "$machine"
+    fi
+    REGISTRY_TOKEN=$("$tool" field registry_token "$machine" 2>/dev/null) \
+        || { rm -f "$key" "$machine"; die "This license carries no registry token to pull the images with. Ask UnderstandTech for one."; }
+    licensed_user=$("$tool" field registry_user "$machine" 2>/dev/null || true)
+    REGISTRY_USER=${licensed_user:-$REGISTRY_USER}
+    licensed_registry=$("$tool" field registry "$machine" 2>/dev/null || true)
     if [[ -n "$licensed_registry" && -z "${UT_REGISTRY:-}" ]]; then
         REGISTRY=$licensed_registry
         log_info "Images come from ${REGISTRY}, the registry this license names"
     fi
     [[ -d "$(dirname "$LICENSE_STORE")" ]] || mkdir -p -m 750 "$(dirname "$LICENSE_STORE")"
     install -m 600 "$key" "$LICENSE_STORE"
-    rm -f "$key"
+    install -m 600 "$machine" "$MACHINE_FILE"
+    rm -f "$key" "$machine"
 }
 
 read_credentials() {
@@ -734,7 +764,7 @@ clone_without_persisting_token() {
 
 assert_token_absent_from_git_config() {
     [[ -n "$REGISTRY_TOKEN" ]] || return 0
-    grep -q "$REGISTRY_TOKEN" "$INSTALL_DIR/.git/config" 2>/dev/null \
+    grep -qF -f <(printf '%s\n' "$REGISTRY_TOKEN") "$INSTALL_DIR/.git/config" 2>/dev/null \
         && die "The token leaked into .git/config — refusing to continue."
     return 0
 }
