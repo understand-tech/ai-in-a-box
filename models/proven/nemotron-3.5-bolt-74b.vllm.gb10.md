@@ -19,4 +19,10 @@ histogram has no bound between 1.0 and 2.5 s.
 Through the inference surface: 401 without the key; with it, the platform's API and llm services
 on the other box got an answer ("Paris"), trusting the node's root.
 
+Restarted on `2026.10.0-rc9` the same day, it failed to start six times: with no
+`--gpu-memory-utilization`, vLLM asks for 0.92 of the GPU, 111.95 GiB, and 111.2 to 111.9 GiB were
+free. With 0.85 it started at the first attempt, healthy after about 7 minutes, with 71.9 GiB of KV
+cache, 3.7 million tokens, 14 requests at the full 262,144-token context. The first-token figures
+above were taken at 0.92 and not measured again.
+
 Not measured here: tool calls, a restart with the network cut, a heavier load.
