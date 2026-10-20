@@ -17,13 +17,14 @@ cleanup() {
 trap cleanup EXIT
 
 if [[ -t 1 ]]; then
-    GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; DIM=$'\033[2m'; BOLD=$'\033[1m'; NC=$'\033[0m'
+    GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; YELLOW=$'\033[1;33m'; DIM=$'\033[2m'; BOLD=$'\033[1m'; NC=$'\033[0m'
 else
-    GREEN=""; RED=""; DIM=""; BOLD=""; NC=""
+    GREEN=""; RED=""; YELLOW=""; DIM=""; BOLD=""; NC=""
 fi
 
 PASSED=0
 FAILED=0
+NOT_RUN=()
 FAILURES=()
 
 group() { printf '\n%s%s%s\n' "$BOLD" "$1" "$NC"; }
@@ -44,6 +45,22 @@ capability() {
         FAILED=$((FAILED + 1))
         FAILURES+=("$description")
     fi
+}
+
+# A capability that cannot mean anything on this machine is named, never
+# counted as verified: the summary lists it apart.
+not_run_here() {
+    local description=$1 reason=$2
+    [[ -n "${CAPABILITY_FILTER:-}" && "$description" != *"$CAPABILITY_FILTER"* ]] && return 0
+    printf '  %s–%s %s %s(not run here: %s)%s\n' "$YELLOW" "$NC" "$description" "$DIM" "$reason" "$NC"
+    NOT_RUN+=("$description")
+}
+
+docker_runs_arm64_here() {
+    case "$(docker info --format '{{.Architecture}}' 2>/dev/null)" in
+        aarch64|arm64) return 0 ;;
+    esac
+    return 1
 }
 
 # A .env with only what compose cannot render without: image references,
@@ -212,6 +229,77 @@ PROBE
     grep -qF 'https://inference.example.com:8444' <<< "$report" && ! grep -q 'llms\.compute' <<< "$report" && return 0
     grep -E 'compute node|llms|8444|ERROR' <<< "$report" | head -5
     return 1
+}
+
+# A folder written the way ut-get --prepare writes it, then loaded the way a box
+# with no network loads it, ut-install's own functions on both sides. The two
+# images are first removed, so whatever starts afterwards came from the folder.
+folder_load_report() {
+    local probe="$WORK_DIR/folder-probe" tamper=${1:-}
+    rm -rf "$probe"; mkdir -p "$probe/folder" "$probe/install" "$probe/auth"
+    printf 'BUSYBOX_IMAGE="%s"\nALPINE_INDEX_IMAGE="%s"\nUT_RELEASE_VERSION="0.0.0"\n' "$BUSYBOX_IMAGE" "$ALPINE_INDEX_IMAGE" > "$probe/install/release.env"
+    : > "$probe/install/.env"; : > "$probe/install/local.env"
+    printf '{"auths":{}}\n' > "$probe/auth/auth.json"
+    (
+        set +u; source "$REPO_ROOT/ut-get"
+        printf '%s\n' "${BUSYBOX_IMAGE%%:*}@${BUSYBOX_IMAGE#*@}" "${ALPINE_INDEX_IMAGE%%:*}@${ALPINE_INDEX_IMAGE#*@}" \
+            | copy_the_images_into "$probe/folder" "$probe/auth"
+        copy_the_tools_into "$probe/folder" "$probe/auth"
+    ) >/dev/null 2>&1 || { echo "PREPARE FAILED"; return 0; }
+    [[ -n "$tamper" ]] && eval "$tamper"
+    docker rmi -f "$BUSYBOX_IMAGE" "$ALPINE_INDEX_IMAGE" >/dev/null 2>&1
+    docker image ls --digests --format '{{.Repository}}@{{.Digest}}' \
+        | grep -F -e "${BUSYBOX_IMAGE%%:*}@${BUSYBOX_IMAGE#*@}" -e "${ALPINE_INDEX_IMAGE%%:*}@${ALPINE_INDEX_IMAGE#*@}" | sed 's/^/STILL THERE: /'
+    (
+        set +u; UT_INSTALL_DIR="$probe/install" source "$REPO_ROOT/ut-install" >/dev/null 2>&1
+        set +eE; trap - ERR
+        INSTALL_DIR="$probe/install"; IMAGES_FROM="$probe/folder"; DO_PULL=false
+        die_on_a_folder_that_misses_an_image && step_images_from_a_folder
+    ) 2>&1
+    echo "--- local.env"; cat "$probe/install/local.env"
+    echo "--- run"
+    local ref
+    for ref in $(sed -n 's/^[A-Z_]*_IMAGE="\(.*\)"$/\1/p' "$probe/install/local.env"); do
+        docker run --rm --pull never --network none "$ref" true && echo "$ref: ran"
+    done
+}
+
+images_from_a_folder_start_under_their_digest() {
+    local report
+    report=$(folder_load_report)
+    grep -qE '^BUSYBOX_IMAGE="127\.0\.0\.1:15000/prometheus/busybox@sha256:[0-9a-f]{64}"$' <<< "$report" \
+        && grep -qE '^ALPINE_INDEX_IMAGE="127\.0\.0\.1:15000/linuxcontainers/alpine@sha256:[0-9a-f]{64}"$' <<< "$report" \
+        && [[ $(grep -c ': ran$' <<< "$report") -eq 2 ]] \
+        && ! grep -q 'STILL THERE' <<< "$report" && return 0
+    echo "$report" | tail -15
+    return 1
+}
+
+a_folder_image_the_release_does_not_name_is_refused() {
+    local report
+    report=$(folder_load_report 'sed -i.bak "s/linux/linux /" "$probe"/folder/images/ghcr.io_linuxcontainers_alpine/*/named.json; rm -f "$probe"/folder/images/*/*/named.json.bak')
+    grep -q 'missing or not the one the release names' <<< "$report" \
+        && ! grep -q 'IMAGE="127.0.0.1:15000' <<< "$report" && return 0
+    echo "$report" | tail -8
+    return 1
+}
+
+a_tool_the_release_does_not_name_is_refused() {
+    local report
+    report=$(folder_load_report 'docker pull -q "$BUSYBOX_IMAGE" >/dev/null && docker tag "$BUSYBOX_IMAGE" ghcr.io/distribution/distribution:3.0.0 && docker save -o "$probe/folder/tools/distribution.tar" ghcr.io/distribution/distribution:3.0.0 && docker rmi ghcr.io/distribution/distribution:3.0.0 >/dev/null')
+    grep -q 'is not the ghcr.io/distribution/distribution:3.0.0 this release loads images with' <<< "$report" \
+        && ! grep -q 'IMAGE="127.0.0.1:15000' <<< "$report" && return 0
+    echo "$report" | tail -8
+    return 1
+}
+
+the_folder_tools_are_those_ut_get_carries() {
+    local key installer getter
+    for key in FOLDER_REGISTRY_TOOL FOLDER_SKOPEO_TOOL; do
+        installer=$(sed -n "s/^${key}=\"\(.*\)\"$/\1/p" "$REPO_ROOT/ut-install")
+        getter=$(sed -n "s/^${key}=\"\(.*\)\"$/\1/p" "$REPO_ROOT/ut-get")
+        [[ -n "$installer" && "$installer" == "$getter" ]] || { echo "${key}: ut-install '${installer}', ut-get '${getter}'"; return 1; }
+    done
 }
 
 moving_off_local_withdraws_the_publisher() {
@@ -2498,6 +2586,23 @@ if [[ -f "$REPO_ROOT/setup-autostart.sh" ]]; then
         moving_off_local_withdraws_the_publisher
 fi
 
+if grep -q 'step_images_from_a_folder' "$REPO_ROOT/ut-install"; then
+    group "A box with no network"
+    if docker_runs_arm64_here; then
+        capability "images from a prepared folder start under the digest the release names, offline" \
+            images_from_a_folder_start_under_their_digest
+    else
+        not_run_here "images from a prepared folder start under the digest the release names, offline" \
+            "the folder's registry is arm64, as the box is"
+    fi
+    capability "a folder holding an image the release does not name is refused" \
+        a_folder_image_the_release_does_not_name_is_refused
+    capability "a folder whose tool is not the one the release names is refused" \
+        a_tool_the_release_does_not_name_is_refused
+    capability "ut-get prepares with the tools ut-install loads with" \
+        the_folder_tools_are_those_ut_get_carries
+fi
+
 if [[ -x "$REPO_ROOT/ut-install" ]]; then
     capability "an address given up front is taken as it is" \
         an_address_given_up_front_is_taken_as_it_is
@@ -3267,6 +3372,7 @@ capability "a second install is added after the first, never over it" \
     a_second_install_is_added_after_the_first
 
 printf '\n%s%d verified%s' "$GREEN" "$PASSED" "$NC"
+(( ${#NOT_RUN[@]} )) && printf ', %s%d not run here%s' "$YELLOW" "${#NOT_RUN[@]}" "$NC"
 if (( FAILED )); then
     printf ', %s%d failing%s\n' "$RED" "$FAILED" "$NC"
     printf '\nNot working:\n'
