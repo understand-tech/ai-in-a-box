@@ -827,8 +827,8 @@ if [[ -x "$REPO_ROOT/ut-license" ]]; then
         "sed -i.bak 's#^    valid_dataset \"\$machine_file\" \"\$dataset\"\$#&; cat \"\$dataset\" >\&2#' ut-license"
 
     capability_discriminates "a license that quietly defaults to an end date nobody chose" \
-        "a license with no customer or no end date is never issued" \
-        "sed -i.bak 's|^customer=\"\" expires=\"\"|customer=\"\" expires=\"2999-12-31\"|' packaging/issue-license.sh"
+        "no machine or no end date is never issued" \
+        "sed -i.bak 's|^customer=\"\" machine=\"\" expires=\"\"|customer=\"\" machine=\"\" expires=\"2999-12-31\"|' packaging/issue-license.sh"
 
     capability_discriminates "a shipped license key that is not the one Keygen signs with" \
         "the key ut-license carries is the key licenses are signed with" \
@@ -853,6 +853,26 @@ if [[ -x "$REPO_ROOT/ut-license" ]]; then
     capability_discriminates "a status that calls an ended license fine" \
         "it says how the license stands" \
         "sed -i.bak 's|log_warn \"\${line#|log_info \"\${line#|' ut-status"
+
+    capability_discriminates "a license issued without a machine" \
+        "no machine or no end date is never issued" \
+        "sed -i.bak 's#\[\[ \"\$machine\" =~ ^\[a-z0-9\]\[a-z0-9-\]\*\$ \]\]#true#' packaging/issue-license.sh"
+
+    capability_discriminates "a license issued under whatever policy comes first" \
+        "a license is issued in Keygen, under the policy" \
+        "sed -i.bak 's#select(.attributes.name == \$name)#select(true)#' packaging/issue-license.sh"
+
+    capability_discriminates "a license issued and its key printed nowhere" \
+        "a license is issued in Keygen, under the policy" \
+        "sed -i.bak 's#^jq -r .key <<< \"\$issued\"\$#:#' packaging/issue-license.sh"
+
+    capability_discriminates "a metadata key ut-license does not read" \
+        "the license issued carries what ut-license reads" \
+        "sed -i.bak 's#registryToken: \.#registry_token: .#' packaging/issue-license.sh"
+
+    capability_discriminates "the Keygen token handed to curl on its command line" \
+        "the issuer puts no token on a command line" \
+        "sed -i.bak 's#\"\${KEYGEN_API}\${path}\"#\"\${KEYGEN_API}\${path}?t=\${keygen_token}\"#' packaging/issue-license.sh"
 
     capability_discriminates "a token that can write is taken for one that reads" \
         "a read-only token that pulls the release and outlives it" \
