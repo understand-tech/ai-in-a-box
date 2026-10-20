@@ -7,69 +7,78 @@ RELEASE_ENV="${RELEASE_ENV:-$SCRIPT_DIR/../release.env}"
 GITHUB_API="${UT_GITHUB_API:-https://api.github.com}"
 GHCR="${UT_GHCR:-https://ghcr.io}"
 REGISTRY_URL="${UT_REGISTRY_URL:-}"
+KEYGEN_API="${UT_KEYGEN_API:-https://api.keygen.sh/v1/accounts/cdfe8998-3b6e-4f86-8f9f-c51a7cb642e0}"
 
 usage() {
     cat <<'EOF'
-issue-license.sh — issues the license key a customer types into ut-install.
+issue-license.sh — issues, in Keygen, the license a customer gives ut-install.
 
-  ./packaging/issue-license.sh --customer "Acme" --expires 2027-10-31 \
-      --token-file acme-registry.token --signing-key license-signing.pem
+  ./packaging/issue-license.sh --customer acme --machine acme-gb10 --expires 2027-10-31 \
+      --token-file acme-registry.token --keygen-token-file keygen-issuer.token
 
-  --customer NAME        who the license is issued to
-  --expires YYYY-MM-DD   last day it is valid, in UTC
-  --token-file PATH      the customer's own registry token
-  --signing-key PATH     the private half of the license key
-  --registry HOST        registry the customer pulls from (default ghcr.io)
-  --registry-user NAME   registry account the token belongs to (default dgx-access)
-  --rights LIST          what the license covers (default platform)
-  --ledger PATH          where issued licenses are written down (default: beside
-                         the signing key, licenses-issued.tsv)
+  --customer NAME          the customer's short name in the portal, such as acme,
+                           or understand-tech for our own machines
+  --machine NAME           the name of the machine in the catalog
+  --expires YYYY-MM-DD     last day it is valid, in UTC
+  --token-file PATH        the customer's own registry token
+  --keygen-token-file PATH a Keygen token that can create the product's licenses
+  --policy NAME            the Keygen policy (default "AI in a Box, one machine, one year")
+  --registry HOST          registry the customer pulls from (default ghcr.io)
+  --registry-user NAME     registry account the token belongs to (default dgx-access)
+  --ledger PATH            where issued licenses are written down (default: beside
+                           the Keygen token, licenses-issued.tsv)
 
-Before signing, it asks GitHub about the token, and refuses one that carries more
+Before issuing, it asks GitHub about the token, and refuses one that carries more
 than read:packages, never expires, ends before the license, or cannot pull every
 image of release.env. For any other registry, the account has to pull every image
 of release.env from it, ours and the third-party ones alike, under the names
-ut-install will ask for. It then writes the license down in the ledger — customer,
-dates, and the token's fingerprint, never the token — and prints the key, one
-line, on stdout. The signing key never leaves the machine that issues licenses:
-it is not in this repository, and not in CI.
+ut-install will ask for. It then creates the license in Keygen, with the customer,
+the machine and the registry access in its metadata, writes it down in the ledger
+— customer, machine, dates, Keygen's id and the token's fingerprint, never the
+token — and prints the license key, one line, on stdout.
 EOF
 }
 
 fail() { printf '[fail] %s\n' "$*" >&2; exit 1; }
 
-customer="" expires="" token_file="" signing_key="" registry="ghcr.io" registry_user="dgx-access" rights="platform" ledger=""
+customer="" machine="" expires="" token_file="" keygen_token_file="" policy_name="AI in a Box, one machine, one year"
+registry="ghcr.io" registry_user="dgx-access" ledger=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --customer)      customer=${2:-};      shift 2 ;;
-        --expires)       expires=${2:-};       shift 2 ;;
-        --token-file)    token_file=${2:-};    shift 2 ;;
-        --signing-key)   signing_key=${2:-};   shift 2 ;;
-        --registry)      registry=${2:-};      shift 2 ;;
-        --registry-user) registry_user=${2:-}; shift 2 ;;
-        --rights)        rights=${2:-};        shift 2 ;;
-        --ledger)        ledger=${2:-};        shift 2 ;;
-        -h|--help)       usage; exit 0 ;;
-        *)               usage >&2; exit 1 ;;
+        --customer)          customer=${2:-};          shift 2 ;;
+        --machine)           machine=${2:-};           shift 2 ;;
+        --expires)           expires=${2:-};           shift 2 ;;
+        --token-file)        token_file=${2:-};        shift 2 ;;
+        --keygen-token-file) keygen_token_file=${2:-}; shift 2 ;;
+        --policy)            policy_name=${2:-};       shift 2 ;;
+        --registry)          registry=${2:-};          shift 2 ;;
+        --registry-user)     registry_user=${2:-};     shift 2 ;;
+        --ledger)            ledger=${2:-};            shift 2 ;;
+        -h|--help)           usage; exit 0 ;;
+        *)                   usage >&2; exit 1 ;;
     esac
 done
 
-[[ "$customer" =~ ^[A-Za-z0-9][A-Za-z0-9\ ._-]*$ ]] \
-    || fail "--customer is required: letters, digits, spaces, dots, dashes"
+[[ "$customer" =~ ^[a-z0-9][a-z0-9-]*$ ]] \
+    || fail "--customer is required: the customer's short name in the portal, lowercase letters, digits and dashes"
+[[ "$machine" =~ ^[a-z0-9][a-z0-9-]*$ ]] \
+    || fail "--machine is required: the machine's name in the catalog, lowercase letters, digits and dashes"
 [[ "$expires" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] \
     || fail "--expires is required, as YYYY-MM-DD: a license that never ends is not one we issue"
 [[ "$expires" > "$(date -u +%F)" ]] || fail "--expires ${expires} is not in the future"
 [[ "$registry" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]+)?$ ]] || fail "--registry is not a registry host"
 [[ "$registry_user" =~ ^[A-Za-z0-9._-]+$ ]] || fail "--registry-user is not a registry account name"
-[[ "$rights" =~ ^[a-z0-9,_-]+$ ]] || fail "--rights is a comma-separated list of lowercase names"
 [[ -s "$token_file" ]] || fail "--token-file is required and must not be empty"
-[[ -f "$signing_key" ]] || fail "--signing-key is required"
+[[ -s "$keygen_token_file" ]] || fail "--keygen-token-file is required and must not be empty"
+command -v jq >/dev/null 2>&1 || fail "jq is required"
 
 token=$(tr -d '\r\n' < "$token_file")
 [[ "$token" =~ ^[A-Za-z0-9_.-]+$ ]] || fail "the token in ${token_file} is not a single registry token"
+keygen_token=$(tr -d ' \t\r\n' < "$keygen_token_file")
+[[ "$keygen_token" =~ ^[A-Za-z0-9_.-]+$ ]] || fail "${keygen_token_file} does not hold a single Keygen token"
 [[ -f "$RELEASE_ENV" ]] || fail "No release.env at ${RELEASE_ENV} to check the token against"
-ledger=${ledger:-"$(dirname "$signing_key")/licenses-issued.tsv"}
+ledger=${ledger:-"$(dirname "$keygen_token_file")/licenses-issued.tsv"}
 
 # curl reads its credentials from stdin, so the token never sits on a command line.
 curl_with() {
@@ -150,12 +159,53 @@ check_the_account_pulls_the_release_from() {
     [[ -z "$unreadable" ]] || fail "the account cannot pull from ${registry}:${unreadable}"
 }
 
+# The Keygen token reaches curl through a file descriptor, leaving stdin to the body.
+keygen() {
+    local method=$1 path=$2
+    shift 2
+    curl -sS --max-time 15 -X "$method" "${KEYGEN_API}${path}" \
+        -K <(printf 'header = "Authorization: Bearer %s"\n' "$keygen_token") \
+        -H 'Accept: application/vnd.api+json' -H 'Content-Type: application/vnd.api+json' \
+        -H 'Keygen-Version: 1.8' "$@"
+}
+
+policy_id() {
+    keygen GET '/policies?limit=100' \
+        | jq -r --arg name "$policy_name" '[.data[]? | select(.attributes.name == $name) | .id][0] // empty'
+}
+
+# Keygen writes metadata keys in lower camel case, and ut-license reads them so.
+license_request() {
+    local policy=$1
+    printf '%s' "$token" | jq -Rc --arg customer "$customer" --arg machine "$machine" --arg expires "$expires" \
+        --arg registry "$registry" --arg user "$registry_user" --arg policy "$policy" '
+        {data: {type: "licenses",
+          attributes: {name: "\($customer) \($machine)", expiry: "\($expires)T23:59:59.000Z",
+            metadata: {customer: $customer, machine: $machine, registry: $registry,
+                       registryUser: $user, registryToken: .}},
+          relationships: {policy: {data: {type: "policies", id: $policy}}}}}'
+}
+
+issued=""
+create_the_license() {
+    local policy answer
+    policy=$(policy_id) || fail "Keygen could not be reached to find the policy; nothing was issued"
+    [[ -n "$policy" ]] || fail "Keygen has no policy named '${policy_name}'; nothing was issued"
+    answer=$(license_request "$policy" | keygen POST /licenses --data-binary @-) \
+        || fail "Keygen could not be reached to create the license; nothing was issued"
+    issued=$(jq -c '{id: .data.id, key: .data.attributes.key} | select(.id and .key)' <<< "$answer" 2>/dev/null) \
+        || issued=""
+    [[ -n "$issued" ]] \
+        || fail "Keygen refused the license: $(jq -r '[.errors[]? | .detail // .title] | join("; ")' <<< "$answer" 2>/dev/null)"
+}
+
 write_it_down() {
     local fingerprint
     fingerprint=$(printf '%s' "$token" | openssl dgst -sha256 -r | cut -c1-16)
-    [[ -s "$ledger" ]] || printf 'issued\tcustomer\texpires\trights\tregistry_user\ttoken_sha256\ttoken_ends\n' > "$ledger"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -u +%F)" "$customer" "$expires" "$rights" \
-        "$registry_user" "$fingerprint" "$token_ends" >> "$ledger"
+    [[ -s "$ledger" ]] \
+        || printf 'issued\tcustomer\tmachine\texpires\tkeygen_license\tregistry_user\ttoken_sha256\ttoken_ends\n' > "$ledger"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -u +%F)" "$customer" "$machine" "$expires" \
+        "$(jq -r .id <<< "$issued")" "$registry_user" "$fingerprint" "$token_ends" >> "$ledger"
 }
 
 if [[ "$registry" == "ghcr.io" ]]; then
@@ -166,14 +216,6 @@ else
     check_the_account_pulls_the_release_from "${REGISTRY_URL:-https://${registry}}"
 fi
 
-work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
-
-printf 'version=1\ncustomer=%s\nissued=%s\nexpires=%s\nrights=%s\nregistry=%s\nregistry_user=%s\nregistry_token=%s\n' \
-    "$customer" "$(date -u +%F)" "$expires" "$rights" "$registry" "$registry_user" "$token" > "$work/payload"
-openssl dgst -sha256 -sign "$signing_key" -out "$work/signature" "$work/payload" 2>/dev/null \
-    || fail "${signing_key} cannot sign: not an EC private key, or not readable"
-
-printf 'UT1.%s.%s\n' "$(openssl base64 -A < "$work/payload")" "$(openssl base64 -A < "$work/signature")" > "$work/license"
-write_it_down || fail "the ledger ${ledger} cannot be written; nothing was issued"
-cat "$work/license"
+create_the_license
+write_it_down || fail "the ledger ${ledger} cannot be written; the license $(jq -r .id <<< "$issued") is in Keygen, write it down by hand"
+jq -r .key <<< "$issued"

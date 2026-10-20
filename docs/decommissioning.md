@@ -109,8 +109,10 @@ deliberately:
 - **The key an SFTP server trusts.** The private key goes with
   `/etc/understandtech`, unless `BACKUP_FILES_SSH_DIR` put it elsewhere; its
   public key stays in the server's `authorized_keys` until it is removed there.
-- **The license key**, in `/etc/understandtech/license`, and the registry token it
-  carries. Have the token revoked; it is per-deployment.
+- **The license**, in `/etc/understandtech/license` and `machine.lic`, and the
+  registry token it carries. The license stays bound to this machine: ask
+  UnderstandTech to release it, so that it can move to another one, and to have
+  the token revoked; it is per-deployment.
 - **The DNS records.** Six names, plus `*.apps.` if the App Builder was on.
 - **The identity provider's application registration**, and the redirect URI
   pointing at this appliance.

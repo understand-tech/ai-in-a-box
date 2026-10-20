@@ -8,13 +8,13 @@ that stopped halfway is resumed by running the same command again.
 
 <!-- Scope: the order of the installer's steps. Not what each one checks. -->
 <!-- Source of truth: ut-install, main() -->
-<!-- Date: 2026-10-15 -->
+<!-- Date: 2026-10-20 -->
 <!-- Target: github — status of "flowchart": rendered -->
 
 ```mermaid
 flowchart LR
     PREFLIGHT["preflight - refuses a machine that cannot run it"]
-    ASK["ask the address and the license key, check the key"]
+    ASK["ask the address and the license key, activate or check the license"]
     FETCH["sign in to the registry, fetch the release"]
     CONFIGURE["write .env and generate every secret"]
     RESOLVE["check the address resolves, and the docker group"]
@@ -29,9 +29,11 @@ flowchart LR
 **Description** — The installer runs nine stages in a fixed order, and stops at
 the first one that fails. It begins with a preflight that refuses a machine
 that cannot run the stack, **before writing anything**. It then asks for the
-address the platform answers on and for the license key, and checks the key
-with no network. It signs in to the registry with the access the key carries —
-skipped with `--skip-pull` — and fetches the release, writes
+address the platform answers on and for the license key. On a first install it
+activates the license with Keygen, which needs the network once; later it checks
+the license file this machine keeps, with no network. It signs in to the
+registry with the access the license carries — skipped with `--skip-pull` — and
+fetches the release, writes
 `/etc/understandtech/.env` and generates every secret, checks that the address
 resolves and that Docker is usable, prepares the certificate authority's
 directory and the App Builder network, pulls the images, starts the stack and
@@ -49,7 +51,8 @@ the diagram has not been seen rendered — no rendering engine is installed here
 ## What you need first
 
 - A machine with Docker 24 or newer and Compose v2, 250 GB free, 24 GB of RAM.
-- The license key UnderstandTech issued for the machine.
+- The license key UnderstandTech issued for the machine, and, on the first
+  install, access to `api.keygen.sh` to activate it.
 - The address the appliance will answer on. Not `understand.local` unless the
   machine really is on a flat local network — see
   [certificates and DNS](certificates-and-dns.md).
@@ -258,11 +261,25 @@ sudo ut-install --domain box.example.com
 ```
 
 It asks for the license key, or reads it from `--license-file`, or takes it from
-`UT_LICENSE`. The key is checked right after the preflight, with no network,
-before anything is written or downloaded, and kept in
-`/etc/understandtech/license`, readable by root only, so an update does not ask
-again. The registry access it carries is never passed on a command line and never
-written to the log.
+`UT_LICENSE`, right after the preflight and before anything is written or
+downloaded. The key is kept in `/etc/understandtech/license`, readable by root
+only, so an update does not ask again.
+
+A license binds to one machine. On the first install, `ut-install` activates it
+with Keygen under this machine's fingerprint, taken from its serial number, and
+keeps the license file Keygen signs for it in `/etc/understandtech/machine.lic`,
+readable by root only. Every later run checks that file first, with no network:
+
+- a file that was altered, signed by another key, or made for another machine
+  stops the run there, before anything goes on the network;
+- a clock set before the day the file was issued is named as such: set the clock;
+- a file that has ended, or whose license has ended or is suspended, is asked
+  again from Keygen, which says whether the license was renewed.
+
+A license already activated on another machine is refused: ask UnderstandTech to
+release it. A key of the old format, `UT1.…`, is refused too: ask for a new one.
+The registry access the license carries is never passed on a command line and
+never written to the log.
 
 The license also names the registry the images come from. For any registry but
 `ghcr.io`, every image of the release is pulled from it — ours and the third-party
@@ -272,10 +289,10 @@ ones alike — under the path it has upstream (`library/caddy` for Docker Hub's
 A license that has ended stops an install or an update, and says on which day.
 It never stops a platform that is running: at every boot the service writes the
 end date to the journal (`journalctl -u understandtech`) and starts the stack
-anyway. To see what a key says without installing:
+anyway. To see what the license file says without installing:
 
 ```bash
-ut-license check license.key
+sudo ut-license check /etc/understandtech/machine.lic
 ```
 
 A registry token on its own, with `--token-file` or `UT_REGISTRY_TOKEN`, is still
@@ -342,7 +359,8 @@ It reports every service, asks each public surface on this machine, says where
 the inference comes from, and until when the license runs. It exits non-zero when
 a service is unhealthy or a surface does not answer, so it can be called from cron
 or a check. A license that has ended is a warning, never a failure: the platform
-serves until the next update, which refuses it.
+serves until the next update, which asks Keygen for the renewed license, or
+refuses it.
 
 Every verdict is kept in `install-history.jsonl` under `DATA_ROOT`, with the
 machine's available memory at that moment, beside one line for every run of
@@ -395,7 +413,7 @@ reinstallable in a minute.
 | `--domain NAME` | The address the platform answers on. Asked for when omitted. |
 | `--license-file PATH` | Read the license key from a file instead of a prompt. |
 | `--token-file PATH` | A registry token instead of a license key. This version only. |
-| `--skip-pull` | Images are already on the machine — an air-gapped install. The license key is still checked; the registry is not contacted. |
+| `--skip-pull` | Images are already on the machine. The license file this machine keeps is still checked; the registry is not contacted. A first install still needs the network once, to activate the license. |
 | `--no-autostart` | Do not install the boot service. |
 | `--dir PATH` | Another release directory. Defaults to `/usr/share/understandtech`. |
 | `--health-timeout N` | Longer than 3600 s if the machine is slow to load models. |

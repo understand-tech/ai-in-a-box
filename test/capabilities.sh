@@ -1266,50 +1266,129 @@ FAKE
     FAKE_GITHUB="http://127.0.0.1:$(cat "$work/fake-port")"
 }
 
-issued_against() {
-    local scenario=$1; shift
-    UT_GITHUB_API="$FAKE_GITHUB/$scenario" UT_GHCR="$FAKE_GITHUB/$scenario" UT_REGISTRY_URL="$FAKE_GITHUB/$scenario" \
-        "$REPO_ROOT/packaging/issue-license.sh" --ledger "$WORK_DIR/issuance/ledger.tsv" "$@"
+KEYGEN_ISSUER_TEST_TOKEN=prod-issuerTestTokenNeverPrinted0001
+
+# Keygen's issuing side, as issue-license.sh meets it: the policies a product
+# token sees, and the licenses it creates, each written down for the suite.
+start_a_fake_keygen_for_issuing() {
+    local work=$1
+    cat > "$work/fake-keygen-issuing.py" <<'FAKE'
+import http.server, json, sys
+token, created, portfile = sys.argv[1], sys.argv[2], sys.argv[3]
+POLICY = {"id": "policy-1", "type": "policies", "attributes": {"name": "AI in a Box, one machine, one year"}}
+TRIAL = {"id": "policy-0", "type": "policies", "attributes": {"name": "A trial, any machine"}}
+
+class Answer(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def answer(self, code, body):
+        data = json.dumps(body).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/vnd.api+json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def authorized(self):
+        return self.headers.get("Authorization", "") == "Bearer " + token
+
+    def do_GET(self):
+        if not self.authorized():
+            return self.answer(401, {"errors": [{"title": "Unauthorized"}]})
+        if self.path.partition("?")[0].endswith("/policies"):
+            return self.answer(200, {"data": [TRIAL, POLICY]})
+        return self.answer(404, {"errors": [{"title": "Not found"}]})
+
+    def do_POST(self):
+        if not self.authorized():
+            return self.answer(401, {"errors": [{"title": "Unauthorized"}]})
+        sent = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+        with open(created, "a") as log:
+            log.write(json.dumps(sent) + "\n")
+        if sent.get("data", {}).get("relationships", {}).get("policy", {}).get("data", {}).get("id") != POLICY["id"]:
+            return self.answer(422, {"errors": [{"detail": "policy must exist"}]})
+        return self.answer(201, {"data": {"id": "license-1", "type": "licenses",
+                                          "attributes": {"key": "ISSUED-LICENSE-KEY-0001"}}})
+
+server = http.server.HTTPServer(("127.0.0.1", 0), Answer)
+open(portfile, "w").write(str(server.server_port))
+server.serve_forever()
+FAKE
+    python3 "$work/fake-keygen-issuing.py" "$KEYGEN_ISSUER_TEST_TOKEN" "$work/keygen-licenses.jsonl" "$work/keygen-port" &
+    FAKE_KEYGEN_PID=$!
+    local waited=0
+    until [[ -s "$work/keygen-port" ]]; do
+        sleep 0.2; waited=$((waited + 1))
+        (( waited < 50 )) || { echo "the fake Keygen never started" >&2; return 1; }
+    done
+    FAKE_KEYGEN="http://127.0.0.1:$(cat "$work/keygen-port")/v1/accounts/test"
 }
 
-payload_field_of() {
-    cut -d. -f2 "$1" 2>/dev/null | openssl base64 -d -A 2>/dev/null | sed -n "s/^$2=//p"
+# Every program the issuer runs writes its arguments down first, so that a token
+# on a command line is seen however short-lived the program is.
+programs_that_write_their_arguments_down() {
+    local work=$1 program
+    mkdir -p "$work/argv"
+    for program in curl jq openssl sed grep tr cut head date; do
+        printf '#!/bin/sh\nprintf "%%s\\n" "%s $*" >> %s/argv.log\nexec %s "$@"\n' \
+            "$program" "$work" "$(command -v "$program")" > "$work/argv/$program"
+        chmod 755 "$work/argv/$program"
+    done
+}
+
+issued_against() {
+    local scenario=$1; shift
+    PATH="$WORK_DIR/issuance/argv:$PATH" \
+    UT_GITHUB_API="$FAKE_GITHUB/$scenario" UT_GHCR="$FAKE_GITHUB/$scenario" UT_REGISTRY_URL="$FAKE_GITHUB/$scenario" \
+    UT_KEYGEN_API="$FAKE_KEYGEN" \
+        "$REPO_ROOT/packaging/issue-license.sh" --ledger "$WORK_DIR/issuance/ledger.tsv" \
+        --keygen-token-file "$WORK_DIR/issuance/keygen.token" "$@"
 }
 
 issuance_verdicts() {
     local work="$WORK_DIR/issuance"
     mkdir -p "$work"
     if [[ ! -s "$work/verdicts.txt" ]]; then
-        openssl ecparam -name prime256v1 -genkey -noout -out "$work/signing.key" 2>/dev/null
         printf '%s\n' "$LICENSE_TEST_TOKEN" > "$work/token"
+        printf '%s\n' "$KEYGEN_ISSUER_TEST_TOKEN" > "$work/keygen.token"
+        programs_that_write_their_arguments_down "$work"
 
         local next_year scenario
         next_year="$(( $(date -u +%Y) + 1 ))-12-31"
         start_a_fake_github "$work" "$next_year" || return 1
+        start_a_fake_keygen_for_issuing "$work" || return 1
         {
             printf 'issued=%s\n' \
-                "$(issued_against good --customer "Test Customer" --expires "$next_year" --token-file "$work/token" \
-                    --signing-key "$work/signing.key" >/dev/null 2>&1 && echo issued || echo refused)"
+                "$(issued_against good --customer test-customer --machine test-box --expires "$next_year" \
+                    --token-file "$work/token" > "$work/issued.out" 2> "$work/issued.err" && echo issued || echo refused)"
+            printf 'printed=%s\n' "$(cat "$work/issued.out")"
             printf 'issued_without_an_end=%s\n' \
-                "$(issued_against long --customer "Test Customer" --token-file "$work/token" \
-                    --signing-key "$work/signing.key" >/dev/null 2>&1 && echo issued || echo refused)"
+                "$(issued_against long --customer test-customer --machine test-box --token-file "$work/token" \
+                    >/dev/null 2>&1 && echo issued || echo refused)"
             printf 'issued_to_nobody=%s\n' \
-                "$(issued_against long --expires "$next_year" --token-file "$work/token" \
-                    --signing-key "$work/signing.key" >/dev/null 2>&1 && echo issued || echo refused)"
-            issued_against zot --registry registry.example.test --customer "Test Customer" --expires "$next_year" \
-                --token-file "$work/token" --signing-key "$work/signing.key" > "$work/zot.lic" 2>/dev/null
-            printf 'zot_issued=%s\n' "$(payload_field_of "$work/zot.lic" registry | grep . || echo none)"
+                "$(issued_against long --machine test-box --expires "$next_year" --token-file "$work/token" \
+                    >/dev/null 2>&1 && echo issued || echo refused)"
+            printf 'issued_for_no_machine=%s\n' \
+                "$(issued_against long --customer test-customer --expires "$next_year" --token-file "$work/token" \
+                    >/dev/null 2>&1 && echo issued || echo refused)"
+            printf 'issued_to_a_display_name=%s\n' \
+                "$(issued_against long --customer "Test Customer" --machine test-box --expires "$next_year" \
+                    --token-file "$work/token" >/dev/null 2>&1 && echo issued || echo refused)"
+            issued_against zot --registry registry.example.test --customer test-customer --machine test-box \
+                --expires "$next_year" --token-file "$work/token" >/dev/null 2>&1
+            printf 'zot_issued=%s\n' "$(jq -r 'select(.data.attributes.metadata.registry == "registry.example.test")
+                | .data.attributes.metadata.registry' "$work/keygen-licenses.jsonl" 2>/dev/null | head -1 | grep . || echo none)"
             printf 'zot_blind=%s\n' \
-                "$(issued_against zotblind --registry registry.example.test --customer "Test Customer" --expires "$next_year" \
-                    --token-file "$work/token" --signing-key "$work/signing.key" >/dev/null 2>&1 && echo issued || echo refused)"
+                "$(issued_against zotblind --registry registry.example.test --customer test-customer --machine test-box \
+                    --expires "$next_year" --token-file "$work/token" >/dev/null 2>&1 && echo issued || echo refused)"
             for scenario in broad forever short blind refused; do
                 printf 'token_%s=%s\n' "$scenario" \
-                    "$(issued_against "$scenario" --customer "Test Customer" --expires "$next_year" \
-                        --token-file "$work/token" --signing-key "$work/signing.key" >/dev/null 2>&1 \
-                        && echo issued || echo refused)"
+                    "$(issued_against "$scenario" --customer test-customer --machine test-box --expires "$next_year" \
+                        --token-file "$work/token" >/dev/null 2>&1 && echo issued || echo refused)"
             done
         } > "$work/verdicts.txt"
-        kill "$FAKE_GITHUB_PID" 2>/dev/null
+        kill "$FAKE_GITHUB_PID" "$FAKE_KEYGEN_PID" 2>/dev/null
     fi
     cat "$work/verdicts.txt"
 }
@@ -1319,6 +1398,19 @@ issuance_verdict_is() {
     verdicts=$(issuance_verdicts)
     grep -qx "${key}=${expected}" <<< "$verdicts" && return 0
     echo "expected ${key}=${expected}, verdicts were:"; echo "$verdicts"; return 1
+}
+
+a_license_is_issued_in_keygen_and_its_key_printed() {
+    local created
+    issuance_verdict_is issued issued && issuance_verdict_is printed ISSUED-LICENSE-KEY-0001 || return 1
+    created=$(head -1 "$WORK_DIR/issuance/keygen-licenses.jsonl" 2>/dev/null)
+    jq -e --arg year "$(( $(date -u +%Y) + 1 ))" '.data.relationships.policy.data.id == "policy-1"
+        and .data.attributes.expiry == "\($year)-12-31T23:59:59.000Z"
+        and .data.attributes.metadata.customer == "test-customer"
+        and .data.attributes.metadata.machine == "test-box"
+        and .data.attributes.metadata.registryUser == "dgx-access"' <<< "$created" >/dev/null && return 0
+    echo "Keygen was not asked for the license expected:"; echo "${created:-nothing}"
+    return 1
 }
 
 a_license_is_issued_only_for_a_narrow_token_that_outlives_it() {
@@ -1336,7 +1428,7 @@ every_license_issued_is_written_down_never_its_token() {
     fingerprint=$(printf '%s' "$LICENSE_TEST_TOKEN" | openssl dgst -sha256 -r | cut -c1-16)
     grep -qF "$LICENSE_TEST_TOKEN" "$ledger" 2>/dev/null \
         && { echo "the ledger holds the token itself"; return 1; }
-    [[ $(grep -c "	Test Customer	.*	${fingerprint}	" "$ledger" 2>/dev/null) -eq 2 ]] && return 0
+    [[ $(grep -c "	test-customer	test-box	.*	license-1	dgx-access	${fingerprint}	" "$ledger" 2>/dev/null) -eq 2 ]] && return 0
     echo "expected the two licenses issued, and only those, in the ledger:"
     cat "$ledger" 2>/dev/null || echo "no ledger"
     return 1
@@ -1345,6 +1437,35 @@ every_license_issued_is_written_down_never_its_token() {
 a_license_for_another_registry_names_it_and_is_checked_there() {
     issuance_verdict_is zot_issued registry.example.test \
         && issuance_verdict_is zot_blind refused
+}
+
+the_issuer_puts_no_token_on_a_command_line_nor_on_its_output() {
+    local work="$WORK_DIR/issuance"
+    issuance_verdicts >/dev/null
+    [[ -s "$work/argv.log" ]] || { echo "no program the issuer ran wrote its arguments down"; return 1; }
+    grep -qF -e "$LICENSE_TEST_TOKEN" -e "$KEYGEN_ISSUER_TEST_TOKEN" "$work/argv.log" \
+        && { echo "a program the issuer ran was given a token:"; grep -F -e "$LICENSE_TEST_TOKEN" -e "$KEYGEN_ISSUER_TEST_TOKEN" "$work/argv.log" | head -3; return 1; }
+    grep -qF -e "$LICENSE_TEST_TOKEN" -e "$KEYGEN_ISSUER_TEST_TOKEN" "$work/issued.out" "$work/issued.err" \
+        && { echo "a token came out of the issuer"; return 1; }
+    return 0
+}
+
+# The issuer writes the license's metadata, Keygen signs it into the machine's
+# file, and ut-license reads it back: the three have to agree on its keys.
+the_license_issued_carries_what_ut_license_reads() {
+    local work="$WORK_DIR/issuance" image said
+    issuance_verdicts >/dev/null
+    head -1 "$work/keygen-licenses.jsonl" | jq '.data.attributes.metadata' > "$work/issued-metadata.json" 2>/dev/null \
+        || { echo "no license was created"; return 1; }
+    image=$(license_image) || { echo "the image the license checks run in did not build"; return 1; }
+    said=$(docker run --rm -v "$REPO_ROOT":/src:ro -v "$work":/w "$image" bash -c '
+        . /src/test/keygen.sh && prepare_license_lab /src /w/lab >/dev/null 2>&1 \
+        && signed_machine_file /w/lab/signing.pem /w/issued.lic "$(cat /w/lab/fingerprint)" -60 31536000 31536000 ACTIVE "" /w/issued-metadata.json \
+        && for name in customer registry_user registry_token; do printf "%s=%s\n" "$name" "$(/w/lab/ut-license field "$name" /w/issued.lic)"; done' 2>&1)
+    grep -qx 'customer=test-customer' <<< "$said" && grep -qx 'registry_user=dgx-access' <<< "$said" \
+        && grep -qxF "registry_token=${LICENSE_TEST_TOKEN}" <<< "$said" && return 0
+    echo "ut-license read from the license issued:"; sed "s/${LICENSE_TEST_TOKEN}/<the token>/" <<< "$said"
+    return 1
 }
 
 # ut-install pulls under the names image_in_registry gives, and issue-license.sh
@@ -1369,7 +1490,9 @@ both_tools_name_every_image_alike() {
 
 a_license_without_a_customer_or_an_end_is_never_issued() {
     issuance_verdict_is issued_without_an_end refused \
-        && issuance_verdict_is issued_to_nobody refused
+        && issuance_verdict_is issued_to_nobody refused \
+        && issuance_verdict_is issued_for_no_machine refused \
+        && issuance_verdict_is issued_to_a_display_name refused
 }
 
 # ut-license runs where the box runs it, on Debian with its openssl and jq,
@@ -2642,7 +2765,9 @@ if [[ -x "$REPO_ROOT/ut-license" ]]; then
         the_shipped_key_is_the_one_licenses_are_signed_with
     capability "and a license file checks with no network at all" \
         a_license_checks_with_no_network_at_all
-    capability "a license with no customer or no end date is never issued" \
+    capability "a license is issued in Keygen, under the policy, with its customer, machine and end, and its key printed" \
+        a_license_is_issued_in_keygen_and_its_key_printed
+    capability "a license with no customer, no machine or no end date is never issued" \
         a_license_without_a_customer_or_an_end_is_never_issued
     capability "a license is issued only for a read-only token that pulls the release and outlives it" \
         a_license_is_issued_only_for_a_narrow_token_that_outlives_it
@@ -2650,6 +2775,10 @@ if [[ -x "$REPO_ROOT/ut-license" ]]; then
         every_license_issued_is_written_down_never_its_token
     capability "a license for another registry names it, and is checked against it" \
         a_license_for_another_registry_names_it_and_is_checked_there
+    capability "the issuer puts no token on a command line, nor on its output" \
+        the_issuer_puts_no_token_on_a_command_line_nor_on_its_output
+    capability "the license issued carries what ut-license reads" \
+        the_license_issued_carries_what_ut_license_reads
     capability "the installer and the issuer name every image of the release alike" \
         both_tools_name_every_image_alike
     capability "at boot, a license that has ended is said, and the stack still starts" \
