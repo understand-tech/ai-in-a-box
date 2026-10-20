@@ -429,9 +429,16 @@ surface "it serves the certificate it was given, not one of its own" \
 surface "the apex still answers" a_surface_answers "$DOMAIN"
 surface "a generated application still answers" a_surface_answers "demo.apps.${DOMAIN}"
 
-engine_answers() {
-    docker exec ut-ingress-probe curl -sk -o /dev/null -w '%{http_code}' --max-time 10 "$@" \
+# --connect-to keeps the address in the URL, so that called by IP curl sends no
+# SNI, as the control plane does, while Caddy sees its container's own address.
+engine_curl() {
+    docker exec ut-ingress-probe curl -sk --max-time 10 \
+        --connect-to "${ENGINE_ADDRESS}:8444:ut-ingress-caddy:8444" "$@" \
         "https://${ENGINE_ADDRESS}:8444/v1/models" 2>/dev/null
+}
+
+engine_answers() {
+    engine_curl -o /dev/null -w '%{http_code}' "$@"
 }
 
 wait_for_the_engine_surface() {
@@ -456,10 +463,19 @@ the_engine_refuses() {
 
 the_engine_serves_the_bearer_of_the_key() {
     local body
-    body=$(docker exec ut-ingress-probe curl -sk --max-time 10 -H "Authorization: Bearer ${ENGINE_KEY}" \
-        "https://${ENGINE_ADDRESS}:8444/v1/models" 2>/dev/null)
+    body=$(engine_curl -H "Authorization: Bearer ${ENGINE_KEY}")
     [[ "$body" == "stub 8000" ]] && return 0
     echo "with the key, the engine surface returned '${body:-nothing}'"
+    return 1
+}
+
+the_engine_certificate_names_its_address() {
+    local names
+    names=$(docker exec ut-ingress-probe sh -c \
+        "openssl s_client -connect ut-ingress-caddy:8444 -noservername </dev/null 2>/dev/null \
+            | openssl x509 -noout -ext subjectAltName 2>/dev/null")
+    [[ "$names" == *"IP Address:${ENGINE_ADDRESS}"* ]] && return 0
+    echo "without SNI, the engine surface presented '${names:-no certificate}'"
     return 1
 }
 
@@ -471,6 +487,15 @@ surface "it refuses a request without the key" the_engine_refuses
 surface "it refuses a request with another key" \
     the_engine_refuses -H "Authorization: Bearer not-${ENGINE_KEY}"
 surface "it serves the bearer of the key" the_engine_serves_the_bearer_of_the_key
+
+printf '\n%sMode compute, reached by its address — no SNI%s\n' "$BOLD" "$NC"
+ENGINE_ADDRESS="192.0.2.10"
+restart_the_front_door_in compute
+surface "the engine surface comes up when called by IP" wait_for_the_engine_surface
+surface "it presents a certificate for that IP to a client that names none" \
+    the_engine_certificate_names_its_address
+surface "called by IP, it still refuses a request without the key" the_engine_refuses
+surface "called by IP, it serves the bearer of the key" the_engine_serves_the_bearer_of_the_key
 
 printf '\n%sMode edge — TLS is terminated upstream%s\n' "$BOLD" "$NC"
 restart_the_front_door_in edge
