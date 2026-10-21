@@ -98,22 +98,8 @@ appliance. Change it and all six follow.
 
 ## Documentation
 
-**For the operator**, in the order you will need them:
-
-| | When |
-|---|---|
-| [Architecture](docs/architecture.md) | Where a request goes, and what each network can reach. |
-| [Choosing how to install](docs/choosing-how-to-install.md) | Before installing: six questions about your site, and the command or page each answer leads to. |
-| [Installing](docs/install.md) | A new machine. One command, safe to re-run. |
-| [First-run configuration](docs/first-run-configuration.md) | The first visit to a freshly installed box: models, sign-on, data sources. |
-| [The stack](docs/the-stack.md) | What runs, on which network, in which volume, and how to act on it. |
-| [Configuring](docs/configuration.md) | Changing the address, the ports, the backup schedule, the load. |
-| [Certificates and DNS](docs/certificates-and-dns.md) | Which names to publish, who terminates TLS, and what the local authority does. |
-| [Updating](docs/update.md) | A new version. What it adds to an existing `.env`, and what changes that you will notice. |
-| [Restoring](docs/restore.md) | The database, the customer's files, or the certificate authority — separately. |
-| [When it breaks](docs/when-it-breaks.md) | A symptom, and which layer it belongs to. Start here when something is wrong. |
-| [Decommissioning](docs/decommissioning.md) | Taking a machine out of service. What removing the package does **not** remove. |
-| [The usage report](docs/usage-report.md) | We ask for one. What it holds, what it never holds, and how to write it. |
+**For the operator**: [the operator guides](docs/index.md), in the order you
+will need them.
 
 **For the people who use the platform**:
 [using the platform](docs/using-the-platform.md).
