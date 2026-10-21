@@ -2300,6 +2300,16 @@ no_port_is_declared_where_docker_publishes_none() {
     return 1
 }
 
+app_builder_traefik_calls_no_one() {
+    command -v jq >/dev/null || { echo "jq absent"; return 1; }
+    local command
+    command=$( cd "$WORK_DIR" && docker compose -f compose.yaml -f compose.appbuilder.yaml config --format json 2>/dev/null \
+        | jq -r '.services["app-builder-traefik"].command | join(" ")' )
+    [[ "$command" == *"--global.checknewversion=false"* && "$command" == *"--global.sendanonymoususage=false"* ]] && return 0
+    echo "app-builder-traefik runs: ${command:-nothing rendered}"
+    return 1
+}
+
 overrides_isolate_every_resource() {
     local rendered stray
     rendered=$( cd "$WORK_DIR" && \
@@ -3208,6 +3218,8 @@ if [[ -f "$REPO_ROOT/compose.compute.yaml" ]]; then
         each_argument_reaches_vllm_intact
     capability "no service declares a port Docker never publishes" \
         no_port_is_declared_where_docker_publishes_none
+    capability "App Builder's Traefik checks for no update and sends no statistics" \
+        app_builder_traefik_calls_no_one
     capability "overriding the prefixes isolates every resource" \
         overrides_isolate_every_resource
 fi

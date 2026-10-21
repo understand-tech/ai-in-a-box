@@ -587,6 +587,10 @@ capability_discriminates "ut-get preparing with another tool than ut-install loa
     "ut-get prepares with the tools ut-install loads with" \
     "sed -i.bak 's|^FOLDER_SKOPEO_TOOL=.*|FOLDER_SKOPEO_TOOL=\"quay.io/skopeo/stable:v1.19.0@sha256:0000000000000000000000000000000000000000000000000000000000000000\"|' bin/ut-get"
 
+capability_discriminates "App Builder's Traefik left to check for updates" \
+    "App Builder's Traefik checks for no update and sends no statistics" \
+    "sed -i.bak '/--global.checknewversion=false/d' compose.appbuilder.yaml"
+
 capability_discriminates "a database port declared again, which Docker never publishes" \
     "no service declares a port Docker never publishes" \
     "sed -i.bak 's|^    container_name: \${CONTAINER_PREFIX:-ut}-mongodb\$|&\\n    ports:\\n      - \"127.0.0.1:27018:27017\"|' compose.yaml"
