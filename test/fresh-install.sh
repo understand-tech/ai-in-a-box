@@ -229,7 +229,13 @@ state_setup() {
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'COMPOSE_FILE="compose.yaml:compose.compute.yaml"\nCOMPOSE_PROFILES="nim"\nUT_INFERENCE_ADDRESS="192.0.2.10"\n'"'"' > /etc/understandtech/local.env' ;;
         # A folder ut-get --prepare never finished: its tools, none of the images.
         folder_without_its_images)
-            echo 'install -d /w/folder_without_its_images/folder/tools && echo arm64 > /w/folder_without_its_images/folder/architecture && : > /w/folder_without_its_images/folder/understandtech_'"$VERSION"'_all.deb && : > /w/folder_without_its_images/folder/tools/distribution.tar && : > /w/folder_without_its_images/folder/tools/stable.tar' ;;
+            echo 'install -d /w/folder_without_its_images/folder/tools && echo arm64 > /w/folder_without_its_images/folder/architecture && : > /w/folder_without_its_images/folder/understandtech_'"$VERSION"'_all.deb && : > /w/folder_without_its_images/folder/tools/distribution.tar && : > /w/folder_without_its_images/folder/tools/stable.tar && sed -i "s|^UT_RELEASE_VERSION=.*|UT_RELEASE_VERSION=\"'"$VERSION"'+0123abc\"|" /usr/share/understandtech/release.env' ;;
+        # The same folder, on a box whose settings file runs its own engine image.
+        folder_without_the_settings_image)
+            echo 'install -d /w/folder_without_the_settings_image/folder/tools && echo arm64 > /w/folder_without_the_settings_image/folder/architecture && : > /w/folder_without_the_settings_image/folder/understandtech_'"$VERSION"'_all.deb && : > /w/folder_without_the_settings_image/folder/tools/distribution.tar && : > /w/folder_without_the_settings_image/folder/tools/stable.tar && install -d -m 750 /etc/understandtech && printf '"'"'NIM_IMAGE="ghcr.io/understand-tech/engines/nim:2.0.13@sha256:%064d"\n'"'"' 0 > /etc/understandtech/local.env' ;;
+        # A settings file still naming the vision engine the release dropped.
+        vision_engine_gone)
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'VLLM_VLM_BASE_URL="http://nim-vlm:8000/v1"\n'"'"' > /etc/understandtech/local.env' ;;
         # A folder prepared for a compute node, carried to a box installing everything.
         folder_for_another_role)
             echo 'install -d /w/folder_for_another_role/folder && echo arm64 > /w/folder_for_another_role/folder/architecture && echo compute > /w/folder_for_another_role/folder/role && : > /w/folder_for_another_role/folder/understandtech_'"$VERSION"'_all.deb' ;;
@@ -614,6 +620,23 @@ refused_before_anything_is_written() {
     grep -qF -- "$reason" <<< "$output" && ! grep -q '^EXIT=0$' <<< "$output" \
         && [[ ! -s "$WORK_DIR/$state/local-env" ]] && return 0
     echo "$output" | tail -5
+    return 1
+}
+
+a_refused_folder_names_how_to_prepare_it_again() {
+    local output
+    output=$(output_of folder_without_its_images)
+    grep -qE -- "--version ${VERSION} --role appliance\$" <<< "$output" \
+        && ! grep -q 'Install stopped at line' <<< "$output" || { grep -E 'Prepare it again|Install stopped' <<< "$output"; return 1; }
+    output=$(output_of folder_without_the_settings_image)
+    grep -qF -- "--image ghcr.io/understand-tech/engines/nim:2.0.13@sha256:" <<< "$output" && return 0
+    grep -E 'Prepare it again|--image' <<< "$output"
+    return 1
+}
+
+a_dead_vision_address_is_named() {
+    grep -q 'VLLM_VLM_BASE_URL names nim-vlm, a service this stack does not run' <<< "$(output_of vision_engine_gone)" && return 0
+    output_of vision_engine_gone | grep -E '\[warn\]|VLM' | tail -4
     return 1
 }
 
@@ -1174,6 +1197,8 @@ INSTALL_COMMAND="ut-install --compute 192.0.2.10 --no-gpu" run_install_from_stat
 INSTALL_COMMAND="ut-install --images-from /w/folder_without_its_images/folder" run_install_from_state folder_without_its_images
 INSTALL_COMMAND="ut-install --images-from /w/folder_for_another_processor/folder" run_install_from_state folder_for_another_processor
 INSTALL_COMMAND="ut-install --images-from /w/folder_of_another_release/folder" run_install_from_state folder_of_another_release
+INSTALL_COMMAND="ut-install --images-from /w/folder_without_the_settings_image/folder" run_install_from_state folder_without_the_settings_image
+run_install_from_state vision_engine_gone
 INSTALL_COMMAND="ut-install --images-from /w/folder_for_another_role/folder" run_install_from_state folder_for_another_role
 run_install_from_state installed_from_a_folder_before
 run_install_from_state already_set
@@ -1295,6 +1320,10 @@ property "a folder prepared for another release is refused, with both versions n
     refused_before_anything_is_written folder_of_another_release "was prepared for release 0.0.1-other, and this is"
 property "a folder prepared for another processor is refused before anything is written" \
     refused_before_anything_is_written folder_for_another_processor "was prepared for amd64, and this machine runs arm64"
+property "a refused folder says how to prepare it again: version, role, and the images the settings run" \
+    a_refused_folder_names_how_to_prepare_it_again
+property "an engine address naming a service the stack does not run is named" \
+    a_dead_vision_address_is_named
 property "an install that downloads again forgets the names a folder gave its images" \
     a_pulling_install_forgets_the_names_of_a_folder
 property "a compute node is installed with one flag, and asked for no domain" \

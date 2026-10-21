@@ -1518,6 +1518,27 @@ move_the_allowed_origins_to_the_new_domain() {
     log_info "Allowed origins moved from ${previous} to ${DOMAIN}"
 }
 
+# An engine address naming a service of this stack that no compose file declares
+# any more answers nothing: the vision engine left the release on 2026-10-06, and
+# a settings file that still named it broke every chat at its last step.
+warn_on_engine_addresses_no_service_answers() {
+    local key url host files file declared
+    files=$(env_get "$INSTALL_DIR/.env" COMPOSE_FILE 2>/dev/null || true)
+    files=${files:-compose.yaml}
+    for key in VLLM_LLM_BASE_URL VLLM_VLM_BASE_URL; do
+        url=$(env_get "$INSTALL_DIR/.env" "$key" 2>/dev/null || true)
+        host=${url#*://}; host=${host%%/*}; host=${host%%:*}
+        [[ -n "$host" && "$host" != *.* && "$host" != localhost ]] || continue
+        declared=false
+        for file in ${files//:/ }; do
+            grep -qE "^  ${host}:$" "$INSTALL_DIR/$file" 2>/dev/null && declared=true
+        done
+        $declared && continue
+        log_warn "${key} names ${host}, a service this stack does not run: every request it carries will fail."
+        log_warn "  Remove the line from $(settings_directory "$INSTALL_DIR/.env")/local.env to take the release's address."
+    done
+}
+
 step_configure() {
     log_step "Writing the configuration"
 
@@ -1559,6 +1580,7 @@ step_configure() {
     generate_application_secrets "$local_file"
     give_the_api_the_openai_key_it_needs_to_start "$env_file" "$local_file"
     render_settings "$env_file" "$local_file"
+    warn_on_engine_addresses_no_service_answers
 
     chmod 600 "$env_file" "$local_file"
     chown "$TARGET_USER" "$env_file" "$local_file" 2>/dev/null || true
@@ -1799,13 +1821,16 @@ digests_the_role_runs() {
 # What the stack runs: release.env, with the settings file's own choices on top
 # (a model's engine), as "<variable>=<image>" lines; from a folder, only the
 # images its bill says this machine's role runs.
+# Whether a service belongs to the role is read from the image the release gives
+# it; what is required is the image the settings file runs, its own if it has one.
 images_the_stack_runs() {
-    local line digests
+    local line digests released
     if [[ -n "$IMAGES_FROM" ]]; then
         digests=$(digests_the_role_runs "$(role_this_install_takes)" || true)
         if [[ -n "$digests" ]]; then
             every_image_the_stack_names | while IFS= read -r line; do
-                if ! grep -qE "^${line%%=*}=" "$INSTALL_DIR/release.env" || grep -qxF "${line##*@}" <<< "$digests"; then
+                released=$(env_get "$INSTALL_DIR/release.env" "${line%%=*}" 2>/dev/null || true)
+                if [[ -z "$released" ]] || grep -qxF "${released##*@}" <<< "$digests"; then
                     printf '%s\n' "$line"
                 fi
             done
@@ -1832,7 +1857,7 @@ every_image_the_stack_names() {
         [[ -n "$value" && "$value" != "$FOLDER_REGISTRY_ADDRESS"/* ]] || value=$(env_get "$INSTALL_DIR/release.env" "$key")
         printf '%s=%s\n' "$key" "$value"
     done < <(grep -E '^[A-Z_]+_IMAGE=' "$INSTALL_DIR/release.env")
-    grep -E '^[A-Z_]+_IMAGE=' "$local_file" 2>/dev/null | while IFS= read -r line; do
+    { grep -E '^[A-Z_]+_IMAGE=' "$local_file" 2>/dev/null || true; } | while IFS= read -r line; do
         key=${line%%=*}
         grep -qE "^${key}=" "$INSTALL_DIR/release.env" && continue
         value=$(env_get "$local_file" "$key")
@@ -1917,14 +1942,20 @@ die_on_a_folder_that_misses_an_image() {
     for tool in distribution.tar stable.tar; do
         [[ -f "$IMAGES_FROM/tools/$tool" ]] || missing+="  tools/${tool}"$'\n'
     done
+    local version extra="" released
     while IFS= read -r line; do
-        box_digest_in_the_folder "${line#*=}" >/dev/null || missing+="  ${line#*=}, missing or not the one the release names"$'\n'
+        box_digest_in_the_folder "${line#*=}" >/dev/null && continue
+        missing+="  ${line#*=}, missing or not the one the release names"$'\n'
+        released=$(env_get "$INSTALL_DIR/release.env" "${line%%=*}" 2>/dev/null || true)
+        [[ "${line#*=}" == "$released" ]] || extra+=" --image ${line#*=}"
     done < <(images_the_stack_runs)
     missing+=$(weights_problems_in_the_folder)
     [[ -z "$missing" ]] && return 0
+    version=$(env_get "$INSTALL_DIR/release.env" UT_RELEASE_VERSION 2>/dev/null || echo '<version>')
     log_error "${IMAGES_FROM} lacks what this install runs:"
     printf '%s' "$missing" >&2
-    log_error "  Prepare it again, for this release, with: ut-get --prepare <folder> --version $(env_get "$INSTALL_DIR/release.env" UT_RELEASE_VERSION 2>/dev/null || echo '<version>')"
+    log_error "  Prepare it again, for this release, with: ut-get --prepare <folder> --version ${version%%+*} --role $(role_this_install_takes)${extra}"
+    [[ -z "$extra" ]] || log_error "  (--image carries what this machine's settings file runs instead of the release's)"
     exit 1
 }
 
