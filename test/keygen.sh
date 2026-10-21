@@ -99,6 +99,8 @@ SWAP
     signed_machine_file "$lab/signing.pem" "$lab/files/ended.lic" "$fingerprint" -$((2 * year)) "$year" -86400 ACTIVE
     signed_machine_file "$lab/signing.pem" "$lab/files/suspended.lic" "$fingerprint" -60 "$year" "$year" SUSPENDED
     signed_machine_file "$lab/signing.pem" "$lab/files/file_ended.lic" "$fingerprint" -$((2 * year)) -86400 "$year" ACTIVE
+    printf '{"customer":"Test Customer"}\n' > "$lab/untokened-metadata.json"
+    signed_machine_file "$lab/signing.pem" "$lab/files/untokened.lic" "$fingerprint" -60 "$year" "$year" ACTIVE "" "$lab/untokened-metadata.json"
     python3 - "$lab/files/valid.lic" "$lab/files/tampered.lic" <<'TAMPER'
 import base64, json, sys
 lines = open(sys.argv[1]).read().split("\n")

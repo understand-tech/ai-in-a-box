@@ -737,8 +737,14 @@ take_license() {
         (( activated == 0 )) || refuse_the_license "$key" "$machine"
         "$tool" check "$machine" || refuse_the_license "$key" "$machine"
     fi
-    REGISTRY_TOKEN=$("$tool" field registry_token "$machine" 2>/dev/null) \
-        || { rm -f "$key" "$machine"; die "This license carries no registry token to pull the images with. Ask UnderstandTech for one."; }
+    if ! REGISTRY_TOKEN=$("$tool" field registry_token "$machine" 2>/dev/null); then
+        REGISTRY_TOKEN=""
+        if $DO_PULL; then
+            rm -f "$key" "$machine"
+            die "This license carries no registry token to pull the images with. Ask UnderstandTech for one, or install with --skip-pull or from a folder ut-get --prepare wrote, which pull nothing."
+        fi
+        log_info "This license carries no registry token, and none is needed: nothing is pulled"
+    fi
     licensed_user=$("$tool" field registry_user "$machine" 2>/dev/null || true)
     REGISTRY_USER=${licensed_user:-$REGISTRY_USER}
     licensed_registry=$("$tool" field registry "$machine" 2>/dev/null || true)

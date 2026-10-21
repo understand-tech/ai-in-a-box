@@ -1223,6 +1223,10 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
         "a node reached over plain http is refused before anything is written" \
         "sed -i.bak 's|\\^https://\\[\\^/\\]+|^https?://[^/]+|' bin/ut-install"
 
+    install_walk_discriminates "a registry token asked for even when nothing is pulled" \
+        "a license with no registry token is refused to pull, and taken when nothing is pulled" \
+        "sed -i.bak 's|^        if \$DO_PULL; then\$|        if true; then|' bin/ut-install"
+
     install_walk_discriminates "a folder of another release taken for this one" \
         "a folder prepared for another release is refused, with both versions named" \
         "sed -i.bak 's|^die_on_a_folder_of_another_release() {\$|die_on_a_folder_of_another_release() { return 0;|' bin/ut-install"
