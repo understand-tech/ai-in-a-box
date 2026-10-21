@@ -1738,11 +1738,11 @@ say_each_image_as_it_lands() {
 # The JSON comes on stderr, beside any error that is not JSON.
 # The tools a folder carries, as ut-get --prepare names them, as docker archives:
 # overlay2 loads no OCI archive skopeo writes. A tool is loaded only when its
-# config has one of these arm64 digests; docker load then refuses any layer the
-# config does not list, in either store.
+# config has one of these digests, arm64 then amd64 for each; docker load then
+# refuses any layer the config does not list, in either store.
 FOLDER_REGISTRY_TOOL="ghcr.io/distribution/distribution:3.0.0@sha256:4ba3adf47f5c866e9a29288c758c5328ef03396cb8f5f6454463655fa8bc83e2"
 FOLDER_SKOPEO_TOOL="quay.io/skopeo/stable:v1.20.0@sha256:47853bb9fb24202af9110531ebd6e43c5f97701254ca290596640290d17942f4"
-FOLDER_TOOL_CONFIGS="sha256:ab30a3bba4ba93e95d10e1805239b169e9ac0c0a8a25df9715192ac98cdcb261 sha256:376e07f615c23241d20f43a5816d9e5faec33b44838cef233ee30faf70b882f6"
+FOLDER_TOOL_CONFIGS="sha256:ab30a3bba4ba93e95d10e1805239b169e9ac0c0a8a25df9715192ac98cdcb261 sha256:4030e89c351e33ab32ba5abff03c553a0a9af89b118814b260556e5c1948bf36 sha256:376e07f615c23241d20f43a5816d9e5faec33b44838cef233ee30faf70b882f6 sha256:ed9ceaa074fd5f77d47b826b5be839568ba4676ff1011a5cbf60b73038dd8fa3"
 FOLDER_REGISTRY_ADDRESS="127.0.0.1:15000"
 FOLDER_LOADER="ut-images-from-a-folder"
 
@@ -1798,9 +1798,26 @@ box_digest_in_the_folder() {
     printf '%s' "$box"
 }
 
+architecture_docker_runs() {
+    case "$(docker info --format '{{.Architecture}}' 2>/dev/null)" in
+        aarch64|arm64) echo arm64 ;;
+        x86_64|amd64)  echo amd64 ;;
+        *)             docker info --format '{{.Architecture}}' 2>/dev/null ;;
+    esac
+}
+
+die_on_a_folder_for_another_architecture() {
+    local prepared here
+    prepared=$(cat "$IMAGES_FROM/architecture" 2>/dev/null || true)
+    here=$(architecture_docker_runs)
+    [[ -n "$prepared" && "$prepared" == "$here" ]] && return 0
+    die "${IMAGES_FROM} was prepared for ${prepared:-no architecture}, and this machine runs ${here:-an unknown one}: prepare it again with ut-get --prepare --architecture ${here}"
+}
+
 die_on_a_folder_that_misses_an_image() {
     [[ -n "$IMAGES_FROM" ]] || return 0
     [[ -d "$IMAGES_FROM" ]] || die "No such folder: ${IMAGES_FROM}"
+    die_on_a_folder_for_another_architecture
     local line missing="" tool
     for tool in distribution.tar stable.tar; do
         [[ -f "$IMAGES_FROM/tools/$tool" ]] || missing+="  tools/${tool}"$'\n'
