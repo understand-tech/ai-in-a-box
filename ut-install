@@ -42,6 +42,8 @@ LICENSE_FILE=""
 LICENSE="${UT_LICENSE:-}"
 LICENSE_STORE="/etc/understandtech/license"
 MACHINE_FILE="/etc/understandtech/machine.lic"
+MACHINE_FILE_GIVEN=""
+LICENSE_REQUEST="/etc/understandtech/license-request.json"
 HEALTH_TIMEOUT="${UT_HEALTH_TIMEOUT:-3600}"
 REPORTING="${UT_REPORTING:-}"
 REPORTING_RECEIVER=""
@@ -110,6 +112,9 @@ Options
                        is not silently discarded.
   --license-file PATH  The license key UnderstandTech issued for this machine.
                        Asked for when it is not given and none is stored yet.
+  --machine-file PATH  The license file UnderstandTech activated this machine
+                       with, for a machine that cannot reach Keygen. It is checked
+                       with no network, then kept.
   --token-file PATH    A registry token instead of a license key. Accepted by
                        this version only.
   --dir PATH           Install directory. Defaults to /usr/share/understandtech
@@ -173,9 +178,12 @@ by an earlier install, or from a hidden prompt, and kept in
 license with Keygen, which needs the network once, and keeps the license file
 Keygen signs for this machine in /etc/understandtech/machine.lic. Every later run
 checks that file first, with no network: an altered file, or one made for
-another machine, stops the run there. The registry token the license carries is
-never passed on a command line nor written to the log. A license that has ended
-stops an install or an update, never a platform that is running.
+another machine, stops the run there. A machine that cannot reach Keygen writes
+/etc/understandtech/license-request.json instead, its fingerprint and name, for
+UnderstandTech to activate it and send back the file --machine-file takes. The
+registry token the license carries is never passed on a command line nor
+written to the log. A license that has ended stops an install or an update,
+never a platform that is running.
 EOF
 }
 
@@ -668,12 +676,29 @@ refuse_the_license() {
     die "The license was refused. Nothing was changed on this machine."
 }
 
+# The request names the machine, never the license key, so that it can travel
+# by mail or as a picture of the screen.
+ask_for_the_license_by_file() {
+    local tool=$1
+    [[ -d "$(dirname "$LICENSE_REQUEST")" ]] || mkdir -p -m 750 "$(dirname "$LICENSE_REQUEST")"
+    "$tool" request > "$LICENSE_REQUEST" || die "Could not write the license request ${LICENSE_REQUEST}."
+    chmod 644 "$LICENSE_REQUEST"
+    log_warn "To activate this machine with no network, send ${LICENSE_REQUEST} to UnderstandTech"
+    log_warn "  (contact@understand.tech). It holds this machine's fingerprint and name, not the license key:"
+    log_warn "  $(tr -d '\n' < "$LICENSE_REQUEST")"
+    if command -v qrencode >/dev/null 2>&1; then
+        qrencode -t ANSIUTF8 < "$LICENSE_REQUEST" || true
+    fi
+    log_warn "  Then run ut-install again with --machine-file <the file UnderstandTech sends back>."
+    die "The license could not be activated here. Nothing else was changed on this machine."
+}
+
 # The license file this machine already holds is checked before anything goes
 # on the network: an altered one, or one made for another machine, stops the
 # install there. Only a genuine file that has ended, or whose license has ended
 # or is suspended, is renewed from Keygen, which then says whether it may be.
 take_license() {
-    local tool key machine checked licensed_user licensed_registry
+    local tool key machine checked activated licensed_user licensed_registry
     tool=$(license_tool)
     key=$(mktemp)
     machine=$(mktemp)
@@ -685,7 +710,12 @@ take_license() {
         cat "$LICENSE_FILE" > "$key"
     fi
     checked=1
-    if [[ -s "$MACHINE_FILE" ]] && stored_license_is "$key"; then
+    if [[ -n "$MACHINE_FILE_GIVEN" ]]; then
+        [[ -r "$MACHINE_FILE_GIVEN" ]] || { rm -f "$key" "$machine"; die "License file not readable: ${MACHINE_FILE_GIVEN}"; }
+        cat "$MACHINE_FILE_GIVEN" > "$machine"
+        "$tool" check "$machine" || refuse_the_license "$key" "$machine"
+        checked=0
+    elif [[ -s "$MACHINE_FILE" ]] && stored_license_is "$key"; then
         cat "$MACHINE_FILE" > "$machine"
         checked=0
         "$tool" check "$machine" || checked=$?
@@ -693,7 +723,13 @@ take_license() {
     fi
     if (( checked != 0 )); then
         log_info "Asking Keygen for this machine's license file"
-        "$tool" activate "$key" "$machine" || refuse_the_license "$key" "$machine"
+        activated=0
+        "$tool" activate "$key" "$machine" || activated=$?
+        if (( activated == 3 )); then
+            rm -f "$key" "$machine"
+            ask_for_the_license_by_file "$tool"
+        fi
+        (( activated == 0 )) || refuse_the_license "$key" "$machine"
         "$tool" check "$machine" || refuse_the_license "$key" "$machine"
     fi
     REGISTRY_TOKEN=$("$tool" field registry_token "$machine" 2>/dev/null) \
@@ -713,6 +749,9 @@ take_license() {
 
 read_credentials() {
     if [[ -n "$LICENSE" || -n "$LICENSE_FILE" ]]; then
+        take_license
+    elif [[ -n "$MACHINE_FILE_GIVEN" ]]; then
+        if [[ -s "$LICENSE_STORE" ]]; then LICENSE_FILE=$LICENSE_STORE; else ask_for_license; fi
         take_license
     elif [[ -n "$REGISTRY_TOKEN" || -n "$TOKEN_FILE" ]]; then
         log_warn "A registry token on its own is accepted by this version only. Ask UnderstandTech for a license key, and pass it with --license-file."
@@ -2059,6 +2098,7 @@ parse_arguments() {
             --no-autostart)   DO_AUTOSTART=false ;;
             --skip-pull)      DO_PULL=false ;;
             --license-file)   LICENSE_FILE="${2:?--license-file needs a path}"; shift ;;
+            --machine-file)   MACHINE_FILE_GIVEN="${2:?--machine-file needs the license file UnderstandTech sent}"; shift ;;
             --token-file)     TOKEN_FILE="${2:?--token-file needs a path}"; shift ;;
             --dir)            INSTALL_DIR="${2:?--dir needs a path}"; shift ;;
             --from-checkout)  FROM_CHECKOUT="${2:?--from-checkout needs a path}"; shift ;;

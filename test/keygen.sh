@@ -65,9 +65,10 @@ prepare_license_lab() {
     python3 - "$repo/ut-license" "$lab" "$KEYGEN_TEST_PORT" <<'SWAP'
 import pathlib, re, sys
 original, lab, port = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
-for copy, serial in (("ut-license", "serial"), ("ut-license-without-a-serial", "placeholder-serial")):
+for copy, serial, api_port in (("ut-license", "serial", port), ("ut-license-without-a-serial", "placeholder-serial", port),
+                               ("ut-license-with-no-network", "serial", "9")):
     text = original.read_text()
-    for name, value in (("KEYGEN_API", f"http://127.0.0.1:{port}/v1/accounts/test"),
+    for name, value in (("KEYGEN_API", f"http://127.0.0.1:{api_port}/v1/accounts/test"),
                         ("KEYGEN_PUBLIC_KEY", (lab / "signing.pub").read_text().strip()),
                         ("SERIAL_FILES", str(lab / serial)),
                         ("MACHINE_ID_FILE", str(lab / "machine-id"))):
@@ -75,7 +76,7 @@ for copy, serial in (("ut-license", "serial"), ("ut-license-without-a-serial", "
         assert count == 1, name
     (lab / copy).write_text(text)
 SWAP
-    chmod 755 "$lab/ut-license" "$lab/ut-license-without-a-serial"
+    chmod 755 "$lab/ut-license" "$lab/ut-license-without-a-serial" "$lab/ut-license-with-no-network"
     programs_that_write_their_arguments_down "$lab"
 
     for name in fresh registry active elsewhere ended suspended unknown; do

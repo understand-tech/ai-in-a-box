@@ -51,8 +51,9 @@ the diagram has not been seen rendered — no rendering engine is installed here
 ## What you need first
 
 - A machine with Docker 24 or newer and Compose v2, 250 GB free, 24 GB of RAM.
-- The license key UnderstandTech issued for the machine, and, on the first
-  install, access to `api.keygen.sh` to activate it.
+- The license key UnderstandTech issued for the machine. The first install
+  activates it through `api.keygen.sh`; a machine that cannot reach it gets its
+  license file from UnderstandTech instead, as section 5 says.
 - The address the appliance will answer on. Not `understand.local` unless the
   machine really is on a flat local network — see
   [certificates and DNS](certificates-and-dns.md).
@@ -275,6 +276,22 @@ release it. A key of the old format, `UT1.…`, is refused too: ask for a new on
 The registry access the license carries is never passed on a command line and
 never written to the log.
 
+**A machine that cannot reach Keygen** is activated by a file exchange:
+
+1. `ut-install` stops, and writes `/etc/understandtech/license-request.json`: the
+   machine's fingerprint and name, never the license key. It prints it too, as a
+   QR code when `qrencode` is installed.
+2. Send that file to UnderstandTech. The license file that comes back works on
+   this machine only, for a year.
+3. Run the install again with it, and the images already on the machine or in a
+   prepared folder:
+
+   ```bash
+   sudo ut-install --license-file license.key --machine-file box.lic --skip-pull
+   ```
+
+   The file is checked with no network, then kept like one Keygen handed over.
+
 The license also names the registry the images come from. For any registry but
 `ghcr.io`, every image of the release is pulled from it — ours and the third-party
 ones alike — under the path it has upstream (`library/caddy` for Docker Hub's
@@ -407,7 +424,8 @@ reinstallable in a minute.
 | `--domain NAME` | The address the platform answers on. Asked for when omitted. |
 | `--license-file PATH` | Read the license key from a file instead of a prompt. |
 | `--token-file PATH` | A registry token instead of a license key. This version only. |
-| `--skip-pull` | Images are already on the machine. The license file this machine keeps is still checked; the registry is not contacted. A first install still needs the network once, to activate the license. |
+| `--machine-file PATH` | The license file UnderstandTech sent for a machine that cannot reach Keygen. Checked with no network, then kept. |
+| `--skip-pull` | Images are already on the machine. The license file this machine keeps is still checked; the registry is not contacted. A first install activates the license through Keygen, or takes `--machine-file`. |
 | `--no-autostart` | Do not install the boot service. |
 | `--dir PATH` | Another release directory. Defaults to `/usr/share/understandtech`. |
 | `--health-timeout N` | Longer than 3600 s if the machine is slow to load models. |
