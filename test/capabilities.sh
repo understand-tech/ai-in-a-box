@@ -234,7 +234,7 @@ folder_load_report() {
     [[ -n "$tamper" ]] && eval "$tamper"
     docker rmi -f "$BUSYBOX_IMAGE" "$ALPINE_INDEX_IMAGE" >/dev/null 2>&1
     docker image ls --digests --format '{{.Repository}}@{{.Digest}}' \
-        | grep -F -e "${BUSYBOX_IMAGE%%:*}@${BUSYBOX_IMAGE#*@}" -e "${ALPINE_INDEX_IMAGE%%:*}@${ALPINE_INDEX_IMAGE#*@}" | sed 's/^/STILL THERE: /'
+        | grep -Fx -e "${BUSYBOX_IMAGE%%:*}@${BUSYBOX_IMAGE#*@}" -e "${ALPINE_INDEX_IMAGE%%:*}@${ALPINE_INDEX_IMAGE#*@}" | sed 's/^/STILL THERE: /'
     (
         set +u; UT_INSTALL_DIR="$probe/install" source "$REPO_ROOT/bin/ut-install" >/dev/null 2>&1
         set +eE; trap - ERR
