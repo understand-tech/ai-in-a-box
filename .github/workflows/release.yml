@@ -67,7 +67,7 @@ jobs:
       # this step a mismatched key produces a signature nobody can check, and
       # the failure only shows up on a customer's offline machine.
       - name: Verify what was just signed
-        run: ./ut-verify "dist/understandtech_${VERSION}_all.deb"
+        run: ./bin/ut-verify "dist/understandtech_${VERSION}_all.deb"
 
       # release.pub is published beside the package it verifies, so whoever can
       # replace one can replace both. An attestation is an anchor that does not

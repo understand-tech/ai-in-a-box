@@ -224,8 +224,8 @@ folder_load_report() {
     : > "$probe/install/.env"; : > "$probe/install/local.env"
     printf '{"auths":{}}\n' > "$probe/auth/auth.json"
     (
-        set +u; source "$REPO_ROOT/ut-get"
-        BOX_ARCHITECTURE=$( set +u; UT_INSTALL_DIR="$probe/install" source "$REPO_ROOT/ut-install" >/dev/null 2>&1; set +eE; architecture_docker_runs )
+        set +u; source "$REPO_ROOT/bin/ut-get"
+        BOX_ARCHITECTURE=$( set +u; UT_INSTALL_DIR="$probe/install" source "$REPO_ROOT/bin/ut-install" >/dev/null 2>&1; set +eE; architecture_docker_runs )
         mark_the_folder_architecture "$probe/folder"
         printf '%s\n' "${BUSYBOX_IMAGE%%:*}@${BUSYBOX_IMAGE#*@}" "${ALPINE_INDEX_IMAGE%%:*}@${ALPINE_INDEX_IMAGE#*@}" \
             | copy_the_images_into "$probe/folder" "$probe/auth"
@@ -236,7 +236,7 @@ folder_load_report() {
     docker image ls --digests --format '{{.Repository}}@{{.Digest}}' \
         | grep -Fx -e "${BUSYBOX_IMAGE%%:*}@${BUSYBOX_IMAGE#*@}" -e "${ALPINE_INDEX_IMAGE%%:*}@${ALPINE_INDEX_IMAGE#*@}" | sed 's/^/STILL THERE: /'
     (
-        set +u; UT_INSTALL_DIR="$probe/install" source "$REPO_ROOT/ut-install" >/dev/null 2>&1
+        set +u; UT_INSTALL_DIR="$probe/install" source "$REPO_ROOT/bin/ut-install" >/dev/null 2>&1
         set +eE; trap - ERR
         INSTALL_DIR="$probe/install"; IMAGES_FROM="$probe/folder"; DO_PULL=false
         die_on_a_folder_that_misses_an_image && step_images_from_a_folder
@@ -252,7 +252,7 @@ folder_load_report() {
 images_from_a_folder_start_under_their_digest() {
     local report
     report=$(folder_load_report)
-    grep -qE '^BUSYBOX_IMAGE="127\.0\.0\.1:15000/busybox@sha256:[0-9a-f]{64}"$' <<< "$report" \
+    grep -qE '^BUSYBOX_IMAGE="127\.0\.0\.1:15000/e2e-test-images/busybox@sha256:[0-9a-f]{64}"$' <<< "$report" \
         && grep -qE '^ALPINE_INDEX_IMAGE="127\.0\.0\.1:15000/linuxcontainers/alpine@sha256:[0-9a-f]{64}"$' <<< "$report" \
         && [[ $(grep -c ': ran$' <<< "$report") -eq 2 ]] \
         && ! grep -q 'STILL THERE' <<< "$report" && return 0
@@ -266,6 +266,114 @@ a_folder_image_the_release_does_not_name_is_refused() {
     grep -q 'missing or not the one the release names' <<< "$report" \
         && ! grep -q 'IMAGE="127.0.0.1:15000' <<< "$report" && return 0
     echo "$report" | tail -8
+    return 1
+}
+
+# Weights a folder carries, placed with ut-install's own functions into volumes
+# of a prefix of their own, then read back from those volumes. Tiny files stand
+# for the real ones: what is checked is where each lands, as whom, and that the
+# settings forbid a download.
+weights_placement_report() {
+    local probe="$WORK_DIR/weights-probe" tamper=${1:-} prefix="capw$$" rev=0123456789abcdef0123456789abcdef01234567
+    local name repo path content line tool
+    rm -rf "$probe"; mkdir -p "$probe/install/models/weights" "$probe/folder"
+    printf 'RESOURCE_PREFIX="%s"\nEMBED_MODEL_NAME="embed.gguf"\nRERANKER_HF_PATH="org/rerank"\nRERANKER_MODEL_NAME="rerank"\n' "$prefix" > "$probe/install/release.env"
+    cp "$probe/install/release.env" "$probe/install/.env"; : > "$probe/install/local.env"
+    for line in "test-model org/engine config.json" "test-model org/engine sub/tokenizer.json" \
+                "platform org/embed embed.gguf" "platform org/rerank config.json" "platform org/rerank README.md"; do
+        read -r name repo path <<< "$line"
+        mkdir -p "$probe/folder/weights/$name/${repo//\//_}/$rev/$(dirname "$path")"
+        content="$probe/folder/weights/$name/${repo//\//_}/$rev/$path"
+        printf '%s of %s\n' "$path" "$repo" > "$content"
+        printf '%s %s %s@%s/%s\n' "$(openssl dgst -sha256 -r "$content" | cut -d' ' -f1)" "$(wc -c < "$content" | tr -d ' ')" \
+            "$repo" "$rev" "$path" >> "$probe/install/models/weights/$name.txt"
+    done
+    tool=$(sed -n 's/^FOLDER_REGISTRY_TOOL="\(.*\)"$/\1/p' "$REPO_ROOT/bin/ut-install")
+    docker pull -q "$tool" >/dev/null 2>&1 && docker tag "$tool" "${tool%@*}" >/dev/null 2>&1
+    [[ -n "$tamper" ]] && eval "$tamper"
+    (
+        set +u; UT_INSTALL_DIR="$probe/install" source "$REPO_ROOT/bin/ut-install" >/dev/null 2>&1
+        set +eE; trap - ERR
+        INSTALL_DIR="$probe/install"; IMAGES_FROM="$probe/folder"
+        problems=$(weights_problems_in_the_folder)
+        if [[ -n "$problems" ]]; then echo "REFUSED:"; echo "$problems"; exit 0; fi
+        step_weights_from_a_folder
+    ) 2>&1
+    echo "--- volumes"
+    docker run --rm -v "$prefix-nim-llm-cache":/engine -v "$prefix-llm-models":/platform "$ALPINE_IMAGE" \
+        sh -c 'find /engine /platform -type f -exec stat -c "%u:%g %n" {} \; | sort; cat /engine/huggingface/hub/models--org--engine/refs/main 2>/dev/null; echo' 2>&1
+    echo "--- local.env"; cat "$probe/install/local.env"
+    docker volume rm "$prefix-nim-llm-cache" "$prefix-llm-models" >/dev/null 2>&1
+}
+
+weights_from_a_folder_land_where_each_service_looks() {
+    local report rev=0123456789abcdef0123456789abcdef01234567 hub=/engine/huggingface/hub/models--org--engine
+    report=$(weights_placement_report)
+    grep -qxF "1000:1000 ${hub}/snapshots/${rev}/config.json" <<< "$report" \
+        && grep -qxF "1000:1000 ${hub}/snapshots/${rev}/sub/tokenizer.json" <<< "$report" \
+        && grep -qxF "$rev" <<< "$report" \
+        && grep -qE '^0:0 /platform/embed.gguf$' <<< "$report" \
+        && grep -qE '^0:0 /platform/rerank/config.json$' <<< "$report" \
+        && ! grep -q 'README.md' <<< "$report" \
+        && grep -qx 'HF_HUB_OFFLINE="1"' <<< "$report" \
+        && grep -qx 'DOWNLOAD_ONNX_EMBED="false"' <<< "$report" && return 0
+    echo "$report" | tail -20
+    return 1
+}
+
+a_weight_the_release_does_not_list_is_refused() {
+    local report
+    report=$(weights_placement_report 'sed -i.bak "s/config/Config/" "$probe"/folder/weights/test-model/org_engine/*/config.json')
+    grep -q 'org/engine/config.json, missing or not the file the release lists' <<< "$report" \
+        && ! grep -q '/engine/huggingface' <<< "$report" && return 0
+    echo "$report" | tail -10
+    return 1
+}
+
+# A real file, small, from Hugging Face at a pinned revision: what ut-get
+# downloads for a folder, and refuses when it is not the file the release lists.
+weights_download_report() {
+    local probe="$WORK_DIR/download-probe" sha=${1:-2e1a99a21b550c6cdd965859790d0d10cca21a48800c8c83d6345afebb49cd98}
+    rm -rf "$probe"; mkdir -p "$probe/folder"
+    printf '      "purl": "pkg:huggingface/nomic-ai/nomic-embed-text-v1.5-GGUF@0188c9bf409793f810680a5a431e7b899c46104c?checksum=sha256:%s&size=4747&weights=platform#README.md",\n' "$sha" > "$probe/bill.json"
+    (
+        set +u; source "$REPO_ROOT/bin/ut-get"
+        weights_of_the_bill "$probe/bill.json" "" | download_the_weights_into "$probe/folder"
+    ) 2>&1
+    find "$probe/folder" -type f | sed "s|$probe/folder/||"
+}
+
+weights_are_downloaded_as_the_release_lists_them() {
+    local report
+    report=$(weights_download_report)
+    grep -qx 'weights/platform/nomic-ai_nomic-embed-text-v1.5-GGUF/0188c9bf409793f810680a5a431e7b899c46104c/README.md' <<< "$report" && return 0
+    echo "$report" | tail -5
+    return 1
+}
+
+a_download_that_is_not_the_listed_file_is_refused() {
+    local report
+    report=$(weights_download_report "$(printf '%064d' 0)")
+    grep -q 'is not the file the release lists' <<< "$report" && ! grep -q 'README.md$' <<< "$report" && return 0
+    echo "$report" | tail -5
+    return 1
+}
+
+the_bill_lists_every_pinned_weight() {
+    local pinned listed
+    pinned=$(cat "$REPO_ROOT"/models/weights/*.txt | grep -c '^[0-9a-f]\{64\} ')
+    listed=$("$REPO_ROOT/packaging/release-bom.sh" 9999.99.9 2>/dev/null | grep -c '"purl": "pkg:huggingface/[^"]*checksum=sha256:')
+    (( pinned > 0 && pinned == listed )) && return 0
+    echo "models/weights pins ${pinned} files, the bill of materials lists ${listed}"
+    return 1
+}
+
+a_model_without_weights_is_not_prepared() {
+    local output
+    output=$( set +u; source "$REPO_ROOT/bin/ut-get"; MODEL_ID=nemotron-3.5-bolt-74b; VERSION=9999.99.9
+        die_on_a_model_the_bill_does_not_carry "platform aa 1 org/x rev README.md" 2>&1 ) && { echo "it was prepared"; return 1; }
+    grep -q 'lists no weights for nemotron-3.5-bolt-74b' <<< "$output" && return 0
+    echo "$output"
     return 1
 }
 
@@ -290,10 +398,108 @@ a_tool_the_release_does_not_name_is_refused() {
 the_folder_tools_are_those_ut_get_carries() {
     local key installer getter
     for key in FOLDER_REGISTRY_TOOL FOLDER_SKOPEO_TOOL; do
-        installer=$(sed -n "s/^${key}=\"\(.*\)\"$/\1/p" "$REPO_ROOT/ut-install")
-        getter=$(sed -n "s/^${key}=\"\(.*\)\"$/\1/p" "$REPO_ROOT/ut-get")
+        installer=$(sed -n "s/^${key}=\"\(.*\)\"$/\1/p" "$REPO_ROOT/bin/ut-install")
+        getter=$(sed -n "s/^${key}=\"\(.*\)\"$/\1/p" "$REPO_ROOT/bin/ut-get")
         [[ -n "$installer" && "$installer" == "$getter" ]] || { echo "${key}: ut-install '${installer}', ut-get '${getter}'"; return 1; }
     done
+}
+
+PREPARE_TEST_KEY=TEST-PREPARE-KEY-0001
+PREPARE_TEST_TOKEN=ghp_prepareTestTokenNeverPrinted0001
+
+# Keygen as ut-get --prepare meets it: a license key that reads its own license,
+# registry access included, and nothing for any other key.
+start_a_fake_keygen_for_preparing() {
+    local work=$1
+    cat > "$work/fake-keygen-me.py" <<'FAKE'
+import http.server, json, sys
+key, token, portfile = sys.argv[1], sys.argv[2], sys.argv[3]
+
+class Answer(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):
+        if self.path.partition("?")[0].endswith("/me") and self.headers.get("Authorization", "") == "License " + key:
+            status, body = 200, {"data": {"type": "licenses", "id": "license-1", "attributes": {
+                "metadata": {"customer": "test-customer", "machine": "test-box",
+                             "registryUser": "prepared-user", "registryToken": token}}}}
+        else:
+            status, body = 401, {"errors": [{"code": "LICENSE_INVALID"}]}
+        data = json.dumps(body).encode()
+        self.send_response(status)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+server = http.server.HTTPServer(("127.0.0.1", 0), Answer)
+open(portfile, "w").write(str(server.server_port))
+server.serve_forever()
+FAKE
+    python3 "$work/fake-keygen-me.py" "$PREPARE_TEST_KEY" "$PREPARE_TEST_TOKEN" "$work/port" &
+    FAKE_KEYGEN_ME_PID=$!
+    local waited=0
+    until [[ -s "$work/port" ]]; do
+        sleep 0.2; waited=$((waited + 1))
+        (( waited < 50 )) || { echo "the fake Keygen never started" >&2; return 1; }
+    done
+}
+
+# What ut-get --prepare takes from a license key: the registry account and token,
+# with every program it runs writing its arguments down.
+prepare_access_report() {
+    local work="$WORK_DIR/prepare-access" program
+    if [[ ! -s "$work/report" ]]; then
+        mkdir -p "$work/argv"
+        for program in curl jq tr; do
+            printf '#!/bin/sh\nprintf "%%s\\n" "%s $*" >> %s/argv.log\nexec %s "$@"\n' \
+                "$program" "$work" "$(command -v "$program")" > "$work/argv/$program"
+            chmod 755 "$work/argv/$program"
+        done
+        printf '%s\n' "$PREPARE_TEST_KEY" > "$work/license.key"
+        printf 'TEST-SOMEONE-ELSE\n' > "$work/other.key"
+        start_a_fake_keygen_for_preparing "$work" || return 1
+        {
+            for key in license other; do
+                (
+                    set +u; source "$REPO_ROOT/bin/ut-get"
+                    PATH="$work/argv:$PATH" UT_KEYGEN_API="http://127.0.0.1:$(cat "$work/port")/v1/accounts/test"
+                    KEYGEN_API=$UT_KEYGEN_API LICENSE_FILE="$work/$key.key"
+                    read_the_registry_access_of_the_license
+                    printf '%s_user=%s\n%s_token=%s\n' "$key" "$REGISTRY_USER" "$key" \
+                        "$([[ "$REGISTRY_TOKEN" == "$PREPARE_TEST_TOKEN" ]] && echo read || echo other)"
+                ) 2> "$work/said-$key" || printf '%s=refused\n' "$key"
+            done
+        } > "$work/report"
+        kill "$FAKE_KEYGEN_ME_PID" 2>/dev/null
+    fi
+    cat "$work/report"
+}
+
+a_folder_is_prepared_with_the_access_the_license_key_reads() {
+    local work="$WORK_DIR/prepare-access" report
+    report=$(prepare_access_report)
+    grep -qx 'license_user=prepared-user' <<< "$report" && grep -qx 'license_token=read' <<< "$report" \
+        && grep -qx 'other=refused' <<< "$report" \
+        || { echo "ut-get --prepare took from the license:"; echo "$report"; cat "$work"/said-* 2>/dev/null | tail -3; return 1; }
+    grep -qF -e "$PREPARE_TEST_KEY" -e "$PREPARE_TEST_TOKEN" "$work/argv.log" 2>/dev/null \
+        && { echo "the license key or the token was on a command line"; return 1; }
+    grep -qF -e "$PREPARE_TEST_KEY" -e "$PREPARE_TEST_TOKEN" "$work"/said-* 2>/dev/null \
+        && { echo "the license key or the token was printed"; return 1; }
+    return 0
+}
+
+the_license_file_carried_in_a_folder_goes_to_ut_install() {
+    local work="$WORK_DIR/carried-license" said
+    mkdir -p "$work/one" "$work/none" "$work/two"
+    : > "$work/one/box.lic"; : > "$work/two/a.lic"; : > "$work/two/b.lic"
+    said=$( set +u; source "$REPO_ROOT/bin/ut-get"
+        printf 'one=%s\n' "$(license_file_in "$work/one")"
+        printf 'none=%s\n' "$(license_file_in "$work/none")"
+        printf 'two=%s\n' "$( (license_file_in "$work/two") 2>/dev/null || echo refused)" )
+    grep -qx "one=$work/one/box.lic" <<< "$said" && grep -qx 'none=' <<< "$said" && grep -qx 'two=refused' <<< "$said" && return 0
+    echo "$said"
+    return 1
 }
 
 moving_off_local_withdraws_the_publisher() {
@@ -312,7 +518,7 @@ installer_domain_decision() {
     [[ -n "$already_configured" ]] && printf 'UT_DOMAIN="%s"\n' "$already_configured" > "$probe/.env"
     env UT_DOMAIN="$given" UT_INSTALL_DIR="$probe" DECIDE="$decide" bash -c '
         set +u
-        source "$1/ut-install" >/dev/null 2>&1
+        source "$1/bin/ut-install" >/dev/null 2>&1
         set +eE
         trap - ERR
         if [[ "$DECIDE" == read_domain ]]; then
@@ -344,7 +550,7 @@ installer_reporting() {
     shift 2
     env UT_SEND="$probe/ut-send" UT_INSTALL_DIR="$probe" RUN="$run" "$@" bash -c '
         set +u
-        source "$1/ut-install" >/dev/null 2>&1
+        source "$1/bin/ut-install" >/dev/null 2>&1
         set +eE
         trap - ERR
         terminal_is_reachable() { return 1; }
@@ -444,7 +650,7 @@ installer_domain_answer() {
     [[ -n "$already_configured" ]] && printf 'UT_DOMAIN="%s"\n' "$already_configured" > "$probe/.env"
     cat > "$probe/run.sh" <<EOF
 set +u
-UT_INSTALL_DIR="$probe" source "$REPO_ROOT/ut-install" >/dev/null 2>&1
+UT_INSTALL_DIR="$probe" source "$REPO_ROOT/bin/ut-install" >/dev/null 2>&1
 set +eE
 trap - ERR
 read_domain
@@ -461,7 +667,7 @@ installer_wait_over() {
     probe=$(mktemp -d "$WORK_DIR/wait.XXXXXX")
     cat > "$probe/run.sh" <<EOF
 set +u
-UT_INSTALL_DIR="$probe" source "$REPO_ROOT/ut-install" >/dev/null 2>&1
+UT_INSTALL_DIR="$probe" source "$REPO_ROOT/bin/ut-install" >/dev/null 2>&1
 set +eE
 trap - ERR
 HEALTH_TIMEOUT=1
@@ -546,7 +752,7 @@ installer_pull_over() {
     probe=$(mktemp -d "$WORK_DIR/pull.XXXXXX")
     cat > "$probe/run.sh" <<'EOF'
 set +u
-UT_INSTALL_DIR="$PROBE" source "$REPO_ROOT/ut-install" >/dev/null 2>&1
+UT_INSTALL_DIR="$PROBE" source "$REPO_ROOT/bin/ut-install" >/dev/null 2>&1
 set +eE
 trap - ERR
 compose_in_dir() {
@@ -616,7 +822,7 @@ installer_summary_with() {
     probe=$(mktemp -d "$WORK_DIR/summary.XXXXXX")
     cat > "$probe/run.sh" <<'EOF'
 set +u
-UT_INSTALL_DIR="$PROBE" source "$REPO_ROOT/ut-install" >/dev/null 2>&1
+UT_INSTALL_DIR="$PROBE" source "$REPO_ROOT/bin/ut-install" >/dev/null 2>&1
 set +eE
 trap - ERR
 DOMAIN=box.test
@@ -848,9 +1054,9 @@ removing_the_package_leaves_the_settings_and_the_data() {
 # nothing; one that is called without a guard and not declared is an install
 # that fails on a machine missing it.
 shipped_commands() {
-    printf '%s\n' "$REPO_ROOT/ut-install" "$REPO_ROOT/ut-certificate" \
-        "$REPO_ROOT/ut-logs-archive" "$REPO_ROOT/setup-autostart.sh" \
-        "$REPO_ROOT/backup-files.sh" "$REPO_ROOT/ut-license"
+    printf '%s\n' "$REPO_ROOT/bin/ut-install" "$REPO_ROOT/bin/ut-certificate" \
+        "$REPO_ROOT/bin/ut-logs-archive" "$REPO_ROOT/setup-autostart.sh" \
+        "$REPO_ROOT/backup-files.sh" "$REPO_ROOT/bin/ut-license"
 }
 
 declared_dependencies() {
@@ -883,7 +1089,7 @@ signature_verdicts() {
 
         # ut-verify carries its key in a variable, so the probe swaps in one it
         # holds the private half of, and signs with that half.
-        python3 - "$REPO_ROOT/ut-verify" "$work/release.pub" "$work/ut-verify" <<'SWAP'
+        python3 - "$REPO_ROOT/bin/ut-verify" "$work/release.pub" "$work/ut-verify" <<'SWAP'
 import pathlib, re, sys
 original, pub, out = (pathlib.Path(a) for a in sys.argv[1:4])
 text = original.read_text()
@@ -941,9 +1147,9 @@ a_package_nobody_signed_is_refused() {
 a_key_that_cannot_be_read_never_fingerprints_as_nothing() {
     local tool said
     for tool in ut-verify ut-license; do
-        [[ -x "$REPO_ROOT/$tool" ]] || continue
+        [[ -x "$REPO_ROOT/bin/$tool" ]] || continue
         said=$(docker run --rm -e TMPDIR=/nonexistent -v "$REPO_ROOT":/src:ro "$DEBIAN_IMAGE" \
-            bash "/src/$tool" --fingerprint 2>&1; echo "STATUS=$?")
+            bash "/src/bin/$tool" --fingerprint 2>&1; echo "STATUS=$?")
         if grep -q 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855' <<< "$said" \
             || grep -q 'STATUS=0' <<< "$said"; then
             echo "${tool} --fingerprint with no temporary file said: ${said}"
@@ -969,7 +1175,7 @@ a_package_verifies_with_no_network_at_all() {
 
 the_shipped_key_is_the_one_the_release_is_signed_with() {
     local embedded versioned
-    embedded=$("$REPO_ROOT/ut-verify" --fingerprint)
+    embedded=$("$REPO_ROOT/bin/ut-verify" --fingerprint)
     versioned="SHA256: $(openssl pkey -pubin -in "$REPO_ROOT/packaging/release.pub" -outform DER 2>/dev/null \
         | openssl dgst -sha256 -r | cut -d' ' -f1)"
     [[ "$embedded" == "$versioned" ]] && return 0
@@ -985,7 +1191,7 @@ launcher_verdicts() {
     mkdir -p "$work/bin"
     if [[ ! -s "$work/verdicts.txt" ]]; then
         signature_verdicts >/dev/null
-        python3 - "$REPO_ROOT/ut-get" "$signing/release.pub" "$work/ut-get" <<'SWAP'
+        python3 - "$REPO_ROOT/bin/ut-get" "$signing/release.pub" "$work/ut-get" <<'SWAP'
 import pathlib, re, sys
 original, pub, out = (pathlib.Path(a) for a in sys.argv[1:4])
 text = original.read_text()
@@ -1198,8 +1404,8 @@ the_install_page_downloads_every_file_the_sums_list() {
 
 the_launcher_carries_the_key_ut_verify_carries() {
     local in_launcher in_verify
-    in_launcher=$(sed -n "/^RELEASE_PUBLIC_KEY='/,/'\$/p" "$REPO_ROOT/ut-get")
-    in_verify=$(sed -n "/^RELEASE_PUBLIC_KEY='/,/'\$/p" "$REPO_ROOT/ut-verify")
+    in_launcher=$(sed -n "/^RELEASE_PUBLIC_KEY='/,/'\$/p" "$REPO_ROOT/bin/ut-get")
+    in_verify=$(sed -n "/^RELEASE_PUBLIC_KEY='/,/'\$/p" "$REPO_ROOT/bin/ut-verify")
     [[ -n "$in_launcher" && "$in_launcher" == "$in_verify" ]] && return 0
     echo "ut-get carries:"; echo "$in_launcher"; echo "ut-verify carries:"; echo "$in_verify"
     return 1
@@ -1483,7 +1689,7 @@ the_license_issued_carries_what_ut_license_reads() {
 # checks the account against the names its own copy gives: they have to agree.
 both_tools_name_every_image_alike() {
     local reference installer issuer differ=""
-    eval "$(sed -n '/^image_in_registry() {/,/^}/p' "$REPO_ROOT/ut-install" | sed 's/^image_in_registry()/installer_names()/')"
+    eval "$(sed -n '/^image_in_registry() {/,/^}/p' "$REPO_ROOT/bin/ut-install" | sed 's/^image_in_registry()/installer_names()/')"
     eval "$(sed -n '/^image_in_registry() {/,/^}/p' "$REPO_ROOT/packaging/issue-license.sh" | sed 's/^image_in_registry()/issuer_names()/')"
     while IFS= read -r reference; do
         installer=$(REGISTRY=reg.example.test installer_names "$reference")
@@ -1732,7 +1938,7 @@ a_machine_activated_from_its_request_installs_with_the_file_sent_back() {
 
 the_shipped_key_is_the_one_licenses_are_signed_with() {
     local embedded versioned
-    embedded=$("$REPO_ROOT/ut-license" --fingerprint)
+    embedded=$("$REPO_ROOT/bin/ut-license" --fingerprint)
     versioned="SHA256: $(openssl pkey -pubin -in "$REPO_ROOT/packaging/license.pub" -outform DER 2>/dev/null \
         | openssl dgst -sha256 -r | cut -d' ' -f1)"
     [[ "$embedded" == "$versioned" ]] && return 0
@@ -2175,7 +2381,7 @@ UT_ACME_EMAIL="ops@example.com"
 UT_ACME_DNS_PROVIDER="cloudflare"
 UT_ACME_DNS_ENV="CF_DNS_API_TOKEN=probe"
 EOF
-    output=$( UT_INSTALL_DIR="$probe" "$REPO_ROOT/ut-certificate" --check 2>&1 ) && {
+    output=$( UT_INSTALL_DIR="$probe" "$REPO_ROOT/bin/ut-certificate" --check 2>&1 ) && {
         echo "a .local domain was accepted"; return 1; }
     grep -q 'no public authority issues' <<< "$output"
 }
@@ -2184,7 +2390,7 @@ public_certificates_need_their_configuration() {
     local probe="$WORK_DIR/acme-real" output
     mkdir -p "$probe"
     printf 'UT_DOMAIN="box.example.com"\n' > "$probe/.env"
-    output=$( UT_INSTALL_DIR="$probe" "$REPO_ROOT/ut-certificate" --check 2>&1 ) && {
+    output=$( UT_INSTALL_DIR="$probe" "$REPO_ROOT/bin/ut-certificate" --check 2>&1 ) && {
         echo "an empty configuration was accepted"; return 1; }
     grep -q 'UT_ACME_DNS_PROVIDER is not set' <<< "$output" \
         && grep -q 'builder.box.example.com' <<< "$output" \
@@ -2632,7 +2838,7 @@ capability "the machine-facing surface takes its certificate from that authority
 capability "it does so whatever the customer chose for the public one" \
     the_machine_surface_survives_every_ingress_mode
 
-if [[ -x "$REPO_ROOT/ut-certificate" ]]; then
+if [[ -x "$REPO_ROOT/bin/ut-certificate" ]]; then
     group "Public certificate"
     capability "a name no authority can certify is refused before anything is asked" \
         public_certificates_are_refused_where_impossible
@@ -2656,21 +2862,37 @@ if [[ -f "$REPO_ROOT/setup-autostart.sh" ]]; then
         moving_off_local_withdraws_the_publisher
 fi
 
-if grep -q 'step_images_from_a_folder' "$REPO_ROOT/ut-install"; then
+if grep -q 'step_images_from_a_folder' "$REPO_ROOT/bin/ut-install"; then
     group "A box with no network"
     capability "images from a prepared folder start under the digest the release names, offline" \
         images_from_a_folder_start_under_their_digest
     capability "a folder holding an image the release does not name is refused" \
         a_folder_image_the_release_does_not_name_is_refused
+    capability "weights from a folder land where each service looks, and nothing downloads them" \
+        weights_from_a_folder_land_where_each_service_looks
+    capability "a weight that is not the file the release lists is refused" \
+        a_weight_the_release_does_not_list_is_refused
+    capability "a folder downloads each weight as the release lists it" \
+        weights_are_downloaded_as_the_release_lists_them
+    capability "a download that is not the listed file is refused" \
+        a_download_that_is_not_the_listed_file_is_refused
+    capability "the bill of materials lists every weight the release pins" \
+        the_bill_lists_every_pinned_weight
+    capability "a model whose weights the release does not list is not prepared" \
+        a_model_without_weights_is_not_prepared
     capability "a folder prepared for another processor is refused" \
         a_folder_for_another_architecture_is_refused
     capability "a folder whose tool is not the one the release names is refused" \
         a_tool_the_release_does_not_name_is_refused
+    capability "a folder is prepared with the registry access the license key reads from Keygen" \
+        a_folder_is_prepared_with_the_access_the_license_key_reads
+    capability "the license file carried in a folder goes to ut-install, and only one" \
+        the_license_file_carried_in_a_folder_goes_to_ut_install
     capability "ut-get prepares with the tools ut-install loads with" \
         the_folder_tools_are_those_ut_get_carries
 fi
 
-if [[ -x "$REPO_ROOT/ut-install" ]]; then
+if [[ -x "$REPO_ROOT/bin/ut-install" ]]; then
     capability "an address given up front is taken as it is" \
         an_address_given_up_front_is_taken_as_it_is
     capability "an unattended install falls back to the mDNS name, and says so" \
@@ -2731,7 +2953,7 @@ if [[ -x "$REPO_ROOT/packaging/release-bom.sh" ]]; then
         the_release_publishes_what_it_is_made_of
 fi
 
-if grep -q '^step_reporting()' "$REPO_ROOT/ut-install"; then
+if grep -q '^step_reporting()' "$REPO_ROOT/bin/ut-install"; then
     group "Asking before sending usage reports"
     capability "with no answer and no terminal to ask on, nothing is sent" \
         no_answer_and_no_terminal_sends_nothing
@@ -2780,7 +3002,7 @@ if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
         every_declared_dependency_is_really_used
 fi
 
-if [[ -x "$REPO_ROOT/ut-verify" ]]; then
+if [[ -x "$REPO_ROOT/bin/ut-verify" ]]; then
     group "Offline verification"
     capability "a package the release signed is accepted" \
         a_package_the_release_signed_is_accepted
@@ -2794,7 +3016,7 @@ if [[ -x "$REPO_ROOT/ut-verify" ]]; then
         a_package_verifies_with_no_network_at_all
 fi
 
-if [[ -x "$REPO_ROOT/ut-get" ]]; then
+if [[ -x "$REPO_ROOT/bin/ut-get" ]]; then
     group "Installing from a release"
     capability "with no network at all, a release we signed is installed, then handed to ut-install" \
         a_signed_release_is_installed_then_handed_to_ut_install
@@ -2820,7 +3042,7 @@ if [[ -x "$REPO_ROOT/ut-get" ]]; then
         the_install_page_downloads_every_file_the_sums_list
 fi
 
-if [[ -x "$REPO_ROOT/ut-license" ]]; then
+if [[ -x "$REPO_ROOT/bin/ut-license" ]]; then
     group "License keys"
     capability "a license file Keygen signed for this machine is accepted" \
         a_license_file_keygen_signed_for_this_machine_is_accepted
@@ -2967,7 +3189,7 @@ fi
 # installed.
 ut_status_refuses() {
     local dir=$1 expected=$2 output
-    output=$( "$REPO_ROOT/ut-status" --dir "$dir" 2>&1 ) && return 1
+    output=$( "$REPO_ROOT/bin/ut-status" --dir "$dir" 2>&1 ) && return 1
     grep -q "$expected" <<< "$output" && return 0
     echo "$output"
     return 1
@@ -3001,7 +3223,7 @@ install_history_after() {
     local probe=$1 exits=$2 step=$3
     cat > "$probe/run.sh" <<EOF
 set +u
-UT_INSTALL_DIR="$probe" source "$REPO_ROOT/ut-install" >/dev/null 2>&1
+UT_INSTALL_DIR="$probe" source "$REPO_ROOT/bin/ut-install" >/dev/null 2>&1
 set +eE
 trap - ERR
 for status in $exits; do
@@ -3013,7 +3235,7 @@ EOF
 }
 
 the_installer_keeps_every_run_from_its_first_step() {
-    sed -n '/^main() {/,/^}/p' "$REPO_ROOT/ut-install" \
+    sed -n '/^main() {/,/^}/p' "$REPO_ROOT/bin/ut-install" \
         | sed -n '/start_logging/,/preflight/p' | grep -q 'trap record_this_install EXIT'
 }
 
@@ -3040,7 +3262,7 @@ a_status_verdict_is_kept_beside_the_installs() {
     local probe status expected history
     probe=$(history_probe)
     mkdir -p "$probe/data"
-    "$REPO_ROOT/ut-status" --dir "$probe" >/dev/null 2>&1 && status=0 || status=$?
+    "$REPO_ROOT/bin/ut-status" --dir "$probe" >/dev/null 2>&1 && status=0 || status=$?
     expected="not-serving"
     (( status == 0 )) && expected="serving"
     history=$(cat "$probe/data/install-history.jsonl" 2>/dev/null)
@@ -3053,7 +3275,7 @@ ut_status_says_whether_reports_go_out() {
     local probe output
     probe=$(reporting_probe "Reporting: on, to receiver.example.test:8444, every 15 minutes
   no timer runs it: nothing is collected or sent until ut-send configure --consent yes is given again")
-    output=$(UT_SEND="$probe/ut-send" "$REPO_ROOT/ut-status" --dir "$(history_probe)" 2>&1)
+    output=$(UT_SEND="$probe/ut-send" "$REPO_ROOT/bin/ut-status" --dir "$(history_probe)" 2>&1)
     grep -q '\[ ok \] Reporting: on, to receiver.example.test:8444, every 15 minutes$' <<< "$output" \
         && grep -q '\[warn\] no timer runs it' <<< "$output" && return 0
     echo "$output"
@@ -3067,7 +3289,7 @@ license_status_with() {
     docker run --rm -v "$REPO_ROOT":/src:ro -v "$WORK_DIR":"$WORK_DIR" -v "$WORK_DIR/license":/w:ro \
         -e UT_LICENSE_STORE=/w/lab/keys/active.key -e UT_MACHINE_FILE="/w/lab/files/${machine_file}.lic" \
         -e UT_LICENSE_TOOL=/w/lab/ut-license "$(license_image)" bash -c \
-        'mkdir -p /stub && printf "#!/bin/sh\nexit 0\n" > /stub/docker && chmod +x /stub/docker && PATH=/stub:$PATH bash /src/ut-status --dir "$0"' \
+        'mkdir -p /stub && printf "#!/bin/sh\nexit 0\n" > /stub/docker && chmod +x /stub/docker && PATH=/stub:$PATH bash /src/bin/ut-status --dir "$0"' \
         "$probe" 2>&1
 }
 
@@ -3086,7 +3308,7 @@ ut_status_says_how_the_license_stands() {
     return 1
 }
 
-if [[ -x "$REPO_ROOT/ut-status" ]]; then
+if [[ -x "$REPO_ROOT/bin/ut-status" ]]; then
     group "Telling whether an install serves"
     capability "it says how the license stands, and warns when it has ended" \
         ut_status_says_how_the_license_stands
@@ -3104,7 +3326,7 @@ REPORT_KEYS="schema generated_at install_id window_days release images service i
 
 ut_report_refuses() {
     local dir=$1 expected=$2 output
-    output=$( "$REPO_ROOT/ut-report" --dir "$dir" --out "$dir" 2>&1 ) && return 1
+    output=$( "$REPO_ROOT/bin/ut-report" --dir "$dir" --out "$dir" 2>&1 ) && return 1
     [[ ! -e "$dir/report.json" ]] || { echo "a report was written anyway"; return 1; }
     grep -q "$expected" <<< "$output" && return 0
     echo "$output"
@@ -3128,7 +3350,7 @@ report_from() {
     local probe=$1 requests=$2 users=$3 ttft=$4
     cat > "$probe/run.sh" <<EOF
 set +u
-UT_INSTALL_DIR="$probe" source "$REPO_ROOT/ut-report" >/dev/null 2>&1
+UT_INSTALL_DIR="$probe" source "$REPO_ROOT/bin/ut-report" >/dev/null 2>&1
 set +eE
 trap - ERR
 engines_recorded() { printf '${ENGINES-nim-llm:8000\\n}'; }
@@ -3320,7 +3542,7 @@ EOF
     ( cd "$probe" && docker compose up -d >/dev/null 2>&1 )
     for tries in 1 2 3 4 5 6 7 8; do
         sleep 5
-        found=$(UT_INSTALL_DIR="$probe" bash -c 'set +u; source "$1" >/dev/null 2>&1; set +eE; trap - ERR; engines_recorded' _ "$REPO_ROOT/ut-report")
+        found=$(UT_INSTALL_DIR="$probe" bash -c 'set +u; source "$1" >/dev/null 2>&1; set +eE; trap - ERR; engines_recorded' _ "$REPO_ROOT/bin/ut-report")
         [[ -n "$found" ]] && break
     done
     ( cd "$probe" && docker compose down -v >/dev/null 2>&1 )
@@ -3329,7 +3551,7 @@ EOF
     return 1
 }
 
-if [[ -x "$REPO_ROOT/ut-report" ]]; then
+if [[ -x "$REPO_ROOT/bin/ut-report" ]]; then
     group "Reporting what decides the size of a box"
     capability "the report finds the engine the recorder holds" \
         the_report_finds_the_engine_the_recorder_holds
@@ -3379,9 +3601,9 @@ printf '#!/bin/sh\nexit 0\n' > /stub/docker
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> /stub/calls\nexit 0\n' > /stub/systemctl
 chmod +x /stub/docker /stub/systemctl
 if [ "$TOOL_BESIDE" = yes ]; then
-    cp /src/ut-status /fix/ut-status
+    cp /src/bin/ut-status /fix/ut-status
 else
-    cp /src/ut-status /usr/local/bin/ut-status
+    cp /src/bin/ut-status /usr/local/bin/ut-status
 fi
 PATH=/stub:$PATH bash /src/setup-autostart.sh --install --dir /fix >/dev/null 2>&1
 printf -- '--- service ---\n'; cat /etc/systemd/system/ut-status.service 2>/dev/null
