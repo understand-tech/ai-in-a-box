@@ -78,14 +78,16 @@ step 5. Nothing is installed from a package it cannot verify.
   with a suffix, such as `2026.10.0-rc3` — is never the latest, so installing one
   takes `--version`.
 - A machine with no network: on any connected Linux or macOS machine with Docker,
-  prepare a folder with the release and every image it runs —
-  `bash ut-get --prepare <folder> --version "$VERSION" --token-file <registry token>`,
-  run again to resume. Carry the folder to the box, then
-  `sudo bash ut-get --from <folder> --domain box.example.com`. The box checks
-  each image against the signed release before loading it, and downloads
-  nothing. Once the package is installed, `ut-get` is also at `/usr/bin/ut-get`.
-  Model weights are not in the folder yet: a model's first start still needs
-  them in its cache.
+  prepare a folder with the release, every image it runs and the weights of its
+  models — `bash ut-get --prepare <folder> --version "$VERSION" --token-file
+  <registry token>`, with `--model <id>` for a model other than the release's
+  and `--architecture amd64` for an x86 control plane; run again to resume.
+  Carry the folder to the box, then `sudo bash ut-get --from <folder> --domain
+  box.example.com`. The box checks each image and each weight file against the
+  signed release before using it, and downloads nothing. A model goes in a
+  folder once its license has been read and its weights pinned in
+  `models/weights/`; the preparation names the ones that are not. Once the
+  package is installed, `ut-get` is also at `/usr/bin/ut-get`.
 - Releases published before `ut-get` existed do not carry it. Install those by
   the steps below.
 

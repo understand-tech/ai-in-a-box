@@ -13,8 +13,10 @@ release-bom.sh — writes what a release is made of, as CycloneDX on stdout.
 
   ./packaging/release-bom.sh 2026.09.1 > dist/understandtech_2026.09.1.cdx.json
 
-One component per image, named by the digest release.env pins it to. Reads
-nothing but release.env: no registry, no network, no pull.
+One component per image, named by the digest release.env pins it to, and one
+per weight file models/weights/ pins, its sha256 in its purl, for ut-get
+--prepare to download. Reads nothing but release.env and models/weights/: no
+registry, no network, no pull.
 
 An image that names a tag has no place here — pin it first with pin-images.sh,
 or this refuses rather than describe something that can move.
@@ -57,6 +59,39 @@ component_for_image() {
     printf '    }'
 }
 
+# The repository the release serves by default, so that a folder prepared with
+# no --model carries the weights the box will start with.
+default_weights_repository() {
+    sed -n 's|^NIM_LLM_MODEL_PATH="hf://\([^"]*\)"$|\1|p' "$RELEASE_ENV"
+}
+
+weight_lines() {
+    local list name line
+    for list in "$REPO_ROOT"/models/weights/*.txt; do
+        [[ -f "$list" ]] || continue
+        name=$(basename "$list" .txt)
+        while IFS= read -r line; do
+            [[ -n "$line" && "$line" != \#* ]] && printf '%s %s\n' "$name" "$line"
+        done < "$list"
+    done
+}
+
+component_for_weight() {
+    local name=$1 sha=$2 size=$3 location=$4 repository revision path default=""
+    repository=${location%%@*}
+    revision=${location#*@}; revision=${revision%%/*}
+    path=${location#*@*/}
+    [[ "$repository" == "$(default_weights_repository)" ]] && default="&default=true"
+    printf '    {\n'
+    printf '      "type": "data",\n'
+    printf '      "name": "%s",\n' "$path"
+    printf '      "version": "%s",\n' "$revision"
+    printf '      "purl": "pkg:huggingface/%s@%s?checksum=sha256:%s&size=%s&weights=%s%s#%s",\n' \
+        "$repository" "$revision" "$sha" "$size" "$name" "$default" "$path"
+    printf '      "hashes": [{ "alg": "SHA-256", "content": "%s" }]\n' "$sha"
+    printf '    }'
+}
+
 component_for_the_package() {
     printf '    {\n'
     printf '      "type": "application",\n'
@@ -87,7 +122,7 @@ serial_number_for() {
 # of materials that cannot be regenerated identically is one nobody can check
 # against the release it describes.
 write_bom() {
-    local line
+    local line name sha size location
     printf '{\n'
     printf '  "bomFormat": "CycloneDX",\n'
     printf '  "specVersion": "1.6",\n'
@@ -107,6 +142,11 @@ write_bom() {
         printf ',\n'
         component_for_image "$(reference_in "$line")"
     done <<< "$(image_lines)"
+    while read -r name sha size location; do
+        [[ -n "$name" ]] || continue
+        printf ',\n'
+        component_for_weight "$name" "$sha" "$size" "$location"
+    done <<< "$(weight_lines)"
     printf '\n  ]\n'
     printf '}\n'
 }

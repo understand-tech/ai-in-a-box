@@ -269,6 +269,114 @@ a_folder_image_the_release_does_not_name_is_refused() {
     return 1
 }
 
+# Weights a folder carries, placed with ut-install's own functions into volumes
+# of a prefix of their own, then read back from those volumes. Tiny files stand
+# for the real ones: what is checked is where each lands, as whom, and that the
+# settings forbid a download.
+weights_placement_report() {
+    local probe="$WORK_DIR/weights-probe" tamper=${1:-} prefix="capw$$" rev=0123456789abcdef0123456789abcdef01234567
+    local name repo path content line tool
+    rm -rf "$probe"; mkdir -p "$probe/install/models/weights" "$probe/folder"
+    printf 'RESOURCE_PREFIX="%s"\nEMBED_MODEL_NAME="embed.gguf"\nRERANKER_HF_PATH="org/rerank"\nRERANKER_MODEL_NAME="rerank"\n' "$prefix" > "$probe/install/release.env"
+    cp "$probe/install/release.env" "$probe/install/.env"; : > "$probe/install/local.env"
+    for line in "test-model org/engine config.json" "test-model org/engine sub/tokenizer.json" \
+                "platform org/embed embed.gguf" "platform org/rerank config.json" "platform org/rerank README.md"; do
+        read -r name repo path <<< "$line"
+        mkdir -p "$probe/folder/weights/$name/${repo//\//_}/$rev/$(dirname "$path")"
+        content="$probe/folder/weights/$name/${repo//\//_}/$rev/$path"
+        printf '%s of %s\n' "$path" "$repo" > "$content"
+        printf '%s %s %s@%s/%s\n' "$(openssl dgst -sha256 -r "$content" | cut -d' ' -f1)" "$(wc -c < "$content" | tr -d ' ')" \
+            "$repo" "$rev" "$path" >> "$probe/install/models/weights/$name.txt"
+    done
+    tool=$(sed -n 's/^FOLDER_REGISTRY_TOOL="\(.*\)"$/\1/p' "$REPO_ROOT/ut-install")
+    docker pull -q "$tool" >/dev/null 2>&1 && docker tag "$tool" "${tool%@*}" >/dev/null 2>&1
+    [[ -n "$tamper" ]] && eval "$tamper"
+    (
+        set +u; UT_INSTALL_DIR="$probe/install" source "$REPO_ROOT/ut-install" >/dev/null 2>&1
+        set +eE; trap - ERR
+        INSTALL_DIR="$probe/install"; IMAGES_FROM="$probe/folder"
+        problems=$(weights_problems_in_the_folder)
+        if [[ -n "$problems" ]]; then echo "REFUSED:"; echo "$problems"; exit 0; fi
+        step_weights_from_a_folder
+    ) 2>&1
+    echo "--- volumes"
+    docker run --rm -v "$prefix-nim-llm-cache":/engine -v "$prefix-llm-models":/platform "$ALPINE_IMAGE" \
+        sh -c 'find /engine /platform -type f -exec stat -c "%u:%g %n" {} \; | sort; cat /engine/huggingface/hub/models--org--engine/refs/main 2>/dev/null; echo' 2>&1
+    echo "--- local.env"; cat "$probe/install/local.env"
+    docker volume rm "$prefix-nim-llm-cache" "$prefix-llm-models" >/dev/null 2>&1
+}
+
+weights_from_a_folder_land_where_each_service_looks() {
+    local report rev=0123456789abcdef0123456789abcdef01234567 hub=/engine/huggingface/hub/models--org--engine
+    report=$(weights_placement_report)
+    grep -qxF "1000:1000 ${hub}/snapshots/${rev}/config.json" <<< "$report" \
+        && grep -qxF "1000:1000 ${hub}/snapshots/${rev}/sub/tokenizer.json" <<< "$report" \
+        && grep -qxF "$rev" <<< "$report" \
+        && grep -qE '^0:0 /platform/embed.gguf$' <<< "$report" \
+        && grep -qE '^0:0 /platform/rerank/config.json$' <<< "$report" \
+        && ! grep -q 'README.md' <<< "$report" \
+        && grep -qx 'HF_HUB_OFFLINE="1"' <<< "$report" \
+        && grep -qx 'DOWNLOAD_ONNX_EMBED="false"' <<< "$report" && return 0
+    echo "$report" | tail -20
+    return 1
+}
+
+a_weight_the_release_does_not_list_is_refused() {
+    local report
+    report=$(weights_placement_report 'sed -i.bak "s/config/Config/" "$probe"/folder/weights/test-model/org_engine/*/config.json')
+    grep -q 'org/engine/config.json, missing or not the file the release lists' <<< "$report" \
+        && ! grep -q '/engine/huggingface' <<< "$report" && return 0
+    echo "$report" | tail -10
+    return 1
+}
+
+# A real file, small, from Hugging Face at a pinned revision: what ut-get
+# downloads for a folder, and refuses when it is not the file the release lists.
+weights_download_report() {
+    local probe="$WORK_DIR/download-probe" sha=${1:-2e1a99a21b550c6cdd965859790d0d10cca21a48800c8c83d6345afebb49cd98}
+    rm -rf "$probe"; mkdir -p "$probe/folder"
+    printf '      "purl": "pkg:huggingface/nomic-ai/nomic-embed-text-v1.5-GGUF@0188c9bf409793f810680a5a431e7b899c46104c?checksum=sha256:%s&size=4747&weights=platform#README.md",\n' "$sha" > "$probe/bill.json"
+    (
+        set +u; source "$REPO_ROOT/ut-get"
+        weights_of_the_bill "$probe/bill.json" "" | download_the_weights_into "$probe/folder"
+    ) 2>&1
+    find "$probe/folder" -type f | sed "s|$probe/folder/||"
+}
+
+weights_are_downloaded_as_the_release_lists_them() {
+    local report
+    report=$(weights_download_report)
+    grep -qx 'weights/platform/nomic-ai_nomic-embed-text-v1.5-GGUF/0188c9bf409793f810680a5a431e7b899c46104c/README.md' <<< "$report" && return 0
+    echo "$report" | tail -5
+    return 1
+}
+
+a_download_that_is_not_the_listed_file_is_refused() {
+    local report
+    report=$(weights_download_report "$(printf '%064d' 0)")
+    grep -q 'is not the file the release lists' <<< "$report" && ! grep -q 'README.md$' <<< "$report" && return 0
+    echo "$report" | tail -5
+    return 1
+}
+
+the_bill_lists_every_pinned_weight() {
+    local pinned listed
+    pinned=$(cat "$REPO_ROOT"/models/weights/*.txt | grep -c '^[0-9a-f]\{64\} ')
+    listed=$("$REPO_ROOT/packaging/release-bom.sh" 9999.99.9 2>/dev/null | grep -c '"purl": "pkg:huggingface/[^"]*checksum=sha256:')
+    (( pinned > 0 && pinned == listed )) && return 0
+    echo "models/weights pins ${pinned} files, the bill of materials lists ${listed}"
+    return 1
+}
+
+a_model_without_weights_is_not_prepared() {
+    local output
+    output=$( set +u; source "$REPO_ROOT/ut-get"; MODEL_ID=nemotron-3.5-bolt-74b; VERSION=9999.99.9
+        die_on_a_model_the_bill_does_not_carry "platform aa 1 org/x rev README.md" 2>&1 ) && { echo "it was prepared"; return 1; }
+    grep -q 'lists no weights for nemotron-3.5-bolt-74b' <<< "$output" && return 0
+    echo "$output"
+    return 1
+}
+
 a_folder_for_another_architecture_is_refused() {
     local report
     report=$(folder_load_report 'echo s390x > "$probe/folder/architecture"')
@@ -2597,6 +2705,18 @@ if grep -q 'step_images_from_a_folder' "$REPO_ROOT/ut-install"; then
         images_from_a_folder_start_under_their_digest
     capability "a folder holding an image the release does not name is refused" \
         a_folder_image_the_release_does_not_name_is_refused
+    capability "weights from a folder land where each service looks, and nothing downloads them" \
+        weights_from_a_folder_land_where_each_service_looks
+    capability "a weight that is not the file the release lists is refused" \
+        a_weight_the_release_does_not_list_is_refused
+    capability "a folder downloads each weight as the release lists it" \
+        weights_are_downloaded_as_the_release_lists_them
+    capability "a download that is not the listed file is refused" \
+        a_download_that_is_not_the_listed_file_is_refused
+    capability "the bill of materials lists every weight the release pins" \
+        the_bill_lists_every_pinned_weight
+    capability "a model whose weights the release does not list is not prepared" \
+        a_model_without_weights_is_not_prepared
     capability "a folder prepared for another processor is refused" \
         a_folder_for_another_architecture_is_refused
     capability "a folder whose tool is not the one the release names is refused" \

@@ -1775,6 +1775,29 @@ die_on_a_folder_for_another_architecture() {
     die "${IMAGES_FROM} was prepared for ${prepared:-no architecture}, and this machine runs ${here:-an unknown one}: prepare it again with ut-get --prepare --architecture ${here}"
 }
 
+# Weights are taken only as the signed package lists them, models/weights/<list>.txt,
+# one line per file: "<sha256> <size> <repository>@<revision>/<path>". A file the
+# folder holds and no list names is never placed.
+weights_problems_in_the_folder() {
+    local dir name list sha size location repository revision path file
+    [[ -d "$IMAGES_FROM/weights" ]] || return 0
+    for dir in "$IMAGES_FROM"/weights/*/; do
+        [[ -d "$dir" ]] || continue
+        name=$(basename "$dir")
+        list="$INSTALL_DIR/models/weights/${name}.txt"
+        [[ -f "$list" ]] || { printf '  weights/%s, which this release does not list\n' "$name"; continue; }
+        while read -r sha size location; do
+            [[ -n "$sha" && "$sha" != \#* ]] || continue
+            repository=${location%%@*}; revision=${location#*@}; revision=${revision%%/*}; path=${location#*@*/}
+            file="$IMAGES_FROM/weights/$name/$(printf '%s' "$repository" | tr '/' '_')/$revision/$path"
+            if [[ ! -f "$file" ]] || [[ "$(wc -c < "$file" | tr -d ' ')" != "$size" ]] \
+                    || [[ "$(sha256_of "$file")" != "sha256:$sha" ]]; then
+                printf '  %s/%s, missing or not the file the release lists\n' "$repository" "$path"
+            fi
+        done < "$list"
+    done
+}
+
 die_on_a_folder_that_misses_an_image() {
     [[ -n "$IMAGES_FROM" ]] || return 0
     [[ -d "$IMAGES_FROM" ]] || die "No such folder: ${IMAGES_FROM}"
@@ -1786,6 +1809,7 @@ die_on_a_folder_that_misses_an_image() {
     while IFS= read -r line; do
         box_digest_in_the_folder "${line#*=}" >/dev/null || missing+="  ${line#*=}, missing or not the one the release names"$'\n'
     done < <(images_the_stack_runs)
+    missing+=$(weights_problems_in_the_folder)
     [[ -z "$missing" ]] && return 0
     log_error "${IMAGES_FROM} lacks what this install runs:"
     printf '%s' "$missing" >&2
@@ -1863,6 +1887,99 @@ step_images_from_a_folder() {
     docker rm -f "$FOLDER_LOADER" >/dev/null 2>&1 || true
     render_settings "$INSTALL_DIR/.env" "$local_file"
     log_info "Every image is here, and nothing was downloaded"
+}
+
+volume_named() {
+    local prefix
+    prefix=$(env_get "$INSTALL_DIR/.env" RESOURCE_PREFIX 2>/dev/null || true)
+    printf '%s-%s' "${prefix:-ut}" "$1"
+}
+
+# Created here, before compose, with the labels compose would give it, so that
+# compose takes it as its own rather than warning about a stranger.
+volume_ready() {
+    local key=$1 volume project
+    volume=$(volume_named "$key")
+    project=$(env_get "$INSTALL_DIR/.env" COMPOSE_PROJECT_NAME 2>/dev/null || true)
+    docker volume inspect "$volume" >/dev/null 2>&1 \
+        || docker volume create --label "com.docker.compose.project=${project:-understandtech}" \
+            --label "com.docker.compose.volume=${key}" "$volume" >/dev/null \
+        || die "Could not create the volume ${volume}"
+    printf '%s' "$volume"
+}
+
+# One "<from> <to>" line per file becomes a shell script run in the folder's
+# registry tool, which every folder carries and which runs a shell: the volumes
+# are written by root inside it, and a copy already the right size is skipped.
+# A <from> of "=<text>" writes that text instead.
+copy_into_a_volume() {
+    local volume=$1 owner=$2 script="set -e" from to
+    while read -r from to; do
+        [[ -n "$from" ]] || continue
+        script+="; mkdir -p '$(dirname "$to")'"
+        if [[ "$from" == =* ]]; then
+            script+="; printf '%s' '${from#=}' > '$to'"
+        else
+            script+="; [ -f '$to' ] && [ \"\$(stat -c %s '$to')\" = \"\$(stat -c %s '$from')\" ] || cp '$from' '$to'"
+        fi
+    done
+    [[ -n "$owner" ]] && script+="; chown -R ${owner} /dest"
+    docker run --rm --entrypoint sh -v "$volume":/dest -v "$IMAGES_FROM/weights":/weights:ro \
+        "${FOLDER_REGISTRY_TOOL%@*}" -c "$script" || die "Could not place the weights in ${volume}"
+}
+
+# The Hugging Face cache layout: the files under snapshots/<revision>, and
+# refs/main naming that revision, which is what an offline load resolves.
+engine_weight_copies() {
+    local name=$1 sha size location repository revision path hub
+    while read -r sha size location; do
+        [[ -n "$sha" && "$sha" != \#* ]] || continue
+        repository=${location%%@*}; revision=${location#*@}; revision=${revision%%/*}; path=${location#*@*/}
+        hub="/dest/huggingface/hub/models--$(printf '%s' "$repository" | sed 's|/|--|g')"
+        printf '/weights/%s/%s/%s/%s %s/snapshots/%s/%s\n' "$name" "$(printf '%s' "$repository" | tr '/' '_')" "$revision" "$path" "$hub" "$revision" "$path"
+        printf '=%s %s/refs/main\n' "$revision" "$hub"
+    done < "$INSTALL_DIR/models/weights/${name}.txt" | sort -u
+}
+
+# Where ut-llm's own download script looks, and skips a model found there.
+platform_weight_copies() {
+    local sha size location repository revision path from embed reranker reranker_dir
+    embed=$(env_get "$INSTALL_DIR/.env" EMBED_MODEL_NAME 2>/dev/null || true)
+    reranker=$(env_get "$INSTALL_DIR/.env" RERANKER_HF_PATH 2>/dev/null || true)
+    reranker_dir=$(env_get "$INSTALL_DIR/.env" RERANKER_MODEL_NAME 2>/dev/null || true)
+    while read -r sha size location; do
+        [[ -n "$sha" && "$sha" != \#* ]] || continue
+        repository=${location%%@*}; revision=${location#*@}; revision=${revision%%/*}; path=${location#*@*/}
+        from="/weights/platform/$(printf '%s' "$repository" | tr '/' '_')/$revision/$path"
+        if [[ -n "$embed" && "$path" == "$embed" ]]; then
+            printf '%s /dest/%s\n' "$from" "$embed"
+        elif [[ -n "$reranker" && "$repository" == "$reranker" && "$path" != README.md ]]; then
+            printf '%s /dest/%s/%s\n' "$from" "$reranker_dir" "$path"
+        fi
+    done < "$INSTALL_DIR/models/weights/platform.txt"
+}
+
+# The engine runs as uid 1000 (nim), and the cache NIM writes itself is 1000:1000.
+step_weights_from_a_folder() {
+    [[ -n "$IMAGES_FROM" && -d "$IMAGES_FROM/weights" ]] || return 0
+    local local_file dir name
+    local_file="$(settings_directory "$INSTALL_DIR/.env")/local.env"
+    log_step "Placing the model weights from ${IMAGES_FROM}"
+    for dir in "$IMAGES_FROM"/weights/*/; do
+        name=$(basename "$dir")
+        if [[ "$name" == platform ]]; then
+            this_machine_is_a_compute_node && continue
+            platform_weight_copies | copy_into_a_volume "$(volume_ready llm-models)" ""
+            env_set "$local_file" DOWNLOAD_ONNX_EMBED "false"
+            log_info "The platform's embedding and reranking models, in $(volume_named llm-models)"
+        else
+            engine_weight_copies "$name" | copy_into_a_volume "$(volume_ready nim-llm-cache)" "1000:1000"
+            log_info "The weights of ${name}, in $(volume_named nim-llm-cache)"
+        fi
+    done
+    env_set "$local_file" HF_HUB_OFFLINE "1"
+    render_settings "$INSTALL_DIR/.env" "$local_file"
+    log_info "No model is downloaded on its first start"
 }
 
 step_pull() {
@@ -2284,6 +2401,7 @@ main() {
     step_certificate_authority_root
     step_networks
     step_images_from_a_folder
+    step_weights_from_a_folder
     step_pull
     step_start
     step_wait_healthy
