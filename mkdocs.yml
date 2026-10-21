@@ -1,0 +1,9 @@
+site_name: AI in a Box
+docs_dir: docs
+plugins:
+  - techdocs-core
+markdown_extensions:
+  - toc:
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
