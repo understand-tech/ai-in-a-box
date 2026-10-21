@@ -252,7 +252,7 @@ folder_load_report() {
 images_from_a_folder_start_under_their_digest() {
     local report
     report=$(folder_load_report)
-    grep -qE '^BUSYBOX_IMAGE="127\.0\.0\.1:15000/prometheus/busybox@sha256:[0-9a-f]{64}"$' <<< "$report" \
+    grep -qE '^BUSYBOX_IMAGE="127\.0\.0\.1:15000/e2e-test-images/busybox@sha256:[0-9a-f]{64}"$' <<< "$report" \
         && grep -qE '^ALPINE_INDEX_IMAGE="127\.0\.0\.1:15000/linuxcontainers/alpine@sha256:[0-9a-f]{64}"$' <<< "$report" \
         && [[ $(grep -c ': ran$' <<< "$report") -eq 2 ]] \
         && ! grep -q 'STILL THERE' <<< "$report" && return 0
