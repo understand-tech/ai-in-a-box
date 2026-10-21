@@ -254,9 +254,11 @@ write_registry_auth() {
     chmod 600 "$dir/auth.json"
 }
 
+# As the user preparing the folder: skopeo runs as root in its container, and the
+# files it wrote could then not be removed without sudo.
 skopeo_in() {
     local folder=$1 auth=$2; shift 2
-    docker run --rm -v "$folder":/folder -v "$auth":/auth:ro "$FOLDER_SKOPEO_TOOL" "$@" --authfile /auth/auth.json
+    docker run --rm --user "$(id -u):$(id -g)" -v "$folder":/folder -v "$auth":/auth:ro "$FOLDER_SKOPEO_TOOL" "$@" --authfile /auth/auth.json
 }
 
 # Per image, the manifest the release names as it is, then the box's own image
