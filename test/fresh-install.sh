@@ -182,6 +182,9 @@ state_setup() {
         # The same copy, with no Keygen behind it: the machine cannot reach it.
         license_with_no_network)
             echo "cp /w/licenses/ut-license /usr/bin/ut-license && : > /w/$1/keygen-requests" ;;
+        # A license issued with no registry access, as one made by hand in Keygen is.
+        licensed_without_a_token|licensed_without_a_token_pulling_nothing)
+            echo "cp /w/licenses/ut-license /usr/bin/ut-license && start_a_fake_keygen $1 && install -d -m 750 /etc/understandtech && install -m 600 /w/licenses/keys/active.key /etc/understandtech/license && install -m 600 /w/licenses/files/untokened.lic /etc/understandtech/machine.lic" ;;
         license_stored|licensed_offline)
             echo "cp /w/licenses/ut-license /usr/bin/ut-license && start_a_fake_keygen $1 && install -d -m 750 /etc/understandtech && install -m 600 /w/licenses/keys/active.key /etc/understandtech/license && install -m 600 /w/licenses/files/valid.lic /etc/understandtech/machine.lic" ;;
         license_tampered)
@@ -1063,11 +1066,20 @@ images_already_here_need_no_registry_login() {
     never_logged_in licensed_offline && never_asked_keygen licensed_offline
 }
 
+a_license_with_no_registry_token_is_refused_only_to_pull() {
+    refused_with licensed_without_a_token 'carries no registry token to pull the images with' || return 1
+    grep -q 'carries no registry token, and none is needed' <<< "$(output_of licensed_without_a_token_pulling_nothing)" \
+        && ! grep -q 'carries no registry token to pull' <<< "$(output_of licensed_without_a_token_pulling_nothing)" \
+        && never_logged_in licensed_without_a_token_pulling_nothing && return 0
+    output_of licensed_without_a_token_pulling_nothing | grep -E 'registry token|\[fail\]|EXIT=' | tail -4
+    return 1
+}
+
 a_license_of_the_old_format_says_what_to_ask_for() {
     refused_with license_of_the_old_format 'old format' && never_logged_in license_of_the_old_format
 }
 
-LICENSE_STATES="licensed license_stored license_renewed license_with_no_network licensed_by_file licensed_by_an_altered_file license_tampered license_from_another_machine license_ended license_taken licensed_offline licensed_elsewhere license_of_the_old_format"
+LICENSE_STATES="licensed_without_a_token licensed_without_a_token_pulling_nothing licensed license_stored license_renewed license_with_no_network licensed_by_file licensed_by_an_altered_file license_tampered license_from_another_machine license_ended license_taken licensed_offline licensed_elsewhere license_of_the_old_format"
 
 the_carried_token_never_reaches_the_output() {
     local state
@@ -1197,6 +1209,9 @@ WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= run_install_from_state license_fro
 WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --skip-pull --health-timeout 5" \
     run_install_from_state licensed_offline
 WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= run_install_from_state license_of_the_old_format
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= run_install_from_state licensed_without_a_token
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --skip-pull --health-timeout 5" \
+    run_install_from_state licensed_without_a_token_pulling_nothing
 run_install_from_state backup_destination_mounted
 run_install_from_state backup_destination_not_mounted
 run_install_from_state backup_destination_gone_on_an_update
@@ -1380,6 +1395,8 @@ property "the token a license carries, and the license key, never reach the outp
     the_carried_token_never_reaches_the_output
 property "a license key of the old format is refused, and says what to ask for" \
     a_license_of_the_old_format_says_what_to_ask_for
+property "a license with no registry token is refused to pull, and taken when nothing is pulled" \
+    a_license_with_no_registry_token_is_refused_only_to_pull
 property "a registry token alone still installs, and says a license will be needed" \
     a_token_alone_still_installs_and_says_so
 
