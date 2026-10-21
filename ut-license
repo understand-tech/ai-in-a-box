@@ -32,6 +32,8 @@ ut-license — binds the license UnderstandTech issued to this machine, and chec
                                              write the file that proves it
   ut-license check MACHINE_FILE              who it is licensed to, and until when
   ut-license field NAME MACHINE_FILE         one field of a valid machine file, for ut-install
+  ut-license request                         what a machine with no network sends to
+                                             UnderstandTech to be activated
   ut-license --fingerprint                   print the fingerprint of the key that
                                              signs machine files
 
@@ -42,12 +44,17 @@ field registry_token prints the registry token, to whoever asked for it.
 check exits 1 when it refuses the file, and 2 when the file is genuine and made
 for this machine but has ended, or its license has ended or is suspended: once
 UnderstandTech has renewed or restored it, activate fetches a new file.
+
+activate exits 3 when Keygen cannot be reached: request then prints this
+machine's fingerprint and name, never the license key, for UnderstandTech to
+activate it and send its license file back.
 EOF
 }
 
 fail() { printf '%s[fail]%s %s\n' "$RED" "$NC" "$*" >&2; exit 1; }
 warn() { printf '%s[warn]%s %s\n' "$YELLOW" "$NC" "$*" >&2; }
 renewable() { warn "$*"; exit 2; }
+unreachable() { printf '%s[fail]%s %s\n' "$RED" "$NC" "Keygen cannot be reached from this machine to activate its license" >&2; exit 3; }
 
 OLD_FORMAT="This license key is of the old format, which this version no longer reads; ask UnderstandTech for a new one: ${CONTACT}"
 
@@ -146,7 +153,7 @@ activate() {
 
     answer=$(keygen POST /licenses/actions/validate-key "$key" \
         "$(printf '%s' "$key" | jq -Rsc --arg fingerprint "$fingerprint" '{meta: {key: ., scope: {fingerprint: $fingerprint}}}')") \
-        || fail "Keygen cannot be reached to activate this machine: check its network, then try again"
+        || unreachable
     code=$(jq -r '.meta.code // .errors[0].code // "UNREADABLE"' <<< "$answer" 2>/dev/null || echo UNREADABLE)
     case "$code" in
         VALID) ;;
@@ -156,7 +163,7 @@ activate() {
                 --arg license "$license_id" --arg name "$(hostname)" \
                 '{data: {type: "machines", attributes: {fingerprint: $fingerprint, name: $name, platform: "linux"},
                   relationships: {license: {data: {type: "licenses", id: $license}}}}}')") \
-                || fail "Keygen cannot be reached to activate this machine: check its network, then try again"
+                || unreachable
             code=$(jq -r '.errors[0].code // empty' <<< "$activation" 2>/dev/null || echo UNREADABLE)
             [[ -z "$code" ]] || refuse_the_validation "$code" "$activation"
             ;;
@@ -176,6 +183,13 @@ activate() {
     fi
     install -m 600 "$staged" "$machine_file"
     rm -f "$staged"
+}
+
+request() {
+    local fingerprint
+    fingerprint=$(machine_fingerprint)
+    jq -n --arg fingerprint "$fingerprint" --arg name "$(hostname)" \
+        '{v: 1, fingerprint: $fingerprint, name: $name, platform: "linux"}'
 }
 
 verified_dataset() {
@@ -279,6 +293,7 @@ main() {
         activate)      [[ -n "${2:-}" && -n "${3:-}" ]] || { usage; exit 1; }; activate "$2" "$3" ;;
         check)         [[ -n "${2:-}" ]] || { usage; exit 1; }; check "$2" ;;
         field)         [[ -n "${2:-}" && -n "${3:-}" ]] || { usage; exit 1; }; field "$2" "$3" ;;
+        request)       request ;;
         *)             usage; exit 1 ;;
     esac
 }

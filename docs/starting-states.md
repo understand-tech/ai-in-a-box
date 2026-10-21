@@ -25,7 +25,7 @@ walked the installer from a known starting point.
 | 250 GB free | model weights and document storage | `--check`, blocking |
 | 24 GB of RAM | below that, workers are starved | `--check`, warning |
 | `openssl` 3.0 or newer, `jq`, `curl` | certificate inspection in `ut-certificate`; activating and checking the license in `ut-license` | the package depends on them |
-| A license key, and `api.keygen.sh` on the first install | the license binds to this machine and carries the registry access — anonymous pulls answer `403` | `ut-install` asks, then activates it |
+| A license key, and `api.keygen.sh` on the first install or the license file UnderstandTech sends back | the license binds to this machine and carries the registry access — anonymous pulls answer `403` | `ut-install` asks, then activates it, or writes the request to send |
 | Docker address space for four networks | each network takes a block from a small pool | `--check`, blocking |
 | `git` | **only** when the release is cloned rather than packaged | `--check`, conditional |
 

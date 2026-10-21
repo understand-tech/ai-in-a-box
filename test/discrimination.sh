@@ -778,6 +778,30 @@ if [[ -x "$REPO_ROOT/ut-get" ]]; then
 fi
 
 if [[ -x "$REPO_ROOT/ut-license" ]]; then
+    capability_discriminates "an unreachable Keygen taken for a refusal" \
+        "a machine that cannot reach Keygen says so apart" \
+        "sed -i.bak 's#; exit 3; }\$#; exit 1; }#' ut-license"
+
+    capability_discriminates "a license file sent back that anyone can read" \
+        "a machine activated from its request alone gets a license file it accepts" \
+        "sed -i.bak 's#(umask 077 \&\& printf#(umask 022 \&\& printf#' packaging/activate-a-machine.sh"
+
+    capability_discriminates "a license looked up by its machine alone" \
+        "a machine activated from its request alone gets a license file it accepts" \
+        "sed -i.bak 's#metadata%5Bcustomer%5D=\${customer}\&##' packaging/activate-a-machine.sh"
+
+    capability_discriminates "an unreachable Keygen taken for a refusal" \
+        "a machine that cannot reach Keygen says so apart" \
+        "sed -i.bak 's#; exit 3; }\$#; exit 1; }#' ut-license"
+
+    capability_discriminates "a license file sent back that anyone can read" \
+        "a machine activated from its request alone gets a license file it accepts" \
+        "sed -i.bak 's#(umask 077 \&\& printf#(umask 022 \&\& printf#' packaging/activate-a-machine.sh"
+
+    capability_discriminates "a license looked up by its machine alone" \
+        "a machine activated from its request alone gets a license file it accepts" \
+        "sed -i.bak 's#metadata%5Bcustomer%5D=\${customer}\&##' packaging/activate-a-machine.sh"
+
     capability_discriminates "a suspended license, still taken" \
         "a license that ended or is suspended is refused" \
         "sed -i.bak 's#elif (\$license.status // \"\") == \"SUSPENDED\" or (\$license.status // \"\") == \"BANNED\" then \"suspended\"#elif false then \"suspended\"#' ut-license"
@@ -1016,6 +1040,30 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
     install_walk_discriminates "a license file that ended, refused instead of renewed" \
         "a license file that has ended is renewed from Keygen" \
         "sed -i.bak 's|(( checked == 0 \|\| checked == 2 ))|(( checked == 0 ))|' ut-install"
+
+    install_walk_discriminates "a machine with no network told nothing of what to do" \
+        "a machine that cannot reach Keygen writes its request" \
+        "sed -i.bak 's#^            ask_for_the_license_by_file \"\$tool\"\$#            :#' ut-install"
+
+    install_walk_discriminates "a request that carries the license key" \
+        "a machine that cannot reach Keygen writes its request" \
+        "sed -i.bak 's#\"\$tool\" request > \"\$LICENSE_REQUEST\"#{ \"\$tool\" request; cat \"\$LICENSE_FILE\"; } > \"\$LICENSE_REQUEST\"#' ut-install"
+
+    install_walk_discriminates "a license file given by hand, taken unchecked" \
+        "an altered license file sent back is refused" \
+        "sed -i.bak '/cat \"\$MACHINE_FILE_GIVEN\" > \"\$machine\"/{n;s/\"\$tool\" check/true/;}' ut-install"
+
+    install_walk_discriminates "a machine with no network told nothing of what to do" \
+        "a machine that cannot reach Keygen writes its request" \
+        "sed -i.bak 's#^            ask_for_the_license_by_file \"\$tool\"\$#            :#' ut-install"
+
+    install_walk_discriminates "a request that carries the license key" \
+        "a machine that cannot reach Keygen writes its request" \
+        "sed -i.bak 's#\"\$tool\" request > \"\$LICENSE_REQUEST\"#{ \"\$tool\" request; cat \"\$LICENSE_FILE\"; } > \"\$LICENSE_REQUEST\"#' ut-install"
+
+    install_walk_discriminates "a license file given by hand, taken unchecked" \
+        "an altered license file sent back is refused" \
+        "sed -i.bak '/cat \"\$MACHINE_FILE_GIVEN\" > \"\$machine\"/{n;s/\"\$tool\" check/true/;}' ut-install"
 
     install_walk_discriminates "a license that is not kept for the next update" \
         "kept for updates, readable by root alone" \
