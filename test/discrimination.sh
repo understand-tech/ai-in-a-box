@@ -1223,6 +1223,10 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
         "a node reached over plain http is refused before anything is written" \
         "sed -i.bak 's|\\^https://\\[\\^/\\]+|^https?://[^/]+|' bin/ut-install"
 
+    install_walk_discriminates "a folder of another release taken for this one" \
+        "a folder prepared for another release is refused, with both versions named" \
+        "sed -i.bak 's|^die_on_a_folder_of_another_release() {\$|die_on_a_folder_of_another_release() { return 0;|' bin/ut-install"
+
     install_walk_discriminates "a folder taken without checking it holds every image" \
         "a folder that lacks an image is refused before anything is written" \
         "sed -i.bak 's|^die_on_a_folder_that_misses_an_image() {\$|die_on_a_folder_that_misses_an_image() { return 0;|' bin/ut-install"

@@ -223,6 +223,7 @@ folder_load_report() {
     printf 'BUSYBOX_IMAGE="%s"\nALPINE_INDEX_IMAGE="%s"\nUT_RELEASE_VERSION="0.0.0"\n' "$BUSYBOX_IMAGE" "$ALPINE_INDEX_IMAGE" > "$probe/install/release.env"
     : > "$probe/install/.env"; : > "$probe/install/local.env"
     printf '{"auths":{}}\n' > "$probe/auth/auth.json"
+    : > "$probe/folder/understandtech_0.0.0_all.deb"
     (
         set +u; source "$REPO_ROOT/bin/ut-get"
         BOX_ARCHITECTURE=$( set +u; UT_INSTALL_DIR="$probe/install" source "$REPO_ROOT/bin/ut-install" >/dev/null 2>&1; set +eE; architecture_docker_runs )

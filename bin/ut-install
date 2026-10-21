@@ -1838,10 +1838,25 @@ weights_problems_in_the_folder() {
     done
 }
 
+# A folder serves the release it was prepared for, which ut-get --prepare names by
+# its package. Anything else would name every image missing and say nothing of why.
+# The package stamps release.env "<version>+<commit>"; its file name has the version.
+die_on_a_folder_of_another_release() {
+    local packages prepared here
+    here=$(env_get "$INSTALL_DIR/release.env" UT_RELEASE_VERSION 2>/dev/null || true)
+    here=${here%%+*}
+    [[ -n "$here" ]] || return 0
+    packages=$(cd "$IMAGES_FROM" && ls understandtech_*_all.deb 2>/dev/null || true)
+    prepared=$(printf '%s\n' "$packages" | sed -n 's/^understandtech_\(.*\)_all\.deb$/\1/p' | head -1)
+    [[ "$prepared" == "$here" ]] && return 0
+    die "${IMAGES_FROM} was prepared for release ${prepared:-none}, and this is ${here}: prepare it again with ut-get --prepare --version ${here}"
+}
+
 die_on_a_folder_that_misses_an_image() {
     [[ -n "$IMAGES_FROM" ]] || return 0
     [[ -d "$IMAGES_FROM" ]] || die "No such folder: ${IMAGES_FROM}"
     die_on_a_folder_for_another_architecture
+    die_on_a_folder_of_another_release
     local line missing="" tool
     for tool in distribution.tar stable.tar; do
         [[ -f "$IMAGES_FROM/tools/$tool" ]] || missing+="  tools/${tool}"$'\n'
