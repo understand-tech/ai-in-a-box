@@ -74,8 +74,24 @@ roles_running() {
     awk -v image="$1" '$2 == image { roles = roles (roles ? "+" : "") $1 } END { print roles }' <<< "$ROLE_IMAGES"
 }
 
+# An engine a model of models/ runs instead of the release's, such as vLLM for a
+# model NIM cannot serve: carried in a folder prepared for that model only.
+model_image_lines() {
+    local entry id key reference
+    for entry in "$REPO_ROOT"/models/*.env; do
+        [[ -f "$entry" ]] || continue
+        id=$(basename "$entry" .env)
+        for key in VLLM_ENGINE_IMAGE NIM_IMAGE; do
+            reference=$(sed -n "s/^${key}=\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" "$entry")
+            [[ "$reference" == *@sha256:* ]] || continue
+            grep -qF "\"${reference}\"" "$RELEASE_ENV" && continue
+            printf '%s %s\n' "$id" "$reference"
+        done
+    done
+}
+
 component_for_image() {
-    local reference=$1 repository tag digest name roles
+    local reference=$1 model=${2:-} repository tag digest name roles
     repository=$(repository_of "$reference")
     tag=$(tag_of "$reference")
     digest=$(digest_of "$reference")
@@ -85,8 +101,13 @@ component_for_image() {
     printf '      "name": "%s",\n' "$name"
     printf '      "version": "%s",\n' "$tag"
     roles=$(roles_running "$reference")
-    printf '      "purl": "pkg:oci/%s@%s?repository_url=%s&tag=%s&roles=%s",\n' \
-        "$name" "$digest" "$repository" "$tag" "$roles"
+    local for_model=""
+    if [[ -n "$model" ]]; then
+        roles="appliance+compute"
+        for_model="&model=${model}"
+    fi
+    printf '      "purl": "pkg:oci/%s@%s?repository_url=%s&tag=%s&roles=%s%s",\n' \
+        "$name" "$digest" "$repository" "$tag" "$roles" "$for_model"
     printf '      "hashes": [{ "alg": "SHA-256", "content": "%s" }]\n' "${digest#sha256:}"
     printf '    }'
 }
@@ -176,6 +197,11 @@ write_bom() {
         printf ',\n'
         component_for_image "$(reference_in "$line")"
     done <<< "$(image_lines)"
+    while read -r model line; do
+        [[ -n "$model" ]] || continue
+        printf ',\n'
+        component_for_image "$line" "$model"
+    done <<< "$(model_image_lines)"
     while read -r name sha size location; do
         [[ -n "$name" ]] || continue
         printf ',\n'
