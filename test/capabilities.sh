@@ -1773,6 +1773,71 @@ the_license_key_and_its_token_never_come_out() {
     return 1
 }
 
+# The whole way of a machine that cannot reach Keygen: the request it writes, our
+# activation from that request alone, and the file it then installs with.
+offline_activation_verdicts() {
+    local work="$WORK_DIR/offline" image
+    mkdir -p "$work"
+    if [[ ! -s "$work/verdicts.txt" ]]; then
+        image=$(license_image) || { echo "the image the license checks run in did not build" >&2; return 1; }
+        printf '%s\n' "$KEYGEN_ISSUER_TEST_TOKEN" > "$work/product.token"
+        docker run --rm -i -v "$REPO_ROOT":/src:ro -v "$work":/w -e KEYGEN_PRODUCT_TOKEN="$KEYGEN_ISSUER_TEST_TOKEN" \
+            "$image" bash -s > "$work/verdicts.txt" 2> "$work/verdicts.err" <<'LAB'
+set -u
+. /src/test/keygen.sh
+prepare_license_lab /src /w/lab
+status=0
+/w/lab/ut-license-with-no-network activate /w/lab/keys/fresh.key /w/never.lic > /w/said-unreachable 2>&1 || status=$?
+printf 'unreachable_status=%s\n' "$status"
+/w/lab/ut-license request > /w/request.json 2> /w/said-request
+printf 'request_names_this_machine=%s\n' "$(jq -e --arg fp "$(cat /w/lab/fingerprint)" '.v == 1 and .fingerprint == $fp and (.name | length > 0)' /w/request.json >/dev/null && echo yes || echo no)"
+printf 'request_carries_a_key=%s\n' "$(grep -qE 'TEST-|"key"' /w/request.json && echo yes || echo no)"
+: > /w/keygen-requests
+python3 /src/test/fake-keygen-activating.py 8766 /w/lab /w/keygen-requests &
+for _ in $(seq 50); do curl -s -o /dev/null http://127.0.0.1:8766/ && break; sleep 0.1; done
+activate() {
+    UT_KEYGEN_API=http://127.0.0.1:8766/v1/accounts/test /src/packaging/activate-a-machine.sh --customer "$1" --machine test-box \
+        --request /w/request.json --keygen-token-file /w/product.token --out "$2"
+}
+activate test-customer /w/sent-back.lic > /w/said-activate 2>&1 && verdict=written || verdict=refused
+printf 'sent_back=%s\n' "$verdict"
+printf 'sent_back_mode=%s\n' "$(stat -c %a /w/sent-back.lic 2>/dev/null || echo none)"
+printf 'sent_back_checks=%s\n' "$(/w/lab/ut-license check /w/sent-back.lic >/dev/null 2>&1 && echo yes || echo no)"
+activate test-customer /w/sent-again.lic > /w/said-again 2>&1 && verdict=written || verdict=refused
+printf 'sent_again=%s\n' "$verdict"
+activate nobody /w/never-sent.lic > /w/said-nobody 2>&1 && verdict=written || verdict=refused
+printf 'sent_for_an_unknown_license=%s\n' "$verdict"
+LAB
+    fi
+    cat "$work/verdicts.txt"
+}
+
+offline_verdict_is() {
+    local key=$1 expected=$2 verdicts
+    verdicts=$(offline_activation_verdicts)
+    grep -qx "${key}=${expected}" <<< "$verdicts" && return 0
+    echo "expected ${key}=${expected}, verdicts were:"; echo "$verdicts"
+    tail -5 "$WORK_DIR/offline/verdicts.err" 2>/dev/null
+    return 1
+}
+
+a_machine_that_cannot_reach_keygen_says_so_apart() {
+    offline_verdict_is unreachable_status 3 \
+        && grep -q 'cannot be reached' "$WORK_DIR/offline/said-unreachable" 2>/dev/null && return 0
+    echo "it said: $(cat "$WORK_DIR/offline/said-unreachable" 2>/dev/null)"
+    return 1
+}
+
+its_request_names_the_machine_and_never_the_key() {
+    offline_verdict_is request_names_this_machine yes && offline_verdict_is request_carries_a_key no
+}
+
+a_machine_activated_from_its_request_installs_with_the_file_sent_back() {
+    offline_verdict_is sent_back written && offline_verdict_is sent_back_mode 600 \
+        && offline_verdict_is sent_back_checks yes && offline_verdict_is sent_again written \
+        && offline_verdict_is sent_for_an_unknown_license refused
+}
+
 the_shipped_key_is_the_one_licenses_are_signed_with() {
     local embedded versioned
     embedded=$("$REPO_ROOT/ut-license" --fingerprint)
@@ -2905,6 +2970,12 @@ if [[ -x "$REPO_ROOT/ut-license" ]]; then
         a_license_naming_a_registry_hands_it_to_the_installer
     capability "the license key and its registry token never come out, nor reach a command line" \
         the_license_key_and_its_token_never_come_out
+    capability "a machine that cannot reach Keygen says so apart from a refusal" \
+        a_machine_that_cannot_reach_keygen_says_so_apart
+    capability "its license request names the machine, never the license key" \
+        its_request_names_the_machine_and_never_the_key
+    capability "a machine activated from its request alone gets a license file it accepts" \
+        a_machine_activated_from_its_request_installs_with_the_file_sent_back
     capability "the key ut-license carries is the key licenses are signed with" \
         the_shipped_key_is_the_one_licenses_are_signed_with
     capability "and a license file checks with no network at all" \
