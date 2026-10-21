@@ -2673,12 +2673,14 @@ sftp_server_ready() {
 
 # The image comes from lscr.io, pulled on the spot: a pull that fails once is
 # the registry's hiccup, not the capability's verdict.
+# Measured on 2026-10-21: both runners asked for it at once and lscr.io answered
+# "toomanyrequests" to each, so the waits grow to about five minutes in all.
 pull_with_retries() {
     local image=$1 attempt
-    for attempt in 1 2 3; do
+    for attempt in 1 2 3 4 5 6; do
         docker image inspect "$image" >/dev/null 2>&1 && return 0
         docker pull -q "$image" >/dev/null && return 0
-        sleep $(( attempt * 5 ))
+        sleep $(( attempt * 15 ))
     done
     docker pull "$image"
 }
