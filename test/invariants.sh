@@ -44,7 +44,7 @@ env_keys() {
 }
 
 keys_the_installer_generates() {
-    grep -o 'GENERATED_SECRET_KEYS=([^)]*)' "$REPO_ROOT/ut-install" 2>/dev/null \
+    grep -o 'GENERATED_SECRET_KEYS=([^)]*)' "$REPO_ROOT/bin/ut-install" 2>/dev/null \
         | sed 's/.*(//; s/)//' | tr ' ' '\n'
     printf 'MONGODB_USERNAME\nMONGODB_PASSWORD\n'
 }
@@ -146,7 +146,7 @@ seconds_in_duration() {
 # would stay green for a reason that no longer holds.
 check_no_service_starts_slower_than_the_installer_waits() {
     local budget entry line service role period seconds
-    budget=$(grep -m1 -oE 'HEALTH_TIMEOUT="\$\{UT_HEALTH_TIMEOUT:-[0-9]+' "$REPO_ROOT/ut-install" 2>/dev/null \
+    budget=$(grep -m1 -oE 'HEALTH_TIMEOUT="\$\{UT_HEALTH_TIMEOUT:-[0-9]+' "$REPO_ROOT/bin/ut-install" 2>/dev/null \
         | grep -oE '[0-9]+$') || return 0
     [[ -n "$budget" ]] || return 0
     service=""
@@ -507,10 +507,10 @@ check_every_tool_ships() {
     local builder="$REPO_ROOT/packaging/build-deb.sh" staged tool name
     [[ -f "$builder" ]] || return 0
     staged=$(sed -n '/^stage_commands()/,/^}/p' "$builder")
-    for tool in "$REPO_ROOT"/ut-*; do
+    for tool in "$REPO_ROOT"/bin/ut-*; do
         [[ -f "$tool" && -x "$tool" ]] || continue
         name=${tool##*/}
-        grep -qF "\$REPO_ROOT/${name}\"" <<< "$staged" && continue
+        grep -qF "\$REPO_ROOT/bin/${name}\"" <<< "$staged" && continue
         report "tool-not-shipped:${name}" \
             "${name} sits beside the other operator tools and build-deb.sh does not install it — a machine installed from the package does not have it"
     done
@@ -660,7 +660,7 @@ check_services_that_mount_a_release_file_follow_the_release() {
 # leaves a retired service running beside the one that replaced it, still holding
 # the memory its replacement was given.
 check_the_install_starts_the_stack_as_boot_does() {
-    local installer="$REPO_ROOT/ut-install" autostart="$REPO_ROOT/setup-autostart.sh"
+    local installer="$REPO_ROOT/bin/ut-install" autostart="$REPO_ROOT/setup-autostart.sh"
     [[ -f "$installer" && -f "$autostart" ]] || return 0
     grep -q 'compose up -d .*--remove-orphans' "$autostart" || return 0
     sed -n '/^step_start() {/,/^}/p' "$installer" | grep -q 'up -d.*--remove-orphans' && return 0
@@ -680,6 +680,15 @@ check_production_defaults() {
         report "queue-eviction:redis" \
             "redis runs allkeys-lru while holding the RQ queues — tasks can be evicted under memory pressure"
     fi
+}
+
+check_no_tool_at_the_root() {
+    local tool
+    for tool in "$REPO_ROOT"/ut-*; do
+        [[ -f "$tool" ]] || continue
+        report "tool-at-the-root:${tool##*/}" \
+            "${tool##*/} sits at the root of the repository — operator tools live in bin/, where build-deb.sh takes them from"
+    done
 }
 
 check_documented_paths_exist() {
@@ -810,6 +819,7 @@ main() {
     check_the_package_stamps_the_commit_it_was_built_from
     check_the_package_ships_what_the_stack_mounts
     check_every_tool_ships
+    check_no_tool_at_the_root
     check_ut_send_uses_only_the_standard_library
     check_images_are_pinned
     check_compose_images_are_pinned

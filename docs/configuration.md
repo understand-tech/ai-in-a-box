@@ -231,7 +231,8 @@ thing this product promises not to do.
 
 `HF_HUB_OFFLINE="0"` lets containers fetch model weights on first start — which
 is why an appliance sold as offline is only offline after a connected first
-boot. Setting it to `1` requires the weights to be present already.
+boot. Setting it to `1` requires the weights to be present already; an install
+from a folder `ut-get --prepare` wrote places them and sets it.
 
 ## What you will actually change
 

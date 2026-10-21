@@ -158,7 +158,7 @@ docker compose restart api
 docker compose up -d --scale workers=4
 
 # Install log archival
-./ut-logs-archive --install
+./bin/ut-logs-archive --install
 ```
 
 To move to a new version, use [updating](update.md) rather than a bare
