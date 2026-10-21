@@ -93,7 +93,7 @@ jobs:
       - name: Checksums
         run: |
           set -euo pipefail
-          cp ut-verify ut-get packaging/release.pub dist/
+          cp bin/ut-verify bin/ut-get packaging/release.pub dist/
           ( cd dist && sha256sum understandtech_*.deb understandtech_*.deb.sig understandtech_*.cdx.json ut-verify ut-get release.pub > SHA256SUMS )
 
       - name: Publish
