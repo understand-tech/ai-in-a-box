@@ -1199,6 +1199,9 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
         "a model on vLLM brings its engine, and its arguments whole" \
         "sed -i.bak 's|\"\\\$chosen\"\\*=\\*) put_the_line_in_place_of_its_key \"\\\$local_file\" \"\\\$line\" ;;|\"\$chosen\"*=*) env_set \"\$local_file\" \"\${line%%=*}\" \"\${line#*=}\" ;;|' bin/ut-install"
 
+    install_walk_discriminates "a list that reads no license" \
+        "the models listed are those proven on this GPU" \
+        "sed -i.bak 's/MODEL_LICENSE 2>/NO_SUCH_KEY 2>/' bin/ut-install"
     install_walk_discriminates "a model chosen without its proof" \
         "a model is chosen only on a GPU it is proven on" \
         "sed -i.bak 's| \\&\\& \\[\\[ -f \"\\\$(proof_of \"\\\$id\" \"\\\$engine\" \"\\\$family\")\" \\]\\]||' bin/ut-install"
@@ -1352,6 +1355,10 @@ if grep -q 'checkouts_holding_settings' "$REPO_ROOT/bin/ut-install"; then
 discriminates "a model entry with no variant" \
     "model-without-variant" \
     "sed -i.bak '/^NIM_LLM_MODEL_PATH=/d' models/qwen3.8-27b-nvfp4.env"
+
+discriminates "a model entry whose license nobody read" \
+    "model-without-license" \
+    "sed -i.bak '/^MODEL_LICENSE=/d' models/nemotron-3.5-bolt-74b.env"
 
 discriminates "a model's image named by tag only" \
     "model-image-not-pinned" \

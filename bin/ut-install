@@ -108,6 +108,10 @@ running the same command again.
 
 Options
   --check              Run the preflight checks and exit. Changes nothing.
+  --list-models        Print the models this machine can serve, one a line: the
+                       name --model takes, the engine, the size of the weights,
+                       the license, and whether it runs code of its own. Changes
+                       nothing.
   --update             Fast-forward an existing checkout to the target ref.
                        Off by default so a support fix applied on the machine
                        is not silently discarded.
@@ -1229,6 +1233,34 @@ die_on_a_model_not_proven_here() {
     exit 1
 }
 
+size_of_the_weights_of() {
+    local list="$INSTALL_DIR/models/weights/$1.txt"
+    [[ -f "$list" ]] || { printf 'size not pinned'; return 0; }
+    LC_ALL=C awk '{ bytes += $2 } END { printf "%.1f GB", bytes / 1e9 }' "$list"
+}
+
+list_the_models_this_machine_serves() {
+    local id entry family="" engine served code unproven=""
+    this_machine_goes_without_its_accelerator || family=$(gpu_family)
+    while read -r id; do
+        [[ -n "$id" ]] || continue
+        entry="$INSTALL_DIR/models/${id}.env"
+        if this_machine_goes_without_its_accelerator; then
+            served="generation from another machine"
+        elif engine=$(ENGINE_CHOICE="" engine_proven_for "$id" "$family"); then
+            served="$( [[ "$engine" == vllm ]] && echo vLLM || echo NIM ) on ${family}"
+        else
+            unproven+=" ${id}"
+            continue
+        fi
+        code=""
+        grep -q -- '--trust-remote-code' "$entry" && code="runs code of its own"
+        printf '%-28s %-34s %-10s %-14s %s\n' "$id" "$served" "$(size_of_the_weights_of "$id")" \
+            "$(env_get "$entry" MODEL_LICENSE 2>/dev/null || echo 'license not read')" "$code"
+    done <<< "$(models_listed)"
+    [[ -z "$unproven" ]] || log_warn "Not proven on ${family:-an unknown GPU}:${unproven}"
+}
+
 # Copied line by line rather than through env_set: a passthrough argument holds
 # JSON in single quotes, and env_set would wrap it in double quotes that compose
 # then reads as the end of the value.
@@ -1265,7 +1297,7 @@ write_the_settings_the_model_needs() {
     while IFS= read -r line || [[ -n "$line" ]]; do
         case "$line" in
             "$chosen"*=*) put_the_line_in_place_of_its_key "$local_file" "$line" ;;
-            NIM_*=*|VLLM_ENGINE_*=*) ;;
+            NIM_*=*|VLLM_ENGINE_*=*|MODEL_*=*) ;;
             [A-Z_]*=*) put_the_line_in_place_of_its_key "$local_file" "$line" ;;
         esac
     done < "$entry"
@@ -2485,6 +2517,7 @@ parse_arguments() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --check)          ACTION="check" ;;
+            --list-models)    ACTION="list-models" ;;
             --no-gpu)         NO_GPU=true ;;
             --update)         DO_UPDATE=true ;;
             --no-autostart)   DO_AUTOSTART=false ;;
@@ -2522,6 +2555,11 @@ main() {
     resolve_install_dir
     die_on_a_folder_that_misses_an_image
     die_on_a_model_nobody_listed
+
+    if [[ "$ACTION" == "list-models" ]]; then
+        list_the_models_this_machine_serves
+        exit 0
+    fi
 
     if [[ "$ACTION" == "check" ]]; then
         DOMAIN=$(domain_to_check)

@@ -186,7 +186,17 @@ in `models/`:
 sudo ut-install --model qwen3.8-27b-nvfp4
 ```
 
-Each file there is one model: the names the platform asks it by, and one or two
+`ut-install --list-models` prints the models this machine can serve, one a line:
+the name `--model` takes, the engine, the size of the weights, the license, and
+`runs code of its own` when the engine loads code from the model's repository. The
+models not proven on this GPU are named after them.
+
+```text
+nemotron-3.5-bolt-74b        vLLM on gb10                       25.1 GB    OpenMDW-1.1    runs code of its own
+qwen3.8-27b-nvfp4            NIM on gb10                        26.4 GB    apache-2.0
+```
+
+Each file there is one model: its license (`MODEL_LICENSE`), the names the platform asks it by, and one or two
 **variants**, NIM (`NIM_IMAGE`, `NIM_LLM_MODEL_PATH`, `NIM_LLM_PASSTHROUGH_ARGS`) or
 vLLM (`VLLM_ENGINE_IMAGE`, `VLLM_ENGINE_MODEL`, `VLLM_ENGINE_ARGS`), each image
 pinned by digest.
