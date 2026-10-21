@@ -515,6 +515,10 @@ capability_discriminates "a folder image taken without proving it is the one the
     "a folder holding an image the release does not name is refused" \
     "sed -i.bak 's/\\[\\[ \"\\\$(sha256_of \"\\\$dir\/named.json\")\" == \"\\\${reference#\\*@}\" \\]\\] || return 1/:/' bin/ut-install"
 
+capability_discriminates "a folder taken whatever processor it was prepared for" \
+    "a folder prepared for another processor is refused" \
+    "sed -i.bak 's|^die_on_a_folder_for_another_architecture() {\$|die_on_a_folder_for_another_architecture() { return 0;|' bin/ut-install"
+
 capability_discriminates "a folder tool loaded whatever it turns out to be" \
     "a folder whose tool is not the one the release names is refused" \
     "sed -i.bak 's/^        \\[\\[ -n \"\\\$config\" && /        [[ -n \"\$config\" || /' bin/ut-install"
