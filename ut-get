@@ -60,6 +60,9 @@ ut-get — installs UnderstandTech AI in a Box from a release, then runs ut-inst
                        takes it too.
   --token-file <file>  with --prepare, a registry token instead of a license
                        key. Read from the file, never shown.
+  --architecture arm64|amd64
+                       with --prepare, the box's processor: arm64 for a GB10 or a
+                       GB300 (the default), amd64 for an x86 control plane.
   --browser            continue in a browser on this machine (ut-setup)
                        rather than in this terminal (ut-install).
 
@@ -81,6 +84,7 @@ parse_arguments() {
             --prepare) PREPARE_DIR="${2:?--prepare needs a directory}"; shift ;;
             --token-file) TOKEN_FILE="${2:?--token-file needs a file}"; shift ;;
             --license-file) LICENSE_FILE="${2:?--license-file needs a file}"; INSTALL_ARGUMENTS+=("$1" "$2"); shift ;;
+            --architecture) BOX_ARCHITECTURE="${2:?--architecture needs arm64 or amd64}"; shift ;;
             --version) VERSION="${2:?--version needs a version}"; shift ;;
             --browser) NEXT=ut-setup ;;
             -h|--help) usage; exit 0 ;;
@@ -264,8 +268,20 @@ copy_the_tools_into() {
     log_info "The registry and skopeo the box loads its images with are in the folder"
 }
 
+# A folder serves one architecture: what it holds for the box, tools included,
+# runs on that processor only. ut-install compares it with the box's.
+mark_the_folder_architecture() {
+    local folder=$1 marked=""
+    [[ -f "$folder/architecture" ]] && marked=$(cat "$folder/architecture")
+    [[ -z "$marked" || "$marked" == "$BOX_ARCHITECTURE" ]] \
+        || fail "${folder} was prepared for ${marked}, not ${BOX_ARCHITECTURE} — use another folder"
+    printf '%s\n' "$BOX_ARCHITECTURE" > "$folder/architecture"
+}
+
 prepare_a_folder() {
     command -v docker >/dev/null 2>&1 || fail "--prepare needs Docker on this machine"
+    [[ "$BOX_ARCHITECTURE" == arm64 || "$BOX_ARCHITECTURE" == amd64 ]] \
+        || fail "--architecture takes arm64 or amd64, not ${BOX_ARCHITECTURE}"
     [[ -r "$LICENSE_FILE" || -r "$TOKEN_FILE" ]] || fail "--prepare needs --license-file: the license key UnderstandTech issued"
     [[ -n "$VERSION" ]] || VERSION=$(latest_version) || exit 1
     is_a_release_version "$VERSION" || fail "${VERSION:-nothing} is not a release version — expected one like 2026.09.1"
@@ -278,6 +294,7 @@ prepare_a_folder() {
     package=$(the_only_package_in "$folder") || exit 1
     verify_signature "$package" || fail "$(basename "$package") is NOT signed by UnderstandTech — delete ${folder} and run again"
 
+    mark_the_folder_architecture "$folder"
     if [[ -r "$LICENSE_FILE" ]]; then
         read_the_registry_access_of_the_license
     else
