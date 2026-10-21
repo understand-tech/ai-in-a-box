@@ -27,7 +27,7 @@
   </div>
 
   <form id="answers" class="card">
-    <h2>Three answers</h2>
+    <h2>Four answers</h2>
     <p class="hint"><span class="required" aria-hidden="true">*</span> required</p>
 
     <label for="domain">The address people will open <span class="required" aria-hidden="true">*</span></label>
@@ -39,6 +39,12 @@
       <input id="license" name="license" type="password" required autocomplete="off" spellcheck="false">
       <button type="button" id="show-license" class="quiet" aria-pressed="false">Show</button>
     </div>
+
+    <label for="model">The model this box serves</label>
+    <select id="model" name="model">
+      <option value="">The model this release ships</option>
+    </select>
+    <p class="hint">Only the models proven on this box's GPU are offered: their engine, how much they download, their license, and whether they run code of their own.</p>
 
     <fieldset>
       <legend>Send UnderstandTech usage reports? <span class="required" aria-hidden="true">*</span></legend>

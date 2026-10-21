@@ -214,7 +214,7 @@ state_setup() {
         model_on_vllm|test_vllm_forced_on_nim)
             echo 'cp /w/models/test-vllm.env /usr/share/understandtech/models/ && cp /w/models/proven/test-vllm.vllm.gb10.md /usr/share/understandtech/models/proven/' ;;
         # A GPU no model has been proven on: the stub answers H100 rather than GB10.
-        model_on_an_unproven_gpu)
+        model_on_an_unproven_gpu|models_listed_on_an_unproven_gpu)
             echo 'printf "#!/bin/sh\ncase \"\$1\" in -L) echo \"GPU 0: NVIDIA H100 80GB HBM3 (UUID: GPU-test)\" ;; *) echo \"NVIDIA H100 80GB HBM3\" ;; esac\n" > /stub/nvidia-smi && chmod +x /stub/nvidia-smi' ;;
         # A box installed with --model, whose entry the release has since changed.
         model_kept_by_name)
@@ -486,6 +486,21 @@ a_model_is_chosen_only_where_it_is_proven() {
     grep -q 'has not been proven on h100-80gb-hbm3' <<< "$output" && ! grep -q '^EXIT=0$' <<< "$output" \
         && ! grep -q '^UT_MODEL=' "$WORK_DIR/model_on_an_unproven_gpu/local-env" 2>/dev/null && return 0
     echo "$output" | grep -E 'fail|proven|EXIT' | tail -5
+    return 1
+}
+
+the_models_listed_are_those_proven_here() {
+    local here elsewhere
+    here=$(output_of models_listed_on_gb10)
+    elsewhere=$(output_of models_listed_on_an_unproven_gpu)
+    grep -qE '^qwen3\.8-27b-nvfp4 +NIM on gb10 +[0-9.]+ GB +apache-2\.0 *$' <<< "$here" \
+        && grep -qE '^nemotron-3\.5-bolt-74b +vLLM on gb10 +[0-9.]+ GB +OpenMDW-1\.1 +runs code of its own$' <<< "$here" \
+        && grep -q '^EXIT=0$' <<< "$here" && ! grep -q 'Install stopped' <<< "$here" \
+        && ! grep -qE '^(qwen|nemotron)' <<< "$elsewhere" \
+        && grep -q 'Not proven on h100-80gb-hbm3: nemotron-3.5-bolt-74b qwen3.8-27b-nvfp4' <<< "$elsewhere" \
+        && grep -q '^EXIT=0$' <<< "$elsewhere" && ! grep -q 'Install stopped' <<< "$elsewhere" && return 0
+    echo "on gb10:"; echo "$here" | tail -5
+    echo "on h100:"; echo "$elsewhere" | tail -3
     return 1
 }
 
@@ -1180,6 +1195,8 @@ INSTALL_COMMAND="ut-install --model test-vllm" run_install_from_state model_on_v
 INSTALL_COMMAND="ut-install --model nope" run_install_from_state unknown_model
 INSTALL_COMMAND="ut-install --model qwen3.8-27b-nvfp4" run_install_from_state model_on_an_unproven_gpu
 INSTALL_COMMAND="ut-install --model test-vllm --engine nim" run_install_from_state test_vllm_forced_on_nim
+INSTALL_COMMAND="ut-install --list-models" run_install_from_state models_listed_on_gb10
+INSTALL_COMMAND="ut-install --list-models" run_install_from_state models_listed_on_an_unproven_gpu
 run_install_from_state model_kept_by_name
 INSTALL_COMMAND="ut-install --no-gpu --model nemotron-3.5-bolt-74b" run_install_from_state model_on_a_control_plane
 PULL_EXIT=0 WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --inference-from https://node.example.test:8444 --inference-key-file /w/compute/key --inference-ca-file /w/compute/root.crt" \
@@ -1278,6 +1295,8 @@ property "and what it wrote renders a stack" \
     the_settings_render_a_stack model_on_vllm
 property "a model is chosen only on a GPU it is proven on" \
     a_model_is_chosen_only_where_it_is_proven
+property "the models listed are those proven on this GPU, with their engine, size and license" \
+    the_models_listed_are_those_proven_here
 property "an engine asked for is taken only where it is proven" \
     an_engine_forced_is_taken_only_if_proven
 property "a model kept by name follows its entry on the next install" \

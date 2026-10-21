@@ -9,12 +9,15 @@ import (
 
 const maxLicenseLength = 8192
 
+var modelName = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,63}$`)
+
 var hostname = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$`)
 
 type Answers struct {
 	Domain    string
 	License   string
 	Reporting string
+	Model     string
 }
 
 func parseAnswers(form url.Values) (Answers, error) {
@@ -22,6 +25,7 @@ func parseAnswers(form url.Values) (Answers, error) {
 		Domain:    strings.ToLower(strings.TrimSpace(form.Get("domain"))),
 		License:   strings.TrimSpace(form.Get("license")),
 		Reporting: form.Get("reporting"),
+		Model:     form.Get("model"),
 	}
 	switch {
 	case !hostname.MatchString(answers.Domain) || len(answers.Domain) > 253:
@@ -32,10 +36,16 @@ func parseAnswers(form url.Values) (Answers, error) {
 		return Answers{}, errors.New("the license key is one line, as UnderstandTech sent it")
 	case answers.Reporting != "yes" && answers.Reporting != "no":
 		return Answers{}, errors.New("say whether usage reports are sent")
+	case answers.Model != "" && !modelName.MatchString(answers.Model):
+		return Answers{}, errors.New("the model is not one this box lists")
 	}
 	return answers, nil
 }
 
 func installArguments(answers Answers, licenseFile string) []string {
-	return []string{"--domain", answers.Domain, "--license-file", licenseFile, "--reporting", answers.Reporting}
+	arguments := []string{"--domain", answers.Domain, "--license-file", licenseFile, "--reporting", answers.Reporting}
+	if answers.Model != "" {
+		arguments = append(arguments, "--model", answers.Model)
+	}
+	return arguments
 }

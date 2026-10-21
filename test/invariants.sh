@@ -550,6 +550,7 @@ check_every_model_has_a_pinned_variant() {
         nim=$(grep -c '^NIM_LLM_MODEL_PATH=' "$entry" || true)
         vllm=$(grep -c '^VLLM_ENGINE_IMAGE=' "$entry" || true)
         (( nim + vllm > 0 )) || report "model-without-variant:${id}" "models/${id}.env has neither a NIM nor a vLLM variant"
+        grep -qE '^MODEL_LICENSE="[^"]+"$' "$entry" || report "model-without-license:${id}" "models/${id}.env names no MODEL_LICENSE, read before the model entered the registry"
         if (( nim )); then
             [[ "$(entry_value "$entry" NIM_IMAGE)" == *@sha256:* ]] \
                 || report "model-image-not-pinned:${id}.nim" "models/${id}.env's NIM variant does not pin NIM_IMAGE by digest"
@@ -592,7 +593,7 @@ check_the_shipped_model_agrees_with_the_release() {
     local entry="$REPO_ROOT/models/qwen3.8-27b-nvfp4.env" line key
     [[ -f "$entry" ]] || { report "shipped-model-missing" "models/qwen3.8-27b-nvfp4.env is gone"; return; }
     while IFS= read -r line; do
-        case "$line" in '#'*|'') continue ;; esac
+        case "$line" in '#'*|''|MODEL_*=*) continue ;; esac
         key=${line%%=*}
         grep -qxF "$line" "$RELEASE_ENV" \
             || report "shipped-model-drifted:${key}" "models/qwen3.8-27b-nvfp4.env and release.env disagree on ${key}"
