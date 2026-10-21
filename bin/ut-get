@@ -176,9 +176,11 @@ verify_signature() {
 # of materials. Nothing here is trusted: the box checks every image against the
 # release.env of the signed package.
 images_of_the_bill() {
-    local bill=$1 role=${2:-}
+    local bill=$1 role=${2:-} model=${3:-} for_model
     sed -n 's|.*"purl": "pkg:oci/[^@]*@\(sha256:[0-9a-f]\{64\}\)?repository_url=\([^&"]*\)\([^"]*\)".*|\2@\1 \3|p' "$bill" \
         | while read -r reference qualifiers; do
+            for_model=$(sed -n 's/.*&model=\([^&#]*\).*/\1/p' <<< "$qualifiers")
+            [[ -z "$for_model" || "$for_model" == "$model" ]] || continue
             runs_in_the_role "$qualifiers" "$role" && printf '%s\n' "$reference"
         done
 }
@@ -396,7 +398,7 @@ prepare_a_folder() {
     auth=$(mktemp -d)/auth
     write_registry_auth "$auth" "$REGISTRY_TOKEN"
     log_step "Copying every image the ${FOLDER_ROLE} role of release ${VERSION} runs"
-    { images_of_the_bill "$folder/understandtech_${VERSION}.cdx.json" "$FOLDER_ROLE"
+    { images_of_the_bill "$folder/understandtech_${VERSION}.cdx.json" "$FOLDER_ROLE" "$MODEL_ID"
       for image in ${EXTRA_IMAGES[@]+"${EXTRA_IMAGES[@]}"}; do printf '%s@%s\n' "$(repository_of "$image")" "${image#*@}"; done
     } | copy_the_images_into "$folder" "$auth"
     copy_the_tools_into "$folder" "$auth"
