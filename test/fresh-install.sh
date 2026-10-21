@@ -81,7 +81,7 @@ printf '%s\n' "$*" >> /stub/docker-calls
 case "$1 $2" in
     "version --format")   echo "29.0.0" ;;
     "compose version")    echo "v5.0.0" ;;
-    "info --format")      echo '{"nvidia":{}}' ;;
+    "info --format")      case "$*" in *Architecture*) echo aarch64 ;; *) echo '{"nvidia":{}}' ;; esac ;;
     "volume inspect")     [ "${MONGO_VOLUME_EXISTS:-no}" = yes ] ;;
     "network inspect")    exit 1 ;;
     "network create")     exit "${NETWORK_CREATE_EXIT:-0}" ;;
@@ -226,7 +226,7 @@ state_setup() {
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'COMPOSE_FILE="compose.yaml:compose.compute.yaml"\nCOMPOSE_PROFILES="nim"\nUT_INFERENCE_ADDRESS="192.0.2.10"\n'"'"' > /etc/understandtech/local.env' ;;
         # A folder ut-get --prepare never finished: its tools, none of the images.
         folder_without_its_images)
-            echo 'install -d /w/folder_without_its_images/folder/tools && : > /w/folder_without_its_images/folder/tools/distribution.tar && : > /w/folder_without_its_images/folder/tools/stable.tar' ;;
+            echo 'install -d /w/folder_without_its_images/folder/tools && echo arm64 > /w/folder_without_its_images/folder/architecture && : > /w/folder_without_its_images/folder/tools/distribution.tar && : > /w/folder_without_its_images/folder/tools/stable.tar' ;;
         # A box once installed from a folder, now installed with the network again.
         installed_from_a_folder_before)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'API_IMAGE="127.0.0.1:15000/understand-tech/ut-api-customer@sha256:%064d"\nOA_KEY="kept"\n'"'"' 0 > /etc/understandtech/local.env' ;;
