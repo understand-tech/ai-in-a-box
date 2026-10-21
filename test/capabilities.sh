@@ -446,6 +446,20 @@ each_role_prepares_its_own_part() {
     return 1
 }
 
+a_model_engine_is_carried_for_that_model_only() {
+    local bill="$WORK_DIR/models.cdx.json" engine counts
+    "$REPO_ROOT/packaging/release-bom.sh" 9999.99.9 > "$bill" 2>/dev/null
+    engine=$(sed -n 's/^VLLM_ENGINE_IMAGE="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$REPO_ROOT/models/nemotron-3.5-bolt-74b.env")
+    counts=$( set +u; source "$REPO_ROOT/bin/ut-get"; set +eE
+        images_of_the_bill "$bill" appliance nemotron-3.5-bolt-74b | grep -c "@${engine#*@}"
+        images_of_the_bill "$bill" appliance "" | grep -c "@${engine#*@}"
+        images_of_the_bill "$bill" control-plane nemotron-3.5-bolt-74b | grep -c "@${engine#*@}"
+        weights_of_the_bill "$bill" nemotron-3.5-bolt-74b compute | grep -c '^nemotron-3.5-bolt-74b ' )
+    [[ "$(head -3 <<< "$counts" | tr '\n' ' ')" == "1 0 0 " && "$(tail -1 <<< "$counts")" -gt 100 ]] && return 0
+    echo "Bolt's engine: for Bolt ×$(sed -n 1p <<< "$counts"), for the release's model ×$(sed -n 2p <<< "$counts"), on a control plane ×$(sed -n 3p <<< "$counts"); Bolt's weights: $(sed -n 4p <<< "$counts")"
+    return 1
+}
+
 a_folder_for_another_architecture_is_refused() {
     local report
     report=$(folder_load_report 'echo s390x > "$probe/folder/architecture"')
@@ -2959,6 +2973,8 @@ if grep -q 'step_images_from_a_folder' "$REPO_ROOT/bin/ut-install"; then
         a_platform_without_its_images_is_refused
     capability "the bill of materials says which role runs each image and each weight" \
         the_bill_says_which_role_runs_each_image
+    capability "a model's own engine is carried for that model only, with its weights" \
+        a_model_engine_is_carried_for_that_model_only
     capability "each role prepares its own part of the release" \
         each_role_prepares_its_own_part
     capability "a folder prepared for another processor is refused" \
