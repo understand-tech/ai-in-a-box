@@ -81,7 +81,7 @@ printf '%s\n' "$*" >> /stub/docker-calls
 case "$1 $2" in
     "version --format")   echo "29.0.0" ;;
     "compose version")    echo "v5.0.0" ;;
-    "info --format")      echo '{"nvidia":{}}' ;;
+    "info --format")      case "$*" in *Architecture*) echo aarch64 ;; *) echo '{"nvidia":{}}' ;; esac ;;
     "volume inspect")     [ "${MONGO_VOLUME_EXISTS:-no}" = yes ] ;;
     "network inspect")    exit 1 ;;
     "network create")     exit "${NETWORK_CREATE_EXIT:-0}" ;;
@@ -172,7 +172,7 @@ state_setup() {
         # A checkout of the repository, the way an operator who cloned it has one.
         # The package is installed too, which is what makes the choice interesting.
         launched_from_a_checkout|checkout_but_no_key)
-            echo 'install -d /srv/clone && cp -a /usr/share/understandtech/. /srv/clone/ && install -d /srv/clone/.git && cp /usr/bin/ut-install /srv/clone/ut-install' ;;
+            echo 'install -d /srv/clone && cp -a /usr/share/understandtech/. /srv/clone/ && install -d /srv/clone/.git /srv/clone/bin && cp /usr/bin/ut-install /srv/clone/bin/ut-install' ;;
         empty_settings) echo 'install -m 600 /dev/null /etc/understandtech/.env' ;;
         # The packaged ut-license trusts Keygen's key and asks Keygen; these states
         # swap in one that trusts the suite's key and asks the fake Keygen, which
@@ -226,7 +226,10 @@ state_setup() {
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'COMPOSE_FILE="compose.yaml:compose.compute.yaml"\nCOMPOSE_PROFILES="nim"\nUT_INFERENCE_ADDRESS="192.0.2.10"\n'"'"' > /etc/understandtech/local.env' ;;
         # A folder ut-get --prepare never finished: its tools, none of the images.
         folder_without_its_images)
-            echo 'install -d /w/folder_without_its_images/folder/tools && : > /w/folder_without_its_images/folder/tools/distribution.tar && : > /w/folder_without_its_images/folder/tools/stable.tar' ;;
+            echo 'install -d /w/folder_without_its_images/folder/tools && echo arm64 > /w/folder_without_its_images/folder/architecture && : > /w/folder_without_its_images/folder/tools/distribution.tar && : > /w/folder_without_its_images/folder/tools/stable.tar' ;;
+        # A folder ut-get --prepare wrote for an x86 control plane, carried to a GB10.
+        folder_for_another_processor)
+            echo 'install -d /w/folder_for_another_processor/folder && echo amd64 > /w/folder_for_another_processor/folder/architecture' ;;
         # A box once installed from a folder, now installed with the network again.
         installed_from_a_folder_before)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'API_IMAGE="127.0.0.1:15000/understand-tech/ut-api-customer@sha256:%064d"\nOA_KEY="kept"\n'"'"' 0 > /etc/understandtech/local.env' ;;
@@ -1123,9 +1126,9 @@ prepare_a_vllm_entry
 run_install_from_state bare
 PULL_EXIT=0 run_install_from_state install_runs_through
 PULL_EXIT=0 STEP_CA_RUNS=no run_install_from_state compute_node_runs_through
-INSTALL_TOKEN= INSTALL_COMMAND=/srv/clone/ut-install \
+INSTALL_TOKEN= INSTALL_COMMAND=/srv/clone/bin/ut-install \
     run_install_from_state launched_from_a_checkout
-INSTALL_TOKEN= INSTALL_COMMAND=/srv/clone/ut-install \
+INSTALL_TOKEN= INSTALL_COMMAND=/srv/clone/bin/ut-install \
     run_install_from_state checkout_but_no_key
 run_install_from_state empty_settings
 run_install_from_state openai_key_given
@@ -1151,6 +1154,7 @@ PULL_EXIT=0 STEP_CA_RUNS=no INSTALL_COMMAND="ut-install --compute 192.0.2.10" \
 INSTALL_COMMAND="ut-install --compute node.local" run_install_from_state compute_named_by_mdns
 INSTALL_COMMAND="ut-install --compute 192.0.2.10 --no-gpu" run_install_from_state compute_without_its_gpu
 INSTALL_COMMAND="ut-install --images-from /w/folder_without_its_images/folder" run_install_from_state folder_without_its_images
+INSTALL_COMMAND="ut-install --images-from /w/folder_for_another_processor/folder" run_install_from_state folder_for_another_processor
 run_install_from_state installed_from_a_folder_before
 run_install_from_state already_set
 run_install_from_state no_settings_dir
@@ -1262,6 +1266,8 @@ property "a node named by mDNS is refused before anything is written" \
     refused_before_anything_is_written pointed_at_an_mdns_node "names a .local host"
 property "a folder that lacks an image is refused before anything is written" \
     refused_before_anything_is_written folder_without_its_images "missing or not the one the release names"
+property "a folder prepared for another processor is refused before anything is written" \
+    refused_before_anything_is_written folder_for_another_processor "was prepared for amd64, and this machine runs arm64"
 property "an install that downloads again forgets the names a folder gave its images" \
     a_pulling_install_forgets_the_names_of_a_folder
 property "a compute node is installed with one flag, and asked for no domain" \

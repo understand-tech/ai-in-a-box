@@ -63,7 +63,7 @@ them: a changed file reaches them without a reboot.
 
 ```bash
 cd /opt/understandtech
-sudo ./ut-install --update
+sudo ./bin/ut-install --update
 ```
 
 `--update` is what fast-forwards the checkout. Without it the installer leaves

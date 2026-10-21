@@ -192,7 +192,7 @@ application_answers() {
 
 supply_missing_variables() {
     set +u
-    INSTALL_DIR="$WORK_DIR/after" source "$REPO_ROOT/ut-install" >/dev/null 2>&1
+    INSTALL_DIR="$WORK_DIR/after" source "$REPO_ROOT/bin/ut-install" >/dev/null 2>&1
     set -u +eE
     trap - ERR
     generate_application_secrets "$WORK_DIR/after/.env" >/dev/null 2>&1
