@@ -517,27 +517,27 @@ capability_discriminates "a folder image taken without proving it is the one the
 
 capability_discriminates "a weight placed without checking its content" \
     "a weight that is not the file the release lists is refused" \
-    "sed -i.bak 's/ || \\[\\[ \"\\\$(sha256_of \"\\\$file\")\" != \"sha256:\\\$sha\" \\]\\]; then/; then/' bin/ut-install\"
+    "sed -i.bak 's/ || \\[\\[ \"\\\$(sha256_of \"\\\$file\")\" != \"sha256:\\\$sha\" \\]\\]; then/; then/' bin/ut-install"
 
 capability_discriminates "a weight downloaded without checking its content" \
     "a download that is not the listed file is refused" \
-    "sed -i.bak 's/ || \"\\\$(sha256_of_file \"\\\$target.part\")\" != \"\\\$sha\" \\]\\]; then/ ]]; then/' bin/ut-get\"
+    "sed -i.bak 's/ || \"\\\$(sha256_of_file \"\\\$target.part\")\" != \"\\\$sha\" \\]\\]; then/ ]]; then/' bin/ut-get"
 
 capability_discriminates "weights placed with the engine still free to download" \
     "weights from a folder land where each service looks" \
-    "sed -i.bak '/env_set \"\\\$local_file\" HF_HUB_OFFLINE \"1\"/d' bin/ut-install\"
+    "sed -i.bak '/env_set \"\\\$local_file\" HF_HUB_OFFLINE \"1\"/d' bin/ut-install"
 
 capability_discriminates "an engine cache with no revision to resolve" \
     "weights from a folder land where each service looks" \
-    "sed -i.bak '/printf .=%s %s.refs.main/d' bin/ut-install\"
+    "sed -i.bak '/printf .=%s %s.refs.main/d' bin/ut-install"
 
 capability_discriminates "engine weights left to root" \
     "weights from a folder land where each service looks" \
-    "sed -i.bak 's|copy_into_a_volume \"\\\$(volume_ready nim-llm-cache)\" \"1000:1000\"|copy_into_a_volume \"\\\$(volume_ready nim-llm-cache)\" \"\"|' bin/ut-install\"
+    "sed -i.bak 's|copy_into_a_volume \"\\\$(volume_ready nim-llm-cache)\" \"1000:1000\"|copy_into_a_volume \"\\\$(volume_ready nim-llm-cache)\" \"\"|' bin/ut-install"
 
 capability_discriminates "a model prepared with no weights for it" \
     "a model whose weights the release does not list is not prepared" \
-    "sed -i.bak 's|^die_on_a_model_the_bill_does_not_carry() {\$|die_on_a_model_the_bill_does_not_carry() { return 0;|' bin/ut-get\"
+    "sed -i.bak 's|^die_on_a_model_the_bill_does_not_carry() {\$|die_on_a_model_the_bill_does_not_carry() { return 0;|' bin/ut-get"
 
 capability_discriminates "a bill of materials that forgets the weights" \
     "the bill of materials lists every weight the release pins" \
@@ -557,19 +557,19 @@ capability_discriminates "folder images named by tag rather than by digest" \
 
 capability_discriminates "a registry token read under a key Keygen never writes" \
     "a folder is prepared with the registry access the license key reads" \
-    "sed -i.bak 's#metadata.registryToken#metadata.registry_token#' bin/ut-get\"
+    "sed -i.bak 's#metadata.registryToken#metadata.registry_token#' bin/ut-get"
 
 capability_discriminates "the license key handed to curl on its command line, to prepare" \
     "a folder is prepared with the registry access the license key reads" \
-    "sed -i.bak 's#\"\${KEYGEN_API}/me\"#\"\${KEYGEN_API}/me?k=\${key}\"#' bin/ut-get\"
+    "sed -i.bak 's#\"\${KEYGEN_API}/me\"#\"\${KEYGEN_API}/me?k=\${key}\"#' bin/ut-get"
 
 capability_discriminates "a license file carried in the folder, and left there" \
     "the license file carried in a folder goes to ut-install" \
-    "sed -i.bak 's#|| printf .%s. \"\${found\[0\]}\"#|| :#' bin/ut-get\"
+    "sed -i.bak 's#|| printf .%s. \"\${found\[0\]}\"#|| :#' bin/ut-get"
 
 capability_discriminates "two license files in a folder, one taken at random" \
     "the license file carried in a folder goes to ut-install" \
-    "sed -i.bak 's#(( \${\#found\[@\]} <= 1 )) ||#true ||#' bin/ut-get\"
+    "sed -i.bak 's#(( \${\#found\[@\]} <= 1 )) ||#true ||#' bin/ut-get"
 
 capability_discriminates "ut-get preparing with another tool than ut-install loads with" \
     "ut-get prepares with the tools ut-install loads with" \
