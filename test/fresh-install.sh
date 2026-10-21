@@ -148,6 +148,7 @@ cp /stub/docker-calls /w/$state/docker-calls 2>/dev/null || : > /w/$state/docker
 cp /stub/docker-login-stdin /w/$state/login-stdin 2>/dev/null || : > /w/$state/login-stdin
 cp /etc/understandtech/license /w/$state/license 2>/dev/null || : > /w/$state/license
 cp /etc/understandtech/machine.lic /w/$state/machine 2>/dev/null || : > /w/$state/machine
+cp /etc/understandtech/license-request.json /w/$state/license-request 2>/dev/null || : > /w/$state/license-request
 cp /etc/understandtech/inference-ca-bundle.pem /w/$state/inference-ca-bundle 2>/dev/null || : > /w/$state/inference-ca-bundle
 stat -c '%a %U' /etc/understandtech/license > /w/$state/license-mode 2>/dev/null || : > /w/$state/license-mode
 stat -c '%a %U' /etc/understandtech/machine.lic > /w/$state/machine-mode 2>/dev/null || : > /w/$state/machine-mode
@@ -176,8 +177,11 @@ state_setup() {
         # The packaged ut-license trusts Keygen's key and asks Keygen; these states
         # swap in one that trusts the suite's key and asks the fake Keygen, which
         # runs in every one of them so that a request nobody should make is seen.
-        licensed|license_ended|license_taken|licensed_elsewhere)
+        licensed|license_ended|license_taken|licensed_elsewhere|licensed_by_file|licensed_by_an_altered_file)
             echo "cp /w/licenses/ut-license /usr/bin/ut-license && start_a_fake_keygen $1" ;;
+        # The same copy, with no Keygen behind it: the machine cannot reach it.
+        license_with_no_network)
+            echo "cp /w/licenses/ut-license /usr/bin/ut-license && : > /w/$1/keygen-requests" ;;
         license_stored|licensed_offline)
             echo "cp /w/licenses/ut-license /usr/bin/ut-license && start_a_fake_keygen $1 && install -d -m 750 /etc/understandtech && install -m 600 /w/licenses/keys/active.key /etc/understandtech/license && install -m 600 /w/licenses/files/valid.lic /etc/understandtech/machine.lic" ;;
         license_tampered)
@@ -1007,6 +1011,33 @@ a_license_file_that_ended_is_renewed_from_keygen() {
     reached_the_pull license_renewed && logged_in_with_the_license license_renewed
 }
 
+a_machine_with_no_network_writes_its_request_and_says_what_to_do() {
+    local request
+    refused_with license_with_no_network 'send /etc/understandtech/license-request.json to UnderstandTech' || return 1
+    grep -q 'again with --machine-file' <<< "$(output_of license_with_no_network)" \
+        || { echo "nothing said how to install with the file sent back"; return 1; }
+    request=$(of_state license_with_no_network license-request)
+    [[ "$(jq -r .fingerprint <<< "$request" 2>/dev/null)" == "$(cat "$WORK_DIR/licenses/fingerprint")" ]] \
+        || { echo "the request does not name this machine: ${request:-nothing}"; return 1; }
+    grep -qE 'TEST-' <<< "$request" && { echo "the request carries the license key"; return 1; }
+    never_logged_in license_with_no_network
+}
+
+a_license_file_sent_back_installs_with_no_network() {
+    grep -q 'Licensed to Test Customer' <<< "$(output_of licensed_by_file)" \
+        || { echo "the license file was not checked:"; output_of licensed_by_file | tail -5; return 1; }
+    [[ "$(of_state licensed_by_file machine)" == "$(cat "$WORK_DIR/licenses/files/valid.lic")" ]] \
+        || { echo "the license file given is not the one kept"; return 1; }
+    [[ "$(of_state licensed_by_file machine-mode)" == "600 root" ]] \
+        || { echo "the license file kept is '$(of_state licensed_by_file machine-mode)', not 600 root"; return 1; }
+    never_asked_keygen licensed_by_file && never_logged_in licensed_by_file
+}
+
+an_altered_license_file_sent_back_is_refused() {
+    refused_with licensed_by_an_altered_file 'not issued by UnderstandTech' \
+        && never_asked_keygen licensed_by_an_altered_file && never_logged_in licensed_by_an_altered_file
+}
+
 a_license_file_from_another_machine_stops_the_install() {
     refused_with license_from_another_machine 'made for another machine' \
         && never_asked_keygen license_from_another_machine && never_logged_in license_from_another_machine
@@ -1030,7 +1061,7 @@ a_license_of_the_old_format_says_what_to_ask_for() {
     refused_with license_of_the_old_format 'old format' && never_logged_in license_of_the_old_format
 }
 
-LICENSE_STATES="licensed license_stored license_renewed license_tampered license_from_another_machine license_ended license_taken licensed_offline licensed_elsewhere license_of_the_old_format"
+LICENSE_STATES="licensed license_stored license_renewed license_with_no_network licensed_by_file licensed_by_an_altered_file license_tampered license_from_another_machine license_ended license_taken licensed_offline licensed_elsewhere license_of_the_old_format"
 
 the_carried_token_never_reaches_the_output() {
     local state
@@ -1148,6 +1179,12 @@ WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --lice
 WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= run_install_from_state license_stored
 WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= run_install_from_state license_tampered
 WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= run_install_from_state license_renewed
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --license-file /w/licenses/keys/fresh.key" \
+    run_install_from_state license_with_no_network
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --license-file /w/licenses/keys/active.key --machine-file /w/licenses/files/valid.lic --skip-pull --health-timeout 5" \
+    run_install_from_state licensed_by_file
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --license-file /w/licenses/keys/active.key --machine-file /w/licenses/files/tampered.lic --skip-pull" \
+    run_install_from_state licensed_by_an_altered_file
 WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= run_install_from_state license_from_another_machine
 WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --skip-pull --health-timeout 5" \
     run_install_from_state licensed_offline
@@ -1307,6 +1344,12 @@ property "an update takes the license already on the machine, and asks Keygen no
     an_update_takes_the_license_already_there_with_no_network
 property "a license file that has ended is renewed from Keygen, and the install goes on" \
     a_license_file_that_ended_is_renewed_from_keygen
+property "a machine that cannot reach Keygen writes its request, and says what to do with it" \
+    a_machine_with_no_network_writes_its_request_and_says_what_to_do
+property "the license file sent back installs the machine with no network" \
+    a_license_file_sent_back_installs_with_no_network
+property "an altered license file sent back is refused before any request" \
+    an_altered_license_file_sent_back_is_refused
 property "an altered license file stops the install before any request and any login" \
     an_altered_license_file_stops_before_any_request_or_login
 property "a license file made for another machine stops the install, and says so" \
