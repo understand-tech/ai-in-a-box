@@ -20,6 +20,7 @@ DOWNLOAD_DIR="/var/cache/understandtech/releases"
 RELEASE_DIR=""
 PREPARE_DIR=""
 MODEL_ID=""
+FOLDER_ROLE="appliance"
 TOKEN_FILE=""
 LICENSE_FILE=""
 REGISTRY_TOKEN=""
@@ -61,6 +62,10 @@ ut-get — installs UnderstandTech AI in a Box from a release, then runs ut-inst
                        takes it too.
   --token-file <file>  with --prepare, a registry token instead of a license
                        key. Read from the file, never shown.
+  --role appliance|control-plane|compute
+                       with --prepare, what the box runs: all of it (the default),
+                       the platform taking its inference from another machine, or
+                       the inference only. The folder carries that role alone.
   --model <id>         with --prepare, the model whose weights the folder carries,
                        beside those of the platform; the release's own without it.
                        Elsewhere, passed on to ut-install.
@@ -87,6 +92,7 @@ parse_arguments() {
             --from)    RELEASE_DIR="${2:?--from needs a directory}"; shift ;;
             --prepare) PREPARE_DIR="${2:?--prepare needs a directory}"; shift ;;
             --token-file) TOKEN_FILE="${2:?--token-file needs a file}"; shift ;;
+            --role)    FOLDER_ROLE="${2:?--role needs appliance, control-plane or compute}"; shift ;;
             --model)   MODEL_ID="${2:?--model needs a model}"; INSTALL_ARGUMENTS+=(--model "$2"); shift ;;
             --license-file) LICENSE_FILE="${2:?--license-file needs a file}"; INSTALL_ARGUMENTS+=("$1" "$2"); shift ;;
             --architecture) BOX_ARCHITECTURE="${2:?--architecture needs arm64 or amd64}"; shift ;;
@@ -165,7 +171,19 @@ verify_signature() {
 # of materials. Nothing here is trusted: the box checks every image against the
 # release.env of the signed package.
 images_of_the_bill() {
-    sed -n 's|.*"purl": "pkg:oci/[^@]*@\(sha256:[0-9a-f]\{64\}\)?repository_url=\([^&"]*\).*|\2@\1|p' "$1"
+    local bill=$1 role=${2:-}
+    sed -n 's|.*"purl": "pkg:oci/[^@]*@\(sha256:[0-9a-f]\{64\}\)?repository_url=\([^&"]*\)\([^"]*\)".*|\2@\1 \3|p' "$bill" \
+        | while read -r reference qualifiers; do
+            runs_in_the_role "$qualifiers" "$role" && printf '%s\n' "$reference"
+        done
+}
+
+# A bill written before roles names none, and its images are taken for every role.
+runs_in_the_role() {
+    local qualifiers=$1 role=$2 roles
+    [[ -z "$role" ]] && return 0
+    roles=$(sed -n 's/.*&roles=\([^&#]*\).*/\1/p' <<< "$qualifiers")
+    [[ -z "$roles" || "+${roles}+" == *"+${role}+"* ]]
 }
 
 # The folder names an image by repository and digest, without its tag: the bill
@@ -277,9 +295,11 @@ copy_the_tools_into() {
 # <repository> <revision> <path>": the platform's, and the model's, or the
 # release default's. The box takes a file only as models/weights/ lists it.
 weights_of_the_bill() {
-    local bill=$1 model=$2
-    sed -n 's|.*"purl": "pkg:huggingface/\([^@]*\)@\([0-9a-f]\{40\}\)?checksum=sha256:\([0-9a-f]\{64\}\)&size=\([0-9]*\)&weights=\([^&#]*\)\(&default=true\)\{0,1\}#\([^"]*\)".*|\5 \3 \4 \1 \2 \7 \6|p' "$bill" \
-        | while read -r list sha size repository revision path default; do
+    local bill=$1 model=$2 role=${3:-}
+    sed -n 's|.*"purl": "pkg:huggingface/\([^@]*\)@\([0-9a-f]\{40\}\)?checksum=sha256:\([0-9a-f]\{64\}\)&size=\([0-9]*\)&weights=\([^&#]*\)\(&default=true\)\{0,1\}\([^#]*\)#\([^"]*\)".*|\5 \3 \4 \1 \2 \8 \6 \7|p' "$bill" \
+        | while read -r list sha size repository revision path default roles; do
+            [[ "$default" == "&default=true" ]] || { roles=$default; default=""; }
+            runs_in_the_role "$roles" "$role" || continue
             if [[ "$list" == platform || "$list" == "$model" || ( -z "$model" && -n "$default" ) ]]; then
                 printf '%s %s %s %s %s %s\n' "$list" "$sha" "$size" "$repository" "$revision" "$path"
             fi
@@ -321,6 +341,14 @@ download_the_weights_into() {
 
 # A folder serves one architecture: what it holds for the box, tools included,
 # runs on that processor only. ut-install compares it with the box's.
+mark_the_folder_role() {
+    local folder=$1 marked=""
+    [[ -f "$folder/role" ]] && marked=$(cat "$folder/role")
+    [[ -z "$marked" || "$marked" == "$FOLDER_ROLE" ]] \
+        || fail "${folder} was prepared for the ${marked} role, not ${FOLDER_ROLE} — use another folder"
+    printf '%s\n' "$FOLDER_ROLE" > "$folder/role"
+}
+
 mark_the_folder_architecture() {
     local folder=$1 marked=""
     [[ -f "$folder/architecture" ]] && marked=$(cat "$folder/architecture")
@@ -333,6 +361,8 @@ prepare_a_folder() {
     command -v docker >/dev/null 2>&1 || fail "--prepare needs Docker on this machine"
     [[ "$BOX_ARCHITECTURE" == arm64 || "$BOX_ARCHITECTURE" == amd64 ]] \
         || fail "--architecture takes arm64 or amd64, not ${BOX_ARCHITECTURE}"
+    [[ "$FOLDER_ROLE" =~ ^(appliance|control-plane|compute)$ ]] \
+        || fail "--role takes appliance, control-plane or compute, not ${FOLDER_ROLE}"
     [[ -r "$LICENSE_FILE" || -r "$TOKEN_FILE" ]] || fail "--prepare needs --license-file: the license key UnderstandTech issued"
     [[ -n "$VERSION" ]] || VERSION=$(latest_version) || exit 1
     is_a_release_version "$VERSION" || fail "${VERSION:-nothing} is not a release version — expected one like 2026.09.1"
@@ -346,6 +376,7 @@ prepare_a_folder() {
     verify_signature "$package" || fail "$(basename "$package") is NOT signed by UnderstandTech — delete ${folder} and run again"
 
     mark_the_folder_architecture "$folder"
+    mark_the_folder_role "$folder"
     if [[ -r "$LICENSE_FILE" ]]; then
         read_the_registry_access_of_the_license
     else
@@ -353,13 +384,13 @@ prepare_a_folder() {
     fi
     auth=$(mktemp -d)/auth
     write_registry_auth "$auth" "$REGISTRY_TOKEN"
-    log_step "Copying every image release ${VERSION} runs"
-    images_of_the_bill "$folder/understandtech_${VERSION}.cdx.json" | copy_the_images_into "$folder" "$auth"
+    log_step "Copying every image the ${FOLDER_ROLE} role of release ${VERSION} runs"
+    images_of_the_bill "$folder/understandtech_${VERSION}.cdx.json" "$FOLDER_ROLE" | copy_the_images_into "$folder" "$auth"
     copy_the_tools_into "$folder" "$auth"
     rm -rf "$(dirname "$auth")"
 
     local weights
-    weights=$(weights_of_the_bill "$folder/understandtech_${VERSION}.cdx.json" "$MODEL_ID")
+    weights=$(weights_of_the_bill "$folder/understandtech_${VERSION}.cdx.json" "$MODEL_ID" "$FOLDER_ROLE")
     die_on_a_model_the_bill_does_not_carry "$weights"
     local of_the_model=${MODEL_ID:+of $MODEL_ID}
     log_step "Downloading the weights ${of_the_model:-of the release model} and of the platform"

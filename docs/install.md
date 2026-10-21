@@ -82,8 +82,13 @@ step 5. Nothing is installed from a package it cannot verify.
   and `jq`, prepare a folder with the release, every image it runs and the
   weights of its models —
   `bash ut-get --prepare <folder> --version "$VERSION" --license-file license.key`,
-  with `--model <id>` for a model other than the release's and
-  `--architecture amd64` for an x86 control plane; run again to resume. The
+  with `--model <id>` for a model other than the release's,
+  `--architecture amd64` for an x86 control plane, and `--role compute` or
+  `--role control-plane` to carry only what a compute node or a control plane
+  taking its inference elsewhere runs — a compute node's folder leaves the
+  platform out, about 40 GB less; run again to resume. A folder prepared for
+  one role is refused on a box installed as another; one prepared without
+  `--role` serves every role. The
   license key reads its registry access from Keygen. Carry the folder to the
   box, then
   `sudo bash ut-get --from <folder> --license-file license.key --domain box.example.com`.

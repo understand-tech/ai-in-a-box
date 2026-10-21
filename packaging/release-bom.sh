@@ -15,8 +15,9 @@ release-bom.sh — writes what a release is made of, as CycloneDX on stdout.
 
 One component per image, named by the digest release.env pins it to, and one
 per weight file models/weights/ pins, its sha256 in its purl, for ut-get
---prepare to download. Reads nothing but release.env and models/weights/: no
-registry, no network, no pull.
+--prepare to download. Each says which roles run it, from docker compose's own
+rendering of each role. Reads nothing but release.env, models/weights/ and the
+compose files: no registry, no network, no pull.
 
 An image that names a tag has no place here — pin it first with pin-images.sh,
 or this refuses rather than describe something that can move.
@@ -43,8 +44,38 @@ tag_of()        { local r=$1; r=${r%@*}; printf '%s' "${r##*:}"; }
 digest_of()     { local r=$1; printf '%s' "${r#*@}"; }
 name_of()       { local r; r=$(repository_of "$1"); printf '%s' "${r##*/}"; }
 
+# What ut-install writes for each role, App Builder included where it can run:
+# an add-on switched on later must find its images in the folder.
+ROLES="appliance:compose.yaml:compose.appbuilder.yaml:nim
+compute:compose.yaml:compose.compute.yaml:nim
+control-plane:compose.yaml:compose.remote-inference.yaml:compose.appbuilder.yaml:"
+
+images_of_the_role() {
+    local files=$1 profiles=$2 guards
+    guards=$(cat "$REPO_ROOT"/compose*.yaml | grep -o '\${[A-Z_]*:?' | sed 's/[${:?]//g' | sort -u)
+    ( cd "$REPO_ROOT" && env $(for v in $guards; do printf '%s=x ' "$v"; done) UT_INFERENCE_CA_BUNDLE=/dev/null \
+        COMPOSE_FILE="$files" COMPOSE_PROFILES="$profiles" docker compose --env-file "$RELEASE_ENV" config --images 2>/dev/null )
+}
+
+ROLE_IMAGES=""
+render_the_roles() {
+    local spec role rest files profiles images
+    command -v docker >/dev/null && docker compose version >/dev/null 2>&1 \
+        || { echo "release-bom.sh needs docker compose to say which role runs which image" >&2; return 1; }
+    while IFS= read -r spec; do
+        role=${spec%%:*}; rest=${spec#*:}; profiles=${rest##*:}; files=${rest%:*}
+        images=$(images_of_the_role "$files" "$profiles") || true
+        [[ -n "$images" ]] || { echo "compose rendered no image for the ${role} role" >&2; return 1; }
+        ROLE_IMAGES+=$(sed "s|^|${role} |" <<< "$images")$'\n'
+    done <<< "$ROLES"
+}
+
+roles_running() {
+    awk -v image="$1" '$2 == image { roles = roles (roles ? "+" : "") $1 } END { print roles }' <<< "$ROLE_IMAGES"
+}
+
 component_for_image() {
-    local reference=$1 repository tag digest name
+    local reference=$1 repository tag digest name roles
     repository=$(repository_of "$reference")
     tag=$(tag_of "$reference")
     digest=$(digest_of "$reference")
@@ -53,8 +84,9 @@ component_for_image() {
     printf '      "type": "container",\n'
     printf '      "name": "%s",\n' "$name"
     printf '      "version": "%s",\n' "$tag"
-    printf '      "purl": "pkg:oci/%s@%s?repository_url=%s&tag=%s",\n' \
-        "$name" "$digest" "$repository" "$tag"
+    roles=$(roles_running "$reference")
+    printf '      "purl": "pkg:oci/%s@%s?repository_url=%s&tag=%s&roles=%s",\n' \
+        "$name" "$digest" "$repository" "$tag" "$roles"
     printf '      "hashes": [{ "alg": "SHA-256", "content": "%s" }]\n' "${digest#sha256:}"
     printf '    }'
 }
@@ -82,12 +114,14 @@ component_for_weight() {
     revision=${location#*@}; revision=${revision%%/*}
     path=${location#*@*/}
     [[ "$repository" == "$(default_weights_repository)" ]] && default="&default=true"
+    local roles="appliance+compute"
+    [[ "$name" == platform ]] && roles="appliance+control-plane"
     printf '    {\n'
     printf '      "type": "data",\n'
     printf '      "name": "%s",\n' "$path"
     printf '      "version": "%s",\n' "$revision"
-    printf '      "purl": "pkg:huggingface/%s@%s?checksum=sha256:%s&size=%s&weights=%s%s#%s",\n' \
-        "$repository" "$revision" "$sha" "$size" "$name" "$default" "$path"
+    printf '      "purl": "pkg:huggingface/%s@%s?checksum=sha256:%s&size=%s&weights=%s%s&roles=%s#%s",\n' \
+        "$repository" "$revision" "$sha" "$size" "$name" "$default" "$roles" "$path"
     printf '      "hashes": [{ "alg": "SHA-256", "content": "%s" }]\n' "$sha"
     printf '    }'
 }
@@ -168,6 +202,7 @@ main() {
         ""|-h|--help) usage; [[ -z "$VERSION" ]] && exit 1 || exit 0 ;;
     esac
     refuse_images_that_can_move
+    render_the_roles
     write_bom
 }
 

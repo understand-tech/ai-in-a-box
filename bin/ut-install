@@ -1772,9 +1772,58 @@ name_in_the_folder_registry() {
     printf '%s/%s@%s' "$FOLDER_REGISTRY_ADDRESS" "$repository" "${reference#*@}"
 }
 
+role_this_install_takes() {
+    local compose_files
+    compose_files=$(env_get "$INSTALL_DIR/.env" COMPOSE_FILE 2>/dev/null || true)
+    if [[ -n "$COMPUTE_ADDRESS" || "$compose_files" == *compose.compute.yaml* ]]; then
+        echo compute
+    elif [[ -n "$INFERENCE_FROM" ]] || $NO_GPU || [[ "$compose_files" == *compose.remote-inference.yaml* || "$compose_files" == *compose.no-gpu.yaml* ]]; then
+        echo control-plane
+    else
+        echo appliance
+    fi
+}
+
+# The digests the folder's bill of materials says this role runs, one per line;
+# nothing for a bill that names no roles, whose images are then all required.
+digests_the_role_runs() {
+    local bill role=$1
+    bill=$(ls "$IMAGES_FROM"/understandtech_*.cdx.json 2>/dev/null | head -1 || true)
+    [[ -n "$bill" ]] || return 0
+    sed -n 's|.*"purl": "pkg:oci/[^@]*@\(sha256:[0-9a-f]\{64\}\)?[^"]*&roles=\([^&#"]*\).*|\1 \2|p' "$bill" \
+        | while read -r digest roles; do
+            [[ "+${roles}+" == *"+${role}+"* ]] && printf '%s\n' "$digest"
+        done
+}
+
 # What the stack runs: release.env, with the settings file's own choices on top
-# (a model's engine), as "<variable>=<image>" lines.
+# (a model's engine), as "<variable>=<image>" lines; from a folder, only the
+# images its bill says this machine's role runs.
 images_the_stack_runs() {
+    local line digests
+    if [[ -n "$IMAGES_FROM" ]]; then
+        digests=$(digests_the_role_runs "$(role_this_install_takes)" || true)
+        if [[ -n "$digests" ]]; then
+            every_image_the_stack_names | while IFS= read -r line; do
+                if ! grep -qE "^${line%%=*}=" "$INSTALL_DIR/release.env" || grep -qxF "${line##*@}" <<< "$digests"; then
+                    printf '%s\n' "$line"
+                fi
+            done
+            return 0
+        fi
+    fi
+    every_image_the_stack_names
+}
+
+die_on_a_folder_for_another_role() {
+    local prepared here
+    prepared=$(cat "$IMAGES_FROM/role" 2>/dev/null || echo appliance)
+    here=$(role_this_install_takes)
+    [[ "$prepared" == appliance || "$prepared" == "$here" ]] && return 0
+    die "${IMAGES_FROM} was prepared for the ${prepared} role, and this machine is installed as ${here}: prepare it again with ut-get --prepare --role ${here}"
+}
+
+every_image_the_stack_names() {
     local local_file line key value
     local_file="$(settings_directory "$INSTALL_DIR/.env")/local.env"
     while IFS= read -r line; do
@@ -1863,6 +1912,7 @@ die_on_a_folder_that_misses_an_image() {
     [[ -d "$IMAGES_FROM" ]] || die "No such folder: ${IMAGES_FROM}"
     die_on_a_folder_for_another_architecture
     die_on_a_folder_of_another_release
+    die_on_a_folder_for_another_role
     local line missing="" tool
     for tool in distribution.tar stable.tar; do
         [[ -f "$IMAGES_FROM/tools/$tool" ]] || missing+="  tools/${tool}"$'\n'
