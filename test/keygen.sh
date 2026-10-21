@@ -62,7 +62,7 @@ prepare_license_lab() {
     cp "$repo/test/fake-keygen.py" "$lab/"
 
     printf 'To be filled by O.E.M.\n' > "$lab/placeholder-serial"
-    python3 - "$repo/ut-license" "$lab" "$KEYGEN_TEST_PORT" <<'SWAP'
+    python3 - "$repo/bin/ut-license" "$lab" "$KEYGEN_TEST_PORT" <<'SWAP'
 import pathlib, re, sys
 original, lab, port = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
 for copy, serial, api_port in (("ut-license", "serial", port), ("ut-license-without-a-serial", "placeholder-serial", port),

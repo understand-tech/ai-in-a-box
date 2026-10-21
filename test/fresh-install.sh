@@ -172,7 +172,7 @@ state_setup() {
         # A checkout of the repository, the way an operator who cloned it has one.
         # The package is installed too, which is what makes the choice interesting.
         launched_from_a_checkout|checkout_but_no_key)
-            echo 'install -d /srv/clone && cp -a /usr/share/understandtech/. /srv/clone/ && install -d /srv/clone/.git && cp /usr/bin/ut-install /srv/clone/ut-install' ;;
+            echo 'install -d /srv/clone && cp -a /usr/share/understandtech/. /srv/clone/ && install -d /srv/clone/.git /srv/clone/bin && cp /usr/bin/ut-install /srv/clone/bin/ut-install' ;;
         empty_settings) echo 'install -m 600 /dev/null /etc/understandtech/.env' ;;
         # The packaged ut-license trusts Keygen's key and asks Keygen; these states
         # swap in one that trusts the suite's key and asks the fake Keygen, which
@@ -1126,9 +1126,9 @@ prepare_a_vllm_entry
 run_install_from_state bare
 PULL_EXIT=0 run_install_from_state install_runs_through
 PULL_EXIT=0 STEP_CA_RUNS=no run_install_from_state compute_node_runs_through
-INSTALL_TOKEN= INSTALL_COMMAND=/srv/clone/ut-install \
+INSTALL_TOKEN= INSTALL_COMMAND=/srv/clone/bin/ut-install \
     run_install_from_state launched_from_a_checkout
-INSTALL_TOKEN= INSTALL_COMMAND=/srv/clone/ut-install \
+INSTALL_TOKEN= INSTALL_COMMAND=/srv/clone/bin/ut-install \
     run_install_from_state checkout_but_no_key
 run_install_from_state empty_settings
 run_install_from_state openai_key_given

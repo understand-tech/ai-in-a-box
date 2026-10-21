@@ -324,7 +324,7 @@ do_check() {
 
     if [[ ! -f "$INSTALL_DIR/.env" ]]; then
         log_error "No .env in $INSTALL_DIR — nothing to check yet."
-        echo "  sudo ./ut-install"
+        echo "  sudo ./bin/ut-install"
         exit 1
     fi
 

@@ -194,7 +194,7 @@ goes out of date.
 
 A missing or unreadable file stops Caddy from starting rather than degrading
 quietly — `caddy validate` reads the certificates for real, and it is also the
-healthcheck. `sudo ./ut-install --check` catches it before the first `up`.
+healthcheck. `sudo ./bin/ut-install --check` catches it before the first `up`.
 
 ### `custom` with automatic renewal — nothing to install anywhere
 
@@ -207,9 +207,9 @@ A publicly trusted certificate removes it entirely — browsers already trust th
 authority. `ut-certificate` obtains and renews one.
 
 ```bash
-./ut-certificate --check      # what is configured, and what expires when
-./ut-certificate              # obtain, or renew within 30 days of expiry
-./ut-certificate --install    # renew daily from cron
+./bin/ut-certificate --check      # what is configured, and what expires when
+./bin/ut-certificate              # obtain, or renew within 30 days of expiry
+./bin/ut-certificate --install    # renew daily from cron
 ```
 
 > **Installed from the package, tell it where the settings are.**

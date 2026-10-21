@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CHECKOUT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PACKAGE_SHARE_DIR="/usr/share/understandtech"
 INSTALL_DIR="${UT_INSTALL_DIR:-}"
 OUT_DIR="$PWD"
@@ -45,7 +45,7 @@ resolve_install_dir() {
     if [[ -f "$PACKAGE_SHARE_DIR/compose.yaml" ]]; then
         INSTALL_DIR="$PACKAGE_SHARE_DIR"
     else
-        INSTALL_DIR="$SCRIPT_DIR"
+        INSTALL_DIR="$CHECKOUT_DIR"
     fi
 }
 
