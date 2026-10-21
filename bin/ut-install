@@ -87,6 +87,7 @@ die() { log_error "$*"; exit 1; }
 
 report_failure_and_exit() {
     local exit_code=$? line=$1
+    (( BASH_SUBSHELL == 0 )) || exit "$exit_code"
     log_error "Install stopped at line ${line} (exit ${exit_code})."
     log_error "Nothing was rolled back — re-running the same command resumes."
     log_error "Log: ${LOG_FILE}"

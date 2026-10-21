@@ -563,6 +563,10 @@ capability_discriminates "a model's engine carried for every model" \
     "a model's own engine is carried for that model only" \
     "sed -i.bak 's/\\[\\[ -z \"\\\$for_model\" || \"\\\$for_model\" == \"\\\$model\" \\]\\] || continue/:/' bin/ut-get"
 
+capability_discriminates "a failure inside a substitution reported as the install's" \
+    "a failure ut-install tests for is not reported as the install stopping" \
+    "sed -i.bak '/(( BASH_SUBSHELL == 0 ))/d' bin/ut-install"
+
 capability_discriminates "a folder taken whatever processor it was prepared for" \
     "a folder prepared for another processor is refused" \
     "sed -i.bak 's|^die_on_a_folder_for_another_architecture() {\$|die_on_a_folder_for_another_architecture() { return 0;|' bin/ut-install"

@@ -2916,6 +2916,16 @@ a_missing_backup_is_visible() {
     [[ "$status" == "healthy" ]]
 }
 
+# macOS runs bash 3.2, where a function failing inside a $( ) tested by || still
+# fires the ERR trap in that subshell.
+a_failure_tested_inside_a_substitution_stops_nothing_on_bash_3() {
+    local output
+    output=$(docker run --rm -v "$REPO_ROOT":/w:ro -w /w "$BASH_3_IMAGE" bash ./bin/ut-install --dir /w --list-models 2>&1)
+    grep -q 'Not proven on an unknown GPU' <<< "$output" && ! grep -q 'Install stopped' <<< "$output" && return 0
+    echo "$output" | tail -5
+    return 1
+}
+
 prepare_env
 
 group "Deployment topologies"
@@ -3251,6 +3261,8 @@ if [[ -f "$REPO_ROOT/compose.compute.yaml" ]]; then
         the_compute_engine_is_reached_only_through_its_key
     capability "every service that calls a compute node trusts its root" \
         every_engine_caller_trusts_the_compute_node
+    capability "on the bash a Mac runs, a failure ut-install tests for is not reported as the install stopping" \
+        a_failure_tested_inside_a_substitution_stops_nothing_on_bash_3
     capability "a model on vLLM runs in place of NIM, with the same GPU and cache, and no port of its own" \
         a_model_on_vllm_runs_in_place_of_nim
     capability "each argument of the model reaches vLLM whole, JSON included" \
