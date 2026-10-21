@@ -1339,7 +1339,7 @@ fi
 
     install_walk_discriminates "an accelerator waived without the settings that follow" \
         "the flag writes a configuration that asks docker for no GPU" \
-        "sed -i.bak 's|^    \$NO_GPU && write_the_settings_a_machine_without_an_accelerator_needs.*|    :|' bin/ut-install"
+        "sed -i.bak 's|^        write_the_settings_a_machine_without_an_accelerator_needs \"\$local_file\"\$|        :|' bin/ut-install"
 
     capability_discriminates "a status tool that calls an empty directory healthy" \
         "a directory with no install is refused, not called healthy" \
