@@ -41,6 +41,19 @@ async function readiness() {
   $("install").disabled = !check.ready;
 }
 
+async function models() {
+  const answer = await fetch("/models");
+  if (!answer.ok) return;
+  const shipped = $("model").firstElementChild;
+  const offered = (await answer.json()).map((model) => {
+    const option = document.createElement("option");
+    option.value = model.id;
+    option.textContent = model.label;
+    return option;
+  });
+  $("model").replaceChildren(shipped, ...offered);
+}
+
 function render(p) {
   const answering = !p.running && !p.finished;
   const done = p.finished && p.succeeded;
@@ -86,7 +99,10 @@ async function follow() {
   if (!answer.ok) return;
   const p = await answer.json();
   render(p);
-  if (!p.running && !p.finished) readiness();
+  if (!p.running && !p.finished) {
+    readiness();
+    models();
+  }
   if (p.running) setTimeout(follow, 2000);
 }
 

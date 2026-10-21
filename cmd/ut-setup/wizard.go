@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -36,6 +37,28 @@ type Wizard struct {
 
 	checking  sync.Once
 	readiness Readiness
+
+	listing sync.Once
+	models  []Model
+}
+
+type Model struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
+// ut-install --list-models prints one model a line, the name --model takes
+// first; the lines it logs start with their level in brackets.
+func modelsListed(lines []string) []Model {
+	models := []Model{}
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || strings.HasPrefix(line, "[") {
+			continue
+		}
+		models = append(models, Model{ID: fields[0], Label: strings.Join(fields, " ")})
+	}
+	return models
 }
 
 type Readiness struct {
@@ -61,6 +84,7 @@ func (w *Wizard) Handler() http.Handler {
 	mux.HandleFunc("POST /install", w.withSession(w.install))
 	mux.HandleFunc("GET /progress", w.withSession(w.report))
 	mux.HandleFunc("GET /check", w.withSession(w.check))
+	mux.HandleFunc("GET /models", w.withSession(w.listModels))
 	mux.HandleFunc("POST /secrets", w.withSession(w.secrets))
 	return w.guarded(mux)
 }
@@ -168,6 +192,11 @@ func (w *Wizard) install(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if answers.Model != "" && !w.lists(answers.Model) {
+		http.Error(rw, "the model is not one this box lists", http.StatusUnprocessableEntity)
+		return
+	}
+
 	w.mu.Lock()
 	if w.progress.Running || w.progress.Succeeded {
 		w.mu.Unlock()
@@ -203,6 +232,32 @@ func (w *Wizard) check(rw http.ResponseWriter, _ *http.Request) {
 	})
 	rw.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(rw).Encode(w.readiness)
+}
+
+func (w *Wizard) modelsHere() []Model {
+	w.listing.Do(func() {
+		var lines []string
+		err := w.installer(context.Background(), []string{"--list-models"}, func(line string) { lines = append(lines, line) })
+		w.models = []Model{}
+		if err == nil {
+			w.models = modelsListed(lines)
+		}
+	})
+	return w.models
+}
+
+func (w *Wizard) lists(id string) bool {
+	for _, model := range w.modelsHere() {
+		if model.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func (w *Wizard) listModels(rw http.ResponseWriter, _ *http.Request) {
+	rw.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(rw).Encode(w.modelsHere())
 }
 
 func (w *Wizard) record(change func(Progress) Progress) {

@@ -403,3 +403,60 @@ func TestTheRealInstallerIsReadLineByLine(t *testing.T) {
 		t.Fatalf("lines read as %q", said)
 	}
 }
+
+func TestTheModelsOfferedAreThoseUtInstallLists(t *testing.T) {
+	fake := &fakeInstall{lines: []string{
+		"nemotron-3.5-bolt-74b        vLLM on gb10      25.1 GB    OpenMDW-1.1    runs code of its own",
+		"qwen3.8-27b-nvfp4            NIM on gb10       26.4 GB    apache-2.0",
+		"[warn] Not proven on gb10: other-model",
+	}}
+	b := newBox(t, fake)
+	b.signIn()
+	var models []Model
+	for range 2 {
+		response := b.get("/models")
+		json.NewDecoder(response.Body).Decode(&models)
+		response.Body.Close()
+	}
+	if len(models) != 2 || models[0].ID != "nemotron-3.5-bolt-74b" || models[1].Label != "qwen3.8-27b-nvfp4 NIM on gb10 26.4 GB apache-2.0" {
+		t.Fatalf("offered %+v", models)
+	}
+	calls := fake.called()
+	if len(calls) != 1 || strings.Join(calls[0], " ") != "--list-models" {
+		t.Fatalf("ut-install was called %v", calls)
+	}
+}
+
+func TestAModelChosenReachesUtInstall(t *testing.T) {
+	fake := &fakeInstall{lines: []string{"qwen3.8-27b-nvfp4            NIM on gb10       26.4 GB    apache-2.0"}}
+	b := newBox(t, fake)
+	b.signIn()
+	answers := goodAnswers()
+	answers.Set("model", "qwen3.8-27b-nvfp4")
+	if status := b.answer(answers).StatusCode; status != http.StatusAccepted {
+		t.Fatalf("the answers got %d", status)
+	}
+	b.waitForTheEnd()
+	calls := fake.called()
+	if got := strings.Join(calls[len(calls)-1], " "); !strings.HasSuffix(got, "--reporting no --model qwen3.8-27b-nvfp4") {
+		t.Fatalf("ut-install was called with %q", got)
+	}
+}
+
+func TestAModelThisBoxDoesNotListInstallsNothing(t *testing.T) {
+	fake := &fakeInstall{lines: []string{"qwen3.8-27b-nvfp4            NIM on gb10       26.4 GB    apache-2.0", "[warn] Not proven on gb10: other-model"}}
+	b := newBox(t, fake)
+	b.signIn()
+	for _, model := range []string{"other-model", "--engine", "Qwen; reboot"} {
+		answers := goodAnswers()
+		answers.Set("model", model)
+		if status := b.answer(answers).StatusCode; status != http.StatusUnprocessableEntity {
+			t.Fatalf("the model %q answered %d", model, status)
+		}
+	}
+	for _, call := range fake.called() {
+		if strings.Join(call, " ") != "--list-models" {
+			t.Fatalf("ut-install ran %v", call)
+		}
+	}
+}
