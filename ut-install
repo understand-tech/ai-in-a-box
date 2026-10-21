@@ -693,7 +693,8 @@ ask_for_the_license_by_file() {
     if command -v qrencode >/dev/null 2>&1; then
         qrencode -t ANSIUTF8 < "$LICENSE_REQUEST" || true
     fi
-    log_warn "  Then run ut-install again with --machine-file <the file UnderstandTech sends back>."
+    log_warn "  Then run ut-install again with --machine-file <the file UnderstandTech sends back>,"
+    log_warn "  or put that file in the folder ut-get --from installs from, and run it again."
     die "The license could not be activated here. Nothing else was changed on this machine."
 }
 

@@ -20,7 +20,10 @@ DOWNLOAD_DIR="/var/cache/understandtech/releases"
 RELEASE_DIR=""
 PREPARE_DIR=""
 TOKEN_FILE=""
+LICENSE_FILE=""
+REGISTRY_TOKEN=""
 REGISTRY_USER="${UT_REGISTRY_USER:-dgx-access}"
+KEYGEN_API="${UT_KEYGEN_API:-https://api.keygen.sh/v1/accounts/cdfe8998-3b6e-4f86-8f9f-c51a7cb642e0}"
 VERSION=""
 
 # The two tools a folder carries to load its images on the box. ut-install
@@ -37,20 +40,26 @@ ut-get — installs UnderstandTech AI in a Box from a release, then runs ut-inst
 
   sudo ./ut-get [--version <version>] [ut-install options]
   sudo ./ut-get --from <directory> [ut-install options]
-  ./ut-get --prepare <directory> [--version <version>] --token-file <file>
+  ./ut-get --prepare <directory> [--version <version>] --license-file <file>
 
   --version <version>  the release to install, 2026.09.1 for example.
                        Without it, the latest one.
   --from <directory>   the release, carried in by hand: the package and its
-                       .sig beside it, and the images when --prepare put them
-                       there. Nothing is downloaded.
+                       .sig beside it, the images when --prepare put them
+                       there, and the license file UnderstandTech sent back
+                       for a box that cannot reach Keygen. Nothing is
+                       downloaded.
   --prepare <directory>
                        on a connected Linux or macOS machine with Docker, not
                        the box: download the release and every image it runs
                        into the directory, for a box with no network to install
                        with --from. Runs again where it stopped.
-  --token-file <file>  with --prepare, the registry token UnderstandTech gave
-                       with the license. Read from the file, never shown.
+  --license-file <file>
+                       the license key. With --prepare, the registry access it
+                       carries is read from Keygen, never shown; ut-install
+                       takes it too.
+  --token-file <file>  with --prepare, a registry token instead of a license
+                       key. Read from the file, never shown.
   --browser            continue in a browser on this machine (ut-setup)
                        rather than in this terminal (ut-install).
 
@@ -71,6 +80,7 @@ parse_arguments() {
             --from)    RELEASE_DIR="${2:?--from needs a directory}"; shift ;;
             --prepare) PREPARE_DIR="${2:?--prepare needs a directory}"; shift ;;
             --token-file) TOKEN_FILE="${2:?--token-file needs a file}"; shift ;;
+            --license-file) LICENSE_FILE="${2:?--license-file needs a file}"; INSTALL_ARGUMENTS+=("$1" "$2"); shift ;;
             --version) VERSION="${2:?--version needs a version}"; shift ;;
             --browser) NEXT=ut-setup ;;
             -h|--help) usage; exit 0 ;;
@@ -174,6 +184,35 @@ fully_qualified() {
     fi
 }
 
+# The license key alone reads its own license, metadata included, under the
+# license authentication Keygen gives our policies.
+read_the_registry_access_of_the_license() {
+    local key answer user
+    command -v jq >/dev/null 2>&1 || fail "--prepare with --license-file needs jq on this machine"
+    key=$(tr -d ' \t\r\n' < "$LICENSE_FILE")
+    [[ "$key" =~ ^[A-Za-z0-9._/+=-]+$ && "$key" != UT1.* ]] \
+        || fail "${LICENSE_FILE} does not hold a license key UnderstandTech issued"
+    answer=$(curl -sS --max-time 20 "${KEYGEN_API}/me" \
+        -K <(printf 'header = "Authorization: License %s"\n' "$key") \
+        -H 'Accept: application/vnd.api+json' -H 'Keygen-Version: 1.8') \
+        || fail "Keygen could not be reached to read the registry access of the license"
+    REGISTRY_TOKEN=$(jq -r '.data.attributes.metadata.registryToken // empty' <<< "$answer" 2>/dev/null) || REGISTRY_TOKEN=""
+    [[ -n "$REGISTRY_TOKEN" ]] || fail "Keygen refused the license key, or the license carries no registry access: ask UnderstandTech"
+    user=$(jq -r '.data.attributes.metadata.registryUser // empty' <<< "$answer" 2>/dev/null) || user=""
+    REGISTRY_USER=${user:-$REGISTRY_USER}
+}
+
+# A box that cannot reach Keygen gets its license file from UnderstandTech; carried
+# in the folder, it is the only .lic there.
+license_file_in() {
+    local folder=$1 found=() file
+    for file in "$folder"/*.lic; do
+        [[ -f "$file" ]] && found+=("$file")
+    done
+    (( ${#found[@]} <= 1 )) || fail "${folder} holds more than one license file: keep the one UnderstandTech sent for this box"
+    (( ${#found[@]} == 0 )) || printf '%s' "${found[0]}"
+}
+
 write_registry_auth() {
     local dir=$1 token=$2
     mkdir -m 700 "$dir"
@@ -227,11 +266,11 @@ copy_the_tools_into() {
 
 prepare_a_folder() {
     command -v docker >/dev/null 2>&1 || fail "--prepare needs Docker on this machine"
-    [[ -n "$TOKEN_FILE" && -r "$TOKEN_FILE" ]] || fail "--prepare needs --token-file: the registry token given with the license"
+    [[ -r "$LICENSE_FILE" || -r "$TOKEN_FILE" ]] || fail "--prepare needs --license-file: the license key UnderstandTech issued"
     [[ -n "$VERSION" ]] || VERSION=$(latest_version) || exit 1
     is_a_release_version "$VERSION" || fail "${VERSION:-nothing} is not a release version — expected one like 2026.09.1"
 
-    local folder package auth token
+    local folder package auth
     mkdir -p "$PREPARE_DIR"
     folder=$(cd "$PREPARE_DIR" && pwd)
     log_step "Downloading release ${VERSION} into ${folder}"
@@ -239,9 +278,13 @@ prepare_a_folder() {
     package=$(the_only_package_in "$folder") || exit 1
     verify_signature "$package" || fail "$(basename "$package") is NOT signed by UnderstandTech — delete ${folder} and run again"
 
+    if [[ -r "$LICENSE_FILE" ]]; then
+        read_the_registry_access_of_the_license
+    else
+        REGISTRY_TOKEN=$(tr -d '\r\n' < "$TOKEN_FILE")
+    fi
     auth=$(mktemp -d)/auth
-    token=$(tr -d '\r\n' < "$TOKEN_FILE")
-    write_registry_auth "$auth" "$token"
+    write_registry_auth "$auth" "$REGISTRY_TOKEN"
     log_step "Copying every image release ${VERSION} runs"
     images_of_the_bill "$folder/understandtech_${VERSION}.cdx.json" | copy_the_images_into "$folder" "$auth"
     copy_the_tools_into "$folder" "$auth"
@@ -249,6 +292,8 @@ prepare_a_folder() {
 
     log_step "Ready: $(du -sh "$folder" | cut -f1) in ${folder}"
     printf '  Carry it to the box, then run there:  sudo ut-get --from <where it is>\n'
+    printf '  A box that cannot reach Keygen writes a license request: the license file\n'
+    printf '  UnderstandTech sends back goes into the folder, and ut-get --from runs again.\n'
 }
 
 install_package() {
@@ -283,6 +328,11 @@ main() {
     install_package "$package"
     if [[ -d "$RELEASE_DIR/images" ]]; then
         INSTALL_ARGUMENTS+=(--images-from "$(cd "$RELEASE_DIR" && pwd)")
+    fi
+    local license_file
+    license_file=$(license_file_in "$(cd "$RELEASE_DIR" && pwd)") || exit 1
+    if [[ -n "$license_file" ]]; then
+        INSTALL_ARGUMENTS+=(--machine-file "$license_file")
     fi
     exec "$NEXT" ${INSTALL_ARGUMENTS[@]+"${INSTALL_ARGUMENTS[@]}"}
 }

@@ -519,6 +519,22 @@ capability_discriminates "folder images named by tag rather than by digest" \
     "images from a prepared folder start under the digest the release names" \
     "sed -i.bak 's|        env_set \"\\\$local_file\" \"\\\$key\" \"\\\$local_name\"|        env_set \"\\\$local_file\" \"\\\$key\" \"\\\${local_name%@*}:from-a-folder\"|' ut-install"
 
+capability_discriminates "a registry token read under a key Keygen never writes" \
+    "a folder is prepared with the registry access the license key reads" \
+    "sed -i.bak 's#metadata.registryToken#metadata.registry_token#' ut-get"
+
+capability_discriminates "the license key handed to curl on its command line, to prepare" \
+    "a folder is prepared with the registry access the license key reads" \
+    "sed -i.bak 's#\"\${KEYGEN_API}/me\"#\"\${KEYGEN_API}/me?k=\${key}\"#' ut-get"
+
+capability_discriminates "a license file carried in the folder, and left there" \
+    "the license file carried in a folder goes to ut-install" \
+    "sed -i.bak 's#|| printf .%s. \"\${found\[0\]}\"#|| :#' ut-get"
+
+capability_discriminates "two license files in a folder, one taken at random" \
+    "the license file carried in a folder goes to ut-install" \
+    "sed -i.bak 's#(( \${\#found\[@\]} <= 1 )) ||#true ||#' ut-get"
+
 capability_discriminates "ut-get preparing with another tool than ut-install loads with" \
     "ut-get prepares with the tools ut-install loads with" \
     "sed -i.bak 's|^FOLDER_SKOPEO_TOOL=.*|FOLDER_SKOPEO_TOOL=\"quay.io/skopeo/stable:v1.19.0@sha256:0000000000000000000000000000000000000000000000000000000000000000\"|' ut-get"

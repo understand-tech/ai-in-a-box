@@ -302,6 +302,104 @@ the_folder_tools_are_those_ut_get_carries() {
     done
 }
 
+PREPARE_TEST_KEY=TEST-PREPARE-KEY-0001
+PREPARE_TEST_TOKEN=ghp_prepareTestTokenNeverPrinted0001
+
+# Keygen as ut-get --prepare meets it: a license key that reads its own license,
+# registry access included, and nothing for any other key.
+start_a_fake_keygen_for_preparing() {
+    local work=$1
+    cat > "$work/fake-keygen-me.py" <<'FAKE'
+import http.server, json, sys
+key, token, portfile = sys.argv[1], sys.argv[2], sys.argv[3]
+
+class Answer(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):
+        if self.path.partition("?")[0].endswith("/me") and self.headers.get("Authorization", "") == "License " + key:
+            status, body = 200, {"data": {"type": "licenses", "id": "license-1", "attributes": {
+                "metadata": {"customer": "test-customer", "machine": "test-box",
+                             "registryUser": "prepared-user", "registryToken": token}}}}
+        else:
+            status, body = 401, {"errors": [{"code": "LICENSE_INVALID"}]}
+        data = json.dumps(body).encode()
+        self.send_response(status)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+server = http.server.HTTPServer(("127.0.0.1", 0), Answer)
+open(portfile, "w").write(str(server.server_port))
+server.serve_forever()
+FAKE
+    python3 "$work/fake-keygen-me.py" "$PREPARE_TEST_KEY" "$PREPARE_TEST_TOKEN" "$work/port" &
+    FAKE_KEYGEN_ME_PID=$!
+    local waited=0
+    until [[ -s "$work/port" ]]; do
+        sleep 0.2; waited=$((waited + 1))
+        (( waited < 50 )) || { echo "the fake Keygen never started" >&2; return 1; }
+    done
+}
+
+# What ut-get --prepare takes from a license key: the registry account and token,
+# with every program it runs writing its arguments down.
+prepare_access_report() {
+    local work="$WORK_DIR/prepare-access" program
+    if [[ ! -s "$work/report" ]]; then
+        mkdir -p "$work/argv"
+        for program in curl jq tr; do
+            printf '#!/bin/sh\nprintf "%%s\\n" "%s $*" >> %s/argv.log\nexec %s "$@"\n' \
+                "$program" "$work" "$(command -v "$program")" > "$work/argv/$program"
+            chmod 755 "$work/argv/$program"
+        done
+        printf '%s\n' "$PREPARE_TEST_KEY" > "$work/license.key"
+        printf 'TEST-SOMEONE-ELSE\n' > "$work/other.key"
+        start_a_fake_keygen_for_preparing "$work" || return 1
+        {
+            for key in license other; do
+                (
+                    set +u; source "$REPO_ROOT/ut-get"
+                    PATH="$work/argv:$PATH" UT_KEYGEN_API="http://127.0.0.1:$(cat "$work/port")/v1/accounts/test"
+                    KEYGEN_API=$UT_KEYGEN_API LICENSE_FILE="$work/$key.key"
+                    read_the_registry_access_of_the_license
+                    printf '%s_user=%s\n%s_token=%s\n' "$key" "$REGISTRY_USER" "$key" \
+                        "$([[ "$REGISTRY_TOKEN" == "$PREPARE_TEST_TOKEN" ]] && echo read || echo other)"
+                ) 2> "$work/said-$key" || printf '%s=refused\n' "$key"
+            done
+        } > "$work/report"
+        kill "$FAKE_KEYGEN_ME_PID" 2>/dev/null
+    fi
+    cat "$work/report"
+}
+
+a_folder_is_prepared_with_the_access_the_license_key_reads() {
+    local work="$WORK_DIR/prepare-access" report
+    report=$(prepare_access_report)
+    grep -qx 'license_user=prepared-user' <<< "$report" && grep -qx 'license_token=read' <<< "$report" \
+        && grep -qx 'other=refused' <<< "$report" \
+        || { echo "ut-get --prepare took from the license:"; echo "$report"; cat "$work"/said-* 2>/dev/null | tail -3; return 1; }
+    grep -qF -e "$PREPARE_TEST_KEY" -e "$PREPARE_TEST_TOKEN" "$work/argv.log" 2>/dev/null \
+        && { echo "the license key or the token was on a command line"; return 1; }
+    grep -qF -e "$PREPARE_TEST_KEY" -e "$PREPARE_TEST_TOKEN" "$work"/said-* 2>/dev/null \
+        && { echo "the license key or the token was printed"; return 1; }
+    return 0
+}
+
+the_license_file_carried_in_a_folder_goes_to_ut_install() {
+    local work="$WORK_DIR/carried-license" said
+    mkdir -p "$work/one" "$work/none" "$work/two"
+    : > "$work/one/box.lic"; : > "$work/two/a.lic"; : > "$work/two/b.lic"
+    said=$( set +u; source "$REPO_ROOT/ut-get"
+        printf 'one=%s\n' "$(license_file_in "$work/one")"
+        printf 'none=%s\n' "$(license_file_in "$work/none")"
+        printf 'two=%s\n' "$( (license_file_in "$work/two") 2>/dev/null || echo refused)" )
+    grep -qx "one=$work/one/box.lic" <<< "$said" && grep -qx 'none=' <<< "$said" && grep -qx 'two=refused' <<< "$said" && return 0
+    echo "$said"
+    return 1
+}
+
 moving_off_local_withdraws_the_publisher() {
     local report
     report=$(installing_mdns_reports box.example.com yes)
@@ -2675,6 +2773,10 @@ if grep -q 'step_images_from_a_folder' "$REPO_ROOT/ut-install"; then
         a_folder_image_the_release_does_not_name_is_refused
     capability "a folder whose tool is not the one the release names is refused" \
         a_tool_the_release_does_not_name_is_refused
+    capability "a folder is prepared with the registry access the license key reads from Keygen" \
+        a_folder_is_prepared_with_the_access_the_license_key_reads
+    capability "the license file carried in a folder goes to ut-install, and only one" \
+        the_license_file_carried_in_a_folder_goes_to_ut_install
     capability "ut-get prepares with the tools ut-install loads with" \
         the_folder_tools_are_those_ut_get_carries
 fi
