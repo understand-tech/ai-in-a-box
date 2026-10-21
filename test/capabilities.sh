@@ -2166,10 +2166,11 @@ an_image_already_pinned_is_left_alone() {
 # none: what is missing from it reads as absent from the product.
 a_release_names_every_image_it_ships() {
     local declared listed
-    declared=$(grep -cE '^[A-Z_]*_IMAGE="' "$REPO_ROOT/release.env")
+    declared=$(cat "$REPO_ROOT/release.env" "$REPO_ROOT"/models/*.env \
+        | sed -n 's/^[A-Z_]*_IMAGE="\{0,1\}\([^"]*@sha256:[^"]*\)"\{0,1\}$/\1/p' | sort -u | grep -c .)
     listed=$("$REPO_ROOT/packaging/release-bom.sh" 9999.99.9 2>/dev/null | grep -c '"type": "container"')
     [[ "$declared" == "$listed" ]] && return 0
-    echo "release.env declares ${declared} images, the bill of materials lists ${listed}"
+    echo "release.env and models/ declare ${declared} images, the bill of materials lists ${listed}"
     return 1
 }
 
