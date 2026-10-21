@@ -399,6 +399,18 @@ a_compute_folder_loads_the_inference_images_only() {
     return 1
 }
 
+# alpine is replaced, in the settings file, by busybox, which the folder lacks:
+# the service is the compute node's, so the image it runs instead is required.
+a_replaced_image_of_the_role_is_required() {
+    local report
+    report=$(folder_role_report "printf 'COMPOSE_FILE=\"compose.yaml:compose.compute.yaml\"\\n' >> \"\$probe/install/.env\"; echo compute > \"\$probe/folder/role\"; printf 'ALPINE_INDEX_IMAGE=\"%s\"\\n' \"\$BUSYBOX_IMAGE\" >> \"\$probe/install/local.env\"")
+    grep -q "busybox:1.36.1-1@.*, missing or not the one the release names" <<< "$report" \
+        && grep -q -- "--image ${BUSYBOX_IMAGE}" <<< "$report" \
+        && ! grep -q 'IMAGE="127.0.0.1:15000' <<< "$report" && return 0
+    echo "$report" | tail -10
+    return 1
+}
+
 a_platform_without_its_images_is_refused() {
     local report
     report=$(folder_role_report ":")
@@ -2951,6 +2963,8 @@ if grep -q 'step_images_from_a_folder' "$REPO_ROOT/bin/ut-install"; then
         a_model_without_weights_is_not_prepared
     capability "a compute node loads from a folder only the images it runs" \
         a_compute_folder_loads_the_inference_images_only
+    capability "an image the settings file runs instead of the role's is required from the folder" \
+        a_replaced_image_of_the_role_is_required
     capability "a platform whose images the folder lacks is refused" \
         a_platform_without_its_images_is_refused
     capability "the bill of materials says which role runs each image and each weight" \

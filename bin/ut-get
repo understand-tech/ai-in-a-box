@@ -21,6 +21,7 @@ RELEASE_DIR=""
 PREPARE_DIR=""
 MODEL_ID=""
 FOLDER_ROLE="appliance"
+EXTRA_IMAGES=()
 TOKEN_FILE=""
 LICENSE_FILE=""
 REGISTRY_TOKEN=""
@@ -66,6 +67,9 @@ ut-get — installs UnderstandTech AI in a Box from a release, then runs ut-inst
                        with --prepare, what the box runs: all of it (the default),
                        the platform taking its inference from another machine, or
                        the inference only. The folder carries that role alone.
+  --image <reference>  with --prepare, one more image to carry, pinned by digest
+                       (name:tag@sha256:...): one the box's settings file runs
+                       instead of the release's. Can be given several times.
   --model <id>         with --prepare, the model whose weights the folder carries,
                        beside those of the platform; the release's own without it.
                        Elsewhere, passed on to ut-install.
@@ -92,6 +96,7 @@ parse_arguments() {
             --from)    RELEASE_DIR="${2:?--from needs a directory}"; shift ;;
             --prepare) PREPARE_DIR="${2:?--prepare needs a directory}"; shift ;;
             --token-file) TOKEN_FILE="${2:?--token-file needs a file}"; shift ;;
+            --image)   EXTRA_IMAGES+=("${2:?--image needs an image pinned by digest}"); shift ;;
             --role)    FOLDER_ROLE="${2:?--role needs appliance, control-plane or compute}"; shift ;;
             --model)   MODEL_ID="${2:?--model needs a model}"; INSTALL_ARGUMENTS+=(--model "$2"); shift ;;
             --license-file) LICENSE_FILE="${2:?--license-file needs a file}"; INSTALL_ARGUMENTS+=("$1" "$2"); shift ;;
@@ -363,6 +368,10 @@ prepare_a_folder() {
         || fail "--architecture takes arm64 or amd64, not ${BOX_ARCHITECTURE}"
     [[ "$FOLDER_ROLE" =~ ^(appliance|control-plane|compute)$ ]] \
         || fail "--role takes appliance, control-plane or compute, not ${FOLDER_ROLE}"
+    local image
+    for image in ${EXTRA_IMAGES[@]+"${EXTRA_IMAGES[@]}"}; do
+        [[ "$image" =~ @sha256:[0-9a-f]{64}$ ]] || fail "--image takes an image pinned by digest, name:tag@sha256:..., not ${image}"
+    done
     [[ -r "$LICENSE_FILE" || -r "$TOKEN_FILE" ]] || fail "--prepare needs --license-file: the license key UnderstandTech issued"
     [[ -n "$VERSION" ]] || VERSION=$(latest_version) || exit 1
     is_a_release_version "$VERSION" || fail "${VERSION:-nothing} is not a release version — expected one like 2026.09.1"
@@ -385,7 +394,9 @@ prepare_a_folder() {
     auth=$(mktemp -d)/auth
     write_registry_auth "$auth" "$REGISTRY_TOKEN"
     log_step "Copying every image the ${FOLDER_ROLE} role of release ${VERSION} runs"
-    images_of_the_bill "$folder/understandtech_${VERSION}.cdx.json" "$FOLDER_ROLE" | copy_the_images_into "$folder" "$auth"
+    { images_of_the_bill "$folder/understandtech_${VERSION}.cdx.json" "$FOLDER_ROLE"
+      for image in ${EXTRA_IMAGES[@]+"${EXTRA_IMAGES[@]}"}; do printf '%s@%s\n' "$(repository_of "$image")" "${image#*@}"; done
+    } | copy_the_images_into "$folder" "$auth"
     copy_the_tools_into "$folder" "$auth"
     rm -rf "$(dirname "$auth")"
 

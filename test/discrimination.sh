@@ -555,6 +555,10 @@ capability_discriminates "a preparation that takes every role's part" \
     "each role prepares its own part of the release" \
     "sed -i.bak 's|^runs_in_the_role() {\$|runs_in_the_role() { return 0;|' bin/ut-get"
 
+capability_discriminates "a replaced image judged by its own digest rather than the release's" \
+    "an image the settings file runs instead of the role's is required from the folder" \
+    "sed -i.bak 's/grep -qxF \"\\\${released##\\*@}\" <<< \"\\\$digests\"/grep -qxF \"\\\${line##*@}\" <<< \"\\\$digests\"/' bin/ut-install"
+
 capability_discriminates "a folder taken whatever processor it was prepared for" \
     "a folder prepared for another processor is refused" \
     "sed -i.bak 's|^die_on_a_folder_for_another_architecture() {\$|die_on_a_folder_for_another_architecture() { return 0;|' bin/ut-install"
@@ -1242,6 +1246,22 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
     install_walk_discriminates "a registry token asked for even when nothing is pulled" \
         "a license with no registry token is refused to pull, and taken when nothing is pulled" \
         "sed -i.bak 's|^        if \$DO_PULL; then\$|        if true; then|' bin/ut-install"
+
+    install_walk_discriminates "a settings file with no image of its own read as a failed install" \
+        "a refused folder says how to prepare it again" \
+        "sed -i.bak 's/^    { grep -E .^\\[A-Z_\\]+_IMAGE=. \"\\\$local_file\" 2>\\/dev\\/null || true; } | while/    grep -E '\\''^[A-Z_]+_IMAGE='\\'' \"\$local_file\" 2>\\/dev\\/null | while/' bin/ut-install"
+
+    install_walk_discriminates "a refused folder told to prepare a version that does not exist" \
+        "a refused folder says how to prepare it again" \
+        "sed -i.bak 's/--version \\\${version%%+\\*}/--version \\\${version}/' bin/ut-install"
+
+    install_walk_discriminates "a refused folder not told which images the settings run" \
+        "a refused folder says how to prepare it again" \
+        "sed -i.bak 's/\\[\\[ \"\\\${line#\\*=}\" == \"\\\$released\" \\]\\] || extra+=/true || extra+=/' bin/ut-install"
+
+    install_walk_discriminates "a dead engine address left unsaid" \
+        "an engine address naming a service the stack does not run is named" \
+        "sed -i.bak 's|^warn_on_engine_addresses_no_service_answers() {\$|warn_on_engine_addresses_no_service_answers() { return 0;|' bin/ut-install"
 
     install_walk_discriminates "a folder of another role taken for this one" \
         "a folder prepared for another role is refused, with both roles named" \
