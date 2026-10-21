@@ -224,6 +224,12 @@ state_setup() {
         # A second machine set up the way docs/certificates-and-dns.md says, reached by IP.
         compute_node_runs_through)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'COMPOSE_FILE="compose.yaml:compose.compute.yaml"\nCOMPOSE_PROFILES="nim"\nUT_INFERENCE_ADDRESS="192.0.2.10"\n'"'"' > /etc/understandtech/local.env' ;;
+        # A folder ut-get --prepare never finished: its tools, none of the images.
+        folder_without_its_images)
+            echo 'install -d /w/folder_without_its_images/folder/tools && : > /w/folder_without_its_images/folder/tools/distribution.tar && : > /w/folder_without_its_images/folder/tools/stable.tar' ;;
+        # A box once installed from a folder, now installed with the network again.
+        installed_from_a_folder_before)
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'API_IMAGE="127.0.0.1:15000/understand-tech/ut-api-customer@sha256:%064d"\nOA_KEY="kept"\n'"'"' 0 > /etc/understandtech/local.env' ;;
         # What every release before the engine had a key shipped, carried into local.env.
         engine_key_left_empty)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'VLLM_API_KEY="EMPTY"\n'"'"' > /etc/understandtech/local.env' ;;
@@ -596,6 +602,14 @@ refused_before_anything_is_written() {
     grep -qF -- "$reason" <<< "$output" && ! grep -q '^EXIT=0$' <<< "$output" \
         && [[ ! -s "$WORK_DIR/$state/local-env" ]] && return 0
     echo "$output" | tail -5
+    return 1
+}
+
+a_pulling_install_forgets_the_names_of_a_folder() {
+    local settings
+    settings=$(cat "$WORK_DIR/installed_from_a_folder_before/local-env" 2>/dev/null)
+    grep -q '^OA_KEY=' <<< "$settings" && ! grep -q '127.0.0.1:15000' <<< "$settings" && return 0
+    echo "$settings" | head -5
     return 1
 }
 
@@ -1136,6 +1150,8 @@ PULL_EXIT=0 STEP_CA_RUNS=no INSTALL_COMMAND="ut-install --compute 192.0.2.10" \
     run_install_from_state compute_by_flag -
 INSTALL_COMMAND="ut-install --compute node.local" run_install_from_state compute_named_by_mdns
 INSTALL_COMMAND="ut-install --compute 192.0.2.10 --no-gpu" run_install_from_state compute_without_its_gpu
+INSTALL_COMMAND="ut-install --images-from /w/folder_without_its_images/folder" run_install_from_state folder_without_its_images
+run_install_from_state installed_from_a_folder_before
 run_install_from_state already_set
 run_install_from_state no_settings_dir
 MONGO_VOLUME_EXISTS=yes run_install_from_state orphan_volume
@@ -1244,6 +1260,10 @@ property "a node reached over plain http is refused before anything is written" 
     a_compute_node_over_http_is_refused
 property "a node named by mDNS is refused before anything is written" \
     refused_before_anything_is_written pointed_at_an_mdns_node "names a .local host"
+property "a folder that lacks an image is refused before anything is written" \
+    refused_before_anything_is_written folder_without_its_images "missing or not the one the release names"
+property "an install that downloads again forgets the names a folder gave its images" \
+    a_pulling_install_forgets_the_names_of_a_folder
 property "a compute node is installed with one flag, and asked for no domain" \
     a_compute_node_is_installed_with_one_flag
 property "a compute node named by mDNS is refused before anything is written" \

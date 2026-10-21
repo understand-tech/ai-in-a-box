@@ -78,9 +78,15 @@ step 5. Nothing is installed from a package it cannot verify.
 - Without `--version`, it takes the latest release. A pre-release — a version
   with a suffix, such as `2026.10.0-rc3` — is never the latest, so installing one
   takes `--version`.
-- A machine with no network: copy the package and its `.sig` into a directory,
-  then `sudo bash ut-get --from <directory> --domain box.example.com`. Once the
-  package is installed, `ut-get` is also at `/usr/bin/ut-get`.
+- A machine with no network: on any connected Linux or macOS machine with Docker,
+  prepare a folder with the release and every image it runs —
+  `bash ut-get --prepare <folder> --version "$VERSION" --token-file <registry token>`,
+  run again to resume. Carry the folder to the box, then
+  `sudo bash ut-get --from <folder> --domain box.example.com`. The box checks
+  each image against the signed release before loading it, and downloads
+  nothing. Once the package is installed, `ut-get` is also at `/usr/bin/ut-get`.
+  Model weights are not in the folder yet: a model's first start still needs
+  them in its cache.
 - Releases published before `ut-get` existed do not carry it. Install those by
   the steps below.
 
