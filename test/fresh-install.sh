@@ -226,7 +226,10 @@ state_setup() {
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'COMPOSE_FILE="compose.yaml:compose.compute.yaml"\nCOMPOSE_PROFILES="nim"\nUT_INFERENCE_ADDRESS="192.0.2.10"\n'"'"' > /etc/understandtech/local.env' ;;
         # A folder ut-get --prepare never finished: its tools, none of the images.
         folder_without_its_images)
-            echo 'install -d /w/folder_without_its_images/folder/tools && echo arm64 > /w/folder_without_its_images/folder/architecture && : > /w/folder_without_its_images/folder/tools/distribution.tar && : > /w/folder_without_its_images/folder/tools/stable.tar' ;;
+            echo 'install -d /w/folder_without_its_images/folder/tools && echo arm64 > /w/folder_without_its_images/folder/architecture && : > /w/folder_without_its_images/folder/understandtech_'"$VERSION"'_all.deb && : > /w/folder_without_its_images/folder/tools/distribution.tar && : > /w/folder_without_its_images/folder/tools/stable.tar' ;;
+        # A folder prepared for the release before, carried to a box installing this one.
+        folder_of_another_release)
+            echo 'install -d /w/folder_of_another_release/folder && echo arm64 > /w/folder_of_another_release/folder/architecture && : > /w/folder_of_another_release/folder/understandtech_0.0.1-other_all.deb' ;;
         # A folder ut-get --prepare wrote for an x86 control plane, carried to a GB10.
         folder_for_another_processor)
             echo 'install -d /w/folder_for_another_processor/folder && echo amd64 > /w/folder_for_another_processor/folder/architecture' ;;
@@ -1155,6 +1158,7 @@ INSTALL_COMMAND="ut-install --compute node.local" run_install_from_state compute
 INSTALL_COMMAND="ut-install --compute 192.0.2.10 --no-gpu" run_install_from_state compute_without_its_gpu
 INSTALL_COMMAND="ut-install --images-from /w/folder_without_its_images/folder" run_install_from_state folder_without_its_images
 INSTALL_COMMAND="ut-install --images-from /w/folder_for_another_processor/folder" run_install_from_state folder_for_another_processor
+INSTALL_COMMAND="ut-install --images-from /w/folder_of_another_release/folder" run_install_from_state folder_of_another_release
 run_install_from_state installed_from_a_folder_before
 run_install_from_state already_set
 run_install_from_state no_settings_dir
@@ -1266,6 +1270,8 @@ property "a node named by mDNS is refused before anything is written" \
     refused_before_anything_is_written pointed_at_an_mdns_node "names a .local host"
 property "a folder that lacks an image is refused before anything is written" \
     refused_before_anything_is_written folder_without_its_images "missing or not the one the release names"
+property "a folder prepared for another release is refused, with both versions named" \
+    refused_before_anything_is_written folder_of_another_release "was prepared for release 0.0.1-other, and this is"
 property "a folder prepared for another processor is refused before anything is written" \
     refused_before_anything_is_written folder_for_another_processor "was prepared for amd64, and this machine runs arm64"
 property "an install that downloads again forgets the names a folder gave its images" \
