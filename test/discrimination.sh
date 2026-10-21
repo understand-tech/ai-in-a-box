@@ -543,6 +543,18 @@ capability_discriminates "a bill of materials that forgets the weights" \
     "the bill of materials lists every weight the release pins" \
     "sed -i.bak 's|^weight_lines() {\$|weight_lines() { return 0;|' packaging/release-bom.sh"
 
+capability_discriminates "a folder's images all required, whatever the role" \
+    "a compute node loads from a folder only the images it runs" \
+    "sed -i.bak 's|^        digests=\$(digests_the_role_runs \"\\\$(role_this_install_takes)\" \|\| true)\$|        digests=\"\"|' bin/ut-install"
+
+capability_discriminates "a bill that says no role runs anything" \
+    "the bill of materials says which role runs each image and each weight" \
+    "sed -i.bak 's|^    roles=\$(roles_running \"\\\$reference\")\$|    roles=\"\"|' packaging/release-bom.sh"
+
+capability_discriminates "a preparation that takes every role's part" \
+    "each role prepares its own part of the release" \
+    "sed -i.bak 's|^runs_in_the_role() {\$|runs_in_the_role() { return 0;|' bin/ut-get"
+
 capability_discriminates "a folder taken whatever processor it was prepared for" \
     "a folder prepared for another processor is refused" \
     "sed -i.bak 's|^die_on_a_folder_for_another_architecture() {\$|die_on_a_folder_for_another_architecture() { return 0;|' bin/ut-install"
@@ -1226,6 +1238,10 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
     install_walk_discriminates "a registry token asked for even when nothing is pulled" \
         "a license with no registry token is refused to pull, and taken when nothing is pulled" \
         "sed -i.bak 's|^        if \$DO_PULL; then\$|        if true; then|' bin/ut-install"
+
+    install_walk_discriminates "a folder of another role taken for this one" \
+        "a folder prepared for another role is refused, with both roles named" \
+        "sed -i.bak 's|^die_on_a_folder_for_another_role() {\$|die_on_a_folder_for_another_role() { return 0;|' bin/ut-install"
 
     install_walk_discriminates "a folder of another release taken for this one" \
         "a folder prepared for another release is refused, with both versions named" \

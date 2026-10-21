@@ -378,6 +378,62 @@ a_model_without_weights_is_not_prepared() {
     return 1
 }
 
+# A bill naming busybox for the platform only and alpine for every role, and an
+# install of the given role from a folder busybox was removed from.
+folder_role_report() {
+    local role_settings=$1
+    folder_load_report "$(cat <<TAMPER
+printf '      "purl": "pkg:oci/busybox@${BUSYBOX_IMAGE#*@}?repository_url=${BUSYBOX_IMAGE%%:*}&tag=x&roles=appliance+control-plane",\\n      "purl": "pkg:oci/alpine@${ALPINE_INDEX_IMAGE#*@}?repository_url=${ALPINE_INDEX_IMAGE%%:*}&tag=x&roles=appliance+compute+control-plane",\\n' > "\$probe/folder/understandtech_0.0.0.cdx.json"
+rm -rf "\$probe"/folder/images/registry.k8s.io_e2e-test-images_busybox
+${role_settings}
+TAMPER
+)"
+}
+
+a_compute_folder_loads_the_inference_images_only() {
+    local report
+    report=$(folder_role_report "printf 'COMPOSE_FILE=\"compose.yaml:compose.compute.yaml\"\\n' >> \"\$probe/install/.env\"; echo compute > \"\$probe/folder/role\"")
+    grep -qE '^ALPINE_INDEX_IMAGE="127\.0\.0\.1:15000/' <<< "$report" && ! grep -q '^BUSYBOX_IMAGE=' <<< "$report" \
+        && ! grep -q 'lacks what this install runs' <<< "$report" && return 0
+    echo "$report" | tail -10
+    return 1
+}
+
+a_platform_without_its_images_is_refused() {
+    local report
+    report=$(folder_role_report ":")
+    grep -q 'busybox:1.36.1-1@.*, missing or not the one the release names' <<< "$report" \
+        && ! grep -q 'IMAGE="127.0.0.1:15000' <<< "$report" && return 0
+    echo "$report" | tail -10
+    return 1
+}
+
+the_bill_says_which_role_runs_each_image() {
+    local bill
+    bill=$("$REPO_ROOT/packaging/release-bom.sh" 9999.99.9 2>/dev/null)
+    grep -q '"purl": "pkg:oci/ut-api-customer@[^"]*&roles=appliance+control-plane"' <<< "$bill" \
+        && grep -q '"purl": "pkg:oci/model-free-nim@[^"]*&roles=appliance+compute"' <<< "$bill" \
+        && grep -q '"purl": "pkg:oci/caddy@[^"]*&roles=appliance+compute+control-plane"' <<< "$bill" \
+        && grep -q 'weights=platform[^#]*&roles=appliance+control-plane#' <<< "$bill" \
+        && grep -q 'weights=qwen3.8-27b-nvfp4[^#]*&roles=appliance+compute#' <<< "$bill" && return 0
+    grep -oE '"pkg:oci/[a-z-]+@[^"]*roles=[^"]*"' <<< "$bill" | sed 's/@sha256:[^?]*//' | head -6
+    return 1
+}
+
+each_role_prepares_its_own_part() {
+    local bill="$WORK_DIR/roles.cdx.json" counts
+    "$REPO_ROOT/packaging/release-bom.sh" 9999.99.9 > "$bill" 2>/dev/null
+    counts=$( set +u; source "$REPO_ROOT/bin/ut-get"
+        set +eE
+        images_of_the_bill "$bill" compute | grep -c 'ut-api-customer'
+        images_of_the_bill "$bill" compute | grep -c 'model-free-nim'
+        weights_of_the_bill "$bill" "" control-plane | grep -c '^qwen3.8-27b-nvfp4 '
+        weights_of_the_bill "$bill" "" compute | grep -c '^platform ' )
+    [[ "$(tr '\n' ' ' <<< "$counts")" == "0 1 0 0 " ]] && return 0
+    echo "compute: ut-api ×$(sed -n 1p <<< "$counts"), nim ×$(sed -n 2p <<< "$counts"); control-plane: qwen ×$(sed -n 3p <<< "$counts"); compute: platform ×$(sed -n 4p <<< "$counts")"
+    return 1
+}
+
 a_folder_for_another_architecture_is_refused() {
     local report
     report=$(folder_load_report 'echo s390x > "$probe/folder/architecture"')
@@ -2883,6 +2939,14 @@ if grep -q 'step_images_from_a_folder' "$REPO_ROOT/bin/ut-install"; then
         the_bill_lists_every_pinned_weight
     capability "a model whose weights the release does not list is not prepared" \
         a_model_without_weights_is_not_prepared
+    capability "a compute node loads from a folder only the images it runs" \
+        a_compute_folder_loads_the_inference_images_only
+    capability "a platform whose images the folder lacks is refused" \
+        a_platform_without_its_images_is_refused
+    capability "the bill of materials says which role runs each image and each weight" \
+        the_bill_says_which_role_runs_each_image
+    capability "each role prepares its own part of the release" \
+        each_role_prepares_its_own_part
     capability "a folder prepared for another processor is refused" \
         a_folder_for_another_architecture_is_refused
     capability "a folder whose tool is not the one the release names is refused" \
