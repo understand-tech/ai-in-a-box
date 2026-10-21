@@ -288,11 +288,11 @@ weights_placement_report() {
         printf '%s %s %s@%s/%s\n' "$(openssl dgst -sha256 -r "$content" | cut -d' ' -f1)" "$(wc -c < "$content" | tr -d ' ')" \
             "$repo" "$rev" "$path" >> "$probe/install/models/weights/$name.txt"
     done
-    tool=$(sed -n 's/^FOLDER_REGISTRY_TOOL="\(.*\)"$/\1/p' "$REPO_ROOT/ut-install")
+    tool=$(sed -n 's/^FOLDER_REGISTRY_TOOL="\(.*\)"$/\1/p' "$REPO_ROOT/bin/ut-install")
     docker pull -q "$tool" >/dev/null 2>&1 && docker tag "$tool" "${tool%@*}" >/dev/null 2>&1
     [[ -n "$tamper" ]] && eval "$tamper"
     (
-        set +u; UT_INSTALL_DIR="$probe/install" source "$REPO_ROOT/ut-install" >/dev/null 2>&1
+        set +u; UT_INSTALL_DIR="$probe/install" source "$REPO_ROOT/bin/ut-install" >/dev/null 2>&1
         set +eE; trap - ERR
         INSTALL_DIR="$probe/install"; IMAGES_FROM="$probe/folder"
         problems=$(weights_problems_in_the_folder)
@@ -337,7 +337,7 @@ weights_download_report() {
     rm -rf "$probe"; mkdir -p "$probe/folder"
     printf '      "purl": "pkg:huggingface/nomic-ai/nomic-embed-text-v1.5-GGUF@0188c9bf409793f810680a5a431e7b899c46104c?checksum=sha256:%s&size=4747&weights=platform#README.md",\n' "$sha" > "$probe/bill.json"
     (
-        set +u; source "$REPO_ROOT/ut-get"
+        set +u; source "$REPO_ROOT/bin/ut-get"
         weights_of_the_bill "$probe/bill.json" "" | download_the_weights_into "$probe/folder"
     ) 2>&1
     find "$probe/folder" -type f | sed "s|$probe/folder/||"
@@ -370,7 +370,7 @@ the_bill_lists_every_pinned_weight() {
 
 a_model_without_weights_is_not_prepared() {
     local output
-    output=$( set +u; source "$REPO_ROOT/ut-get"; MODEL_ID=nemotron-3.5-bolt-74b; VERSION=9999.99.9
+    output=$( set +u; source "$REPO_ROOT/bin/ut-get"; MODEL_ID=nemotron-3.5-bolt-74b; VERSION=9999.99.9
         die_on_a_model_the_bill_does_not_carry "platform aa 1 org/x rev README.md" 2>&1 ) && { echo "it was prepared"; return 1; }
     grep -q 'lists no weights for nemotron-3.5-bolt-74b' <<< "$output" && return 0
     echo "$output"
@@ -462,7 +462,7 @@ prepare_access_report() {
         {
             for key in license other; do
                 (
-                    set +u; source "$REPO_ROOT/ut-get"
+                    set +u; source "$REPO_ROOT/bin/ut-get"
                     PATH="$work/argv:$PATH" UT_KEYGEN_API="http://127.0.0.1:$(cat "$work/port")/v1/accounts/test"
                     KEYGEN_API=$UT_KEYGEN_API LICENSE_FILE="$work/$key.key"
                     read_the_registry_access_of_the_license
@@ -493,7 +493,7 @@ the_license_file_carried_in_a_folder_goes_to_ut_install() {
     local work="$WORK_DIR/carried-license" said
     mkdir -p "$work/one" "$work/none" "$work/two"
     : > "$work/one/box.lic"; : > "$work/two/a.lic"; : > "$work/two/b.lic"
-    said=$( set +u; source "$REPO_ROOT/ut-get"
+    said=$( set +u; source "$REPO_ROOT/bin/ut-get"
         printf 'one=%s\n' "$(license_file_in "$work/one")"
         printf 'none=%s\n' "$(license_file_in "$work/none")"
         printf 'two=%s\n' "$( (license_file_in "$work/two") 2>/dev/null || echo refused)" )
