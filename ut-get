@@ -19,6 +19,7 @@ RELEASES_URL="${UT_RELEASES_URL:-https://github.com/understand-tech/ai-in-a-box/
 DOWNLOAD_DIR="/var/cache/understandtech/releases"
 RELEASE_DIR=""
 PREPARE_DIR=""
+MODEL_ID=""
 TOKEN_FILE=""
 REGISTRY_USER="${UT_REGISTRY_USER:-dgx-access}"
 VERSION=""
@@ -51,6 +52,9 @@ ut-get — installs UnderstandTech AI in a Box from a release, then runs ut-inst
                        with --from. Runs again where it stopped.
   --token-file <file>  with --prepare, the registry token UnderstandTech gave
                        with the license. Read from the file, never shown.
+  --model <id>         with --prepare, the model whose weights the folder carries,
+                       beside those of the platform; the release's own without it.
+                       Elsewhere, passed on to ut-install.
   --architecture arm64|amd64
                        with --prepare, the box's processor: arm64 for a GB10 or a
                        GB300 (the default), amd64 for an x86 control plane.
@@ -74,6 +78,7 @@ parse_arguments() {
             --from)    RELEASE_DIR="${2:?--from needs a directory}"; shift ;;
             --prepare) PREPARE_DIR="${2:?--prepare needs a directory}"; shift ;;
             --token-file) TOKEN_FILE="${2:?--token-file needs a file}"; shift ;;
+            --model)   MODEL_ID="${2:?--model needs a model}"; INSTALL_ARGUMENTS+=(--model "$2"); shift ;;
             --architecture) BOX_ARCHITECTURE="${2:?--architecture needs arm64 or amd64}"; shift ;;
             --version) VERSION="${2:?--version needs a version}"; shift ;;
             --browser) NEXT=ut-setup ;;
@@ -229,6 +234,52 @@ copy_the_tools_into() {
     log_info "The registry and skopeo the box loads its images with are in the folder"
 }
 
+# One line per weight file the folder carries, "<list> <sha256> <size>
+# <repository> <revision> <path>": the platform's, and the model's, or the
+# release default's. The box takes a file only as models/weights/ lists it.
+weights_of_the_bill() {
+    local bill=$1 model=$2
+    sed -n 's|.*"purl": "pkg:huggingface/\([^@]*\)@\([0-9a-f]\{40\}\)?checksum=sha256:\([0-9a-f]\{64\}\)&size=\([0-9]*\)&weights=\([^&#]*\)\(&default=true\)\{0,1\}#\([^"]*\)".*|\5 \3 \4 \1 \2 \7 \6|p' "$bill" \
+        | while read -r list sha size repository revision path default; do
+            if [[ "$list" == platform || "$list" == "$model" || ( -z "$model" && -n "$default" ) ]]; then
+                printf '%s %s %s %s %s %s\n' "$list" "$sha" "$size" "$repository" "$revision" "$path"
+            fi
+        done
+}
+
+die_on_a_model_the_bill_does_not_carry() {
+    [[ -z "$MODEL_ID" ]] || grep -q "^${MODEL_ID} " <<< "$1" \
+        || fail "Release ${VERSION:-} lists no weights for ${MODEL_ID}: a model goes in a folder once its license is read and its weights pinned"
+}
+
+weight_path_of() {
+    local list=$1 repository=$2 revision=$3 path=$4
+    printf 'weights/%s/%s/%s/%s' "$list" "$(printf '%s' "$repository" | tr '/' '_')" "$revision" "$path"
+}
+
+sha256_of_file() { openssl dgst -sha256 -r "$1" | cut -d' ' -f1; }
+
+download_the_weights_into() {
+    local folder=$1 list sha size repository revision path target
+    while read -r list sha size repository revision path; do
+        [[ -n "$list" ]] || continue
+        target="$folder/$(weight_path_of "$list" "$repository" "$revision" "$path")"
+        if [[ -f "$target" && "$(wc -c < "$target" | tr -d ' ')" == "$size" && "$(sha256_of_file "$target")" == "$sha" ]]; then
+            log_info "${repository}/${path} already in the folder"
+            continue
+        fi
+        mkdir -p "$(dirname "$target")"
+        fetch --location --continue-at - --output "$target.part" "https://huggingface.co/${repository}/resolve/${revision}/${path}" \
+            || fail "Could not download ${repository}/${path} — run the same command again to resume"
+        if [[ "$(wc -c < "$target.part" | tr -d ' ')" != "$size" || "$(sha256_of_file "$target.part")" != "$sha" ]]; then
+            rm -f "$target.part"
+            fail "${repository}/${path} is not the file the release lists — run the same command again"
+        fi
+        mv "$target.part" "$target"
+        log_info "${repository}/${path}"
+    done
+}
+
 # A folder serves one architecture: what it holds for the box, tools included,
 # runs on that processor only. ut-install compares it with the box's.
 mark_the_folder_architecture() {
@@ -263,6 +314,13 @@ prepare_a_folder() {
     images_of_the_bill "$folder/understandtech_${VERSION}.cdx.json" | copy_the_images_into "$folder" "$auth"
     copy_the_tools_into "$folder" "$auth"
     rm -rf "$(dirname "$auth")"
+
+    local weights
+    weights=$(weights_of_the_bill "$folder/understandtech_${VERSION}.cdx.json" "$MODEL_ID")
+    die_on_a_model_the_bill_does_not_carry "$weights"
+    local of_the_model=${MODEL_ID:+of $MODEL_ID}
+    log_step "Downloading the weights ${of_the_model:-of the release model} and of the platform"
+    download_the_weights_into "$folder" <<< "$weights"
 
     log_step "Ready: $(du -sh "$folder" | cut -f1) in ${folder}"
     printf '  Carry it to the box, then run there:  sudo ut-get --from <where it is>\n'

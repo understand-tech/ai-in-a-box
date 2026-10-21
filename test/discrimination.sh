@@ -511,6 +511,34 @@ capability_discriminates "a folder image taken without proving it is the one the
     "a folder holding an image the release does not name is refused" \
     "sed -i.bak 's/\\[\\[ \"\\\$(sha256_of \"\\\$dir\/named.json\")\" == \"\\\${reference#\\*@}\" \\]\\] || return 1/:/' ut-install"
 
+capability_discriminates "a weight placed without checking its content" \
+    "a weight that is not the file the release lists is refused" \
+    "sed -i.bak 's/ || \\[\\[ \"\\\$(sha256_of \"\\\$file\")\" != \"sha256:\\\$sha\" \\]\\]; then/; then/' ut-install"
+
+capability_discriminates "a weight downloaded without checking its content" \
+    "a download that is not the listed file is refused" \
+    "sed -i.bak 's/ || \"\\\$(sha256_of_file \"\\\$target.part\")\" != \"\\\$sha\" \\]\\]; then/ ]]; then/' ut-get"
+
+capability_discriminates "weights placed with the engine still free to download" \
+    "weights from a folder land where each service looks" \
+    "sed -i.bak '/env_set \"\\\$local_file\" HF_HUB_OFFLINE \"1\"/d' ut-install"
+
+capability_discriminates "an engine cache with no revision to resolve" \
+    "weights from a folder land where each service looks" \
+    "sed -i.bak '/printf .=%s %s.refs.main/d' ut-install"
+
+capability_discriminates "engine weights left to root" \
+    "weights from a folder land where each service looks" \
+    "sed -i.bak 's|copy_into_a_volume \"\\\$(volume_ready nim-llm-cache)\" \"1000:1000\"|copy_into_a_volume \"\\\$(volume_ready nim-llm-cache)\" \"\"|' ut-install"
+
+capability_discriminates "a model prepared with no weights for it" \
+    "a model whose weights the release does not list is not prepared" \
+    "sed -i.bak 's|^die_on_a_model_the_bill_does_not_carry() {\$|die_on_a_model_the_bill_does_not_carry() { return 0;|' ut-get"
+
+capability_discriminates "a bill of materials that forgets the weights" \
+    "the bill of materials lists every weight the release pins" \
+    "sed -i.bak 's|^weight_lines() {\$|weight_lines() { return 0;|' packaging/release-bom.sh"
+
 capability_discriminates "a folder taken whatever processor it was prepared for" \
     "a folder prepared for another processor is refused" \
     "sed -i.bak 's|^die_on_a_folder_for_another_architecture() {\$|die_on_a_folder_for_another_architecture() { return 0;|' ut-install"
