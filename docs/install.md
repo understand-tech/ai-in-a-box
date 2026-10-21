@@ -78,17 +78,22 @@ step 5. Nothing is installed from a package it cannot verify.
 - Without `--version`, it takes the latest release. A pre-release — a version
   with a suffix, such as `2026.10.0-rc3` — is never the latest, so installing one
   takes `--version`.
-- A machine with no network: on any connected Linux or macOS machine with Docker,
-  prepare a folder with the release, every image it runs and the weights of its
-  models — `bash ut-get --prepare <folder> --version "$VERSION" --token-file
-  <registry token>`, with `--model <id>` for a model other than the release's
-  and `--architecture amd64` for an x86 control plane; run again to resume.
-  Carry the folder to the box, then `sudo bash ut-get --from <folder> --domain
-  box.example.com`. The box checks each image and each weight file against the
-  signed release before using it, and downloads nothing. A model goes in a
-  folder once its license has been read and its weights pinned in
-  `models/weights/`; the preparation names the ones that are not. Once the
-  package is installed, `ut-get` is also at `/usr/bin/ut-get`.
+- A machine with no network: on any connected Linux or macOS machine with Docker
+  and `jq`, prepare a folder with the release, every image it runs and the
+  weights of its models —
+  `bash ut-get --prepare <folder> --version "$VERSION" --license-file license.key`,
+  with `--model <id>` for a model other than the release's and
+  `--architecture amd64` for an x86 control plane; run again to resume. The
+  license key reads its registry access from Keygen. Carry the folder to the
+  box, then
+  `sudo bash ut-get --from <folder> --license-file license.key --domain box.example.com`.
+  The box checks each image and each weight file against the signed release
+  before using it, and downloads nothing. A model goes in a folder once its
+  license has been read and its weights pinned in `models/weights/`; the
+  preparation names the ones that are not. The box's license still needs Keygen
+  once: a box that cannot reach it writes a request, as section 5 says. Put the
+  license file UnderstandTech sends back into the folder, and run `ut-get --from`
+  again. Once the package is installed, `ut-get` is also at `/usr/bin/ut-get`.
 - Releases published before `ut-get` existed do not carry it. Install those by
   the steps below.
 
@@ -291,14 +296,15 @@ never written to the log.
    QR code when `qrencode` is installed.
 2. Send that file to UnderstandTech. The license file that comes back works on
    this machine only, for a year.
-3. Run the install again with it, and the images already on the machine or in a
-   prepared folder:
+3. Run the install again with it, and the images already on the machine:
 
    ```bash
    sudo ut-install --license-file license.key --machine-file box.lic --skip-pull
    ```
 
-   The file is checked with no network, then kept like one Keygen handed over.
+   or, with a prepared folder, put the file into it and run `ut-get --from`
+   again: it hands the folder's only `.lic` file to `ut-install`. The file is
+   checked with no network, then kept like one Keygen handed over.
 
 The license also names the registry the images come from. For any registry but
 `ghcr.io`, every image of the release is pulled from it — ours and the third-party
