@@ -2732,15 +2732,23 @@ pin_host_keys() {
 # session opened then is closed on it: "server unexpectedly closed connection".
 # Ready means an SFTP session opens with the test's key. Bounded by the clock,
 # as mongo_ready is, since a runner pulling the image takes most of a minute.
+sftp_session_opens() {
+    local server=$1 net=$2 ssh_dir=$3
+    echo bye | docker run --rm -i --network "$net" -v "$ssh_dir":/k:ro --entrypoint sftp "$RESTIC_IMAGE" \
+        -b - -P 2222 -i /k/id_ed25519 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        "backup@$server" >/dev/null 2>&1
+}
+
+# The image restarts sshd once its setup ends, after a first session may already
+# have opened: the next one then meets a closed connection (TICKET-61).
 sftp_server_ready() {
     local server=$1 net=$2 ssh_dir=$3 deadline=$((SECONDS + 150)) scanned
     while (( SECONDS < deadline )); do
         [[ "$(docker inspect -f '{{.State.Running}}' "$server" 2>/dev/null)" == true ]] || { sleep 2; continue; }
         scanned=$(docker run --rm --network "$net" --entrypoint ssh-keyscan "$RESTIC_IMAGE" \
             -p 2222 -t ed25519 "$server" 2>/dev/null)
-        if [[ -n "$scanned" ]] && echo bye | docker run --rm -i --network "$net" -v "$ssh_dir":/k:ro --entrypoint sftp "$RESTIC_IMAGE" \
-                -b - -P 2222 -i /k/id_ed25519 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                "backup@$server" >/dev/null 2>&1; then
+        if [[ -n "$scanned" ]] && sftp_session_opens "$server" "$net" "$ssh_dir" \
+                && sleep 3 && sftp_session_opens "$server" "$net" "$ssh_dir"; then
             printf '%s\n' "$scanned"
             return 0
         fi
