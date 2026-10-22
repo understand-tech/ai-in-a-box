@@ -3,22 +3,39 @@
 const $ = (id) => document.getElementById(id);
 const show = (id, visible = true) => { $(id).hidden = !visible; };
 
-function item(text, kind) {
-  const li = document.createElement("li");
-  const marks = { ok: "✓ ", warn: "⚠ Warning: ", bad: "✕ Problem: ", current: "… ", done: "✓ " };
-  li.className = kind;
-  li.textContent = (marks[kind] || "") + text;
-  return li;
+const screens = ["check", "domain", "license", "model", "reporting", "running", "done"];
+const questions = ["domain", "license", "model", "reporting"];
+const marks = { ok: ["✓", ""], done: ["✓", ""], current: ["…", ""], warn: ["⚠", "Warning: "], fail: ["✕", "Problem: "] };
+const unmarked = ["", ""];
+
+function go(screen) {
+  for (const name of screens) show(name, name === screen);
+  const reached = screens.indexOf(screen);
+  document.querySelectorAll(".dots li").forEach((dot) => {
+    const index = screens.indexOf(dot.dataset.for);
+    dot.classList.toggle("on", index <= reached);
+    dot.toggleAttribute("aria-current", index === reached);
+  });
+  const first = $(screen).querySelector("input:not([type=radio]), input[type=radio]:checked, button.primary:not(:disabled)");
+  if (first) first.focus();
 }
 
-function stage(current) {
-  const order = ["answers", "install", "done"];
-  order.forEach((name, index) => {
-    const li = $(`stage-${name}`);
-    li.toggleAttribute("aria-current", name === current);
-    if (name === current) li.setAttribute("aria-current", "step");
-    li.classList.toggle("passed", index < order.indexOf(current));
-  });
+function current() {
+  return screens.find((name) => !$(name).hidden);
+}
+
+function item(text, kind, [sign, word] = marks[kind]) {
+  const li = document.createElement("li");
+  li.className = kind;
+  if (sign) {
+    const mark = document.createElement("b");
+    mark.textContent = sign;
+    li.append(mark);
+  }
+  const words = document.createElement("span");
+  words.textContent = word + text;
+  li.append(words);
+  return li;
 }
 
 function minutes(seconds) {
@@ -29,59 +46,75 @@ async function readiness() {
   const answer = await fetch("/check");
   if (!answer.ok) return;
   const check = await answer.json();
-  const list = $("readiness");
-  list.replaceChildren();
-  for (const line of check.lines) {
-    if (line.startsWith("[ ok ] ")) list.append(item(line.slice(7), "ok"));
-    else if (line.startsWith("[warn] ")) list.append(item(line.slice(7), "warn"));
-    else if (line.startsWith("[fail] ")) list.append(item(line.slice(7), "bad"));
-  }
+  $("readiness").replaceChildren(...check.messages.map((m) => item(m.text, m.kind)));
+  $("check-title").textContent = check.ready ? "This box can be installed" : "This box cannot be installed as it is";
   show("checking", false);
+  show("check-lead", check.ready);
   show("not-ready", !check.ready);
-  $("install").disabled = !check.ready;
+  $("checked").disabled = !check.ready;
+  if (current() === "check") go("check");
+}
+
+function modelOption(model) {
+  const label = document.createElement("label");
+  label.className = "option";
+  const input = document.createElement("input");
+  input.type = "radio";
+  input.name = "model";
+  input.value = model.id;
+  const words = document.createElement("span");
+  const name = document.createElement("b");
+  name.textContent = model.id;
+  const facts = document.createElement("small");
+  facts.textContent = [model.served, model.size, model.license].join(" · ");
+  words.append(name, facts);
+  if (model.runs_its_own_code) {
+    const tag = document.createElement("em");
+    tag.textContent = "⚠ runs code of its own";
+    words.append(tag);
+  }
+  label.append(input, words);
+  return label;
 }
 
 async function models() {
   const answer = await fetch("/models");
   if (!answer.ok) return;
-  const shipped = $("model").firstElementChild;
-  const offered = (await answer.json()).map((model) => {
-    const option = document.createElement("option");
-    option.value = model.id;
-    option.textContent = model.label;
-    return option;
-  });
-  $("model").replaceChildren(shipped, ...offered);
+  const shipped = $("models").firstElementChild;
+  $("models").replaceChildren(shipped, ...(await answer.json()).map(modelOption));
 }
 
 function render(p) {
-  const answering = !p.running && !p.finished;
   const done = p.finished && p.succeeded;
-  stage(done ? "done" : answering ? "answers" : "install");
-  show("questions", answering);
-  show("running", p.running || (p.finished && !p.succeeded));
-  show("done", done);
+  const failed = p.finished && !p.succeeded;
+  const screen = done ? "done" : p.running || failed ? "running" : "";
+  if (screen && current() !== screen) go(screen);
 
   $("step").textContent = p.running ? p.step || "Starting" : "Stopped";
+  $("running-title").textContent = failed ? "The install stopped" : "Installing";
+  show("working", p.running);
   $("elapsed").textContent = minutes(p.elapsed);
   show("images-block", p.total > 0 && p.running);
   $("images").max = p.total;
   $("images").value = p.landed;
-  $("count").textContent = `${p.landed} of ${p.total} images on the box`;
+  $("landed").textContent = p.landed;
+  $("total").textContent = p.total;
 
-  const steps = $("steps");
-  steps.replaceChildren();
-  p.steps.forEach((name, index) => {
+  $("steps").replaceChildren(...p.steps.map((name, index) => {
     const last = index === p.steps.length - 1;
-    steps.append(item(name, last ? (p.finished && !p.succeeded ? "bad" : p.running ? "current" : "done") : "done"));
-  });
+    if (!last) return item(name, "done");
+    if (failed) return item(name, "fail");
+    return item(name, p.running ? "current" : "done");
+  }));
 
-  $("warnings").replaceChildren(...p.warnings.map((w) => item(w, "")));
-  show("warnings-block", p.warnings.length > 0);
+  const warnings = p.messages.filter((m) => m.kind === "warn");
+  $("warnings").replaceChildren(...warnings.map((m) => item(m.text, "warn", unmarked)));
+  show("warnings-block", warnings.length > 0);
+  show("keep-open", p.running);
 
-  show("failure-block", p.finished && !p.succeeded);
+  show("failure-block", failed);
   $("failed-step").textContent = p.step || "the start";
-  $("failure").textContent = p.failure;
+  $("failures").replaceChildren(...p.messages.filter((m) => m.kind === "fail").map((m) => item(m.text, "fail", unmarked)));
 
   const pre = $("lines");
   const atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 4;
@@ -100,37 +133,52 @@ async function follow() {
   const p = await answer.json();
   render(p);
   if (!p.running && !p.finished) {
+    go("check");
     readiness();
     models();
   }
   if (p.running) setTimeout(follow, 2000);
 }
 
-$("answers").addEventListener("submit", async (event) => {
-  event.preventDefault();
+function answered(screen) {
+  return [...$(screen).querySelectorAll("input")].every((input) => input.reportValidity());
+}
+
+async function install() {
   show("refused", false);
-  const answer = await fetch("/install", { method: "POST", body: new URLSearchParams(new FormData(event.target)) });
+  const answer = await fetch("/install", { method: "POST", body: new URLSearchParams(new FormData($("answers"))) });
   if (!answer.ok) {
     $("refused").textContent = await answer.text();
     show("refused");
     return;
   }
+  go("running");
   follow();
+}
+
+$("checked").addEventListener("click", () => go("domain"));
+
+$("answers").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const screen = current();
+  if (!answered(screen)) return;
+  const next = questions[questions.indexOf(screen) + 1];
+  if (next) go(next);
+  else install();
 });
 
+for (const back of document.querySelectorAll(".back")) {
+  back.addEventListener("click", () => go(screens[screens.indexOf(current()) - 1]));
+}
+
 $("show-license").addEventListener("click", (event) => {
-  const visible = $("license").type === "password";
-  $("license").type = visible ? "text" : "password";
+  const visible = $("license-input").type === "password";
+  $("license-input").type = visible ? "text" : "password";
   event.target.textContent = visible ? "Hide" : "Show";
   event.target.setAttribute("aria-pressed", String(visible));
 });
 
-$("again").addEventListener("click", () => {
-  show("running", false);
-  show("questions");
-  stage("answers");
-  $("license").focus();
-});
+$("again").addEventListener("click", () => go("reporting"));
 
 $("reveal").addEventListener("click", async () => {
   const answer = await fetch("/secrets", { method: "POST" });

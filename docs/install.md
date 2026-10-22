@@ -106,9 +106,10 @@ step 5. Nothing is installed from a package it cannot verify.
 ### From a browser on the box
 
 On a box with a screen and a desktop session, `--browser` hands over to
-`ut-setup` instead of `ut-install`, and the questions are asked in a page — the
-address, the license key, usage reports, and the model, among those
-`ut-install --list-models` shows proven on this GPU:
+`ut-setup` instead of `ut-install`. A page shows what `ut-install --check` found,
+then asks the questions one per screen — the address, the license key, the model
+among those `ut-install --list-models` shows proven on this GPU, and usage
+reports:
 
 ```bash
 sudo bash ut-get --version "$VERSION" --browser
