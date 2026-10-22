@@ -504,6 +504,23 @@ the_models_listed_are_those_proven_here() {
     return 1
 }
 
+the_models_also_come_as_events_with_their_columns_apart() {
+    [[ "$(output_of models_as_events_on_gb10)" == "$(output_of models_listed_on_gb10)" ]] \
+        || { echo "the text changed with --events"; diff <(output_of models_listed_on_gb10) <(output_of models_as_events_on_gb10); return 1; }
+    python3 - "$WORK_DIR/models_as_events_on_gb10/events.jsonl" <<'PY'
+import json, re, sys
+models = {event["id"]: event for event in map(json.loads, open(sys.argv[1])) if event["event"] == "model"}
+qwen, bolt = models.get("qwen3.8-27b-nvfp4", {}), models.get("nemotron-3.5-bolt-74b", {})
+apart = (sorted(models) == ["nemotron-3.5-bolt-74b", "qwen3.8-27b-nvfp4"]
+         and qwen.get("served") == "NIM on gb10" and qwen.get("license") == "apache-2.0" and qwen.get("runs_its_own_code") is False
+         and bolt.get("served") == "vLLM on gb10" and bolt.get("license") == "OpenMDW-1.1" and bolt.get("runs_its_own_code") is True
+         and all(re.fullmatch(r"[0-9.]+ GB", model.get("size", "")) for model in models.values()))
+if not apart:
+    print(json.dumps(models, indent=1))
+    sys.exit(1)
+PY
+}
+
 an_engine_forced_is_taken_only_if_proven() {
     local output
     output=$(output_of test_vllm_forced_on_nim)
@@ -1197,6 +1214,7 @@ INSTALL_COMMAND="ut-install --model qwen3.8-27b-nvfp4" run_install_from_state mo
 INSTALL_COMMAND="ut-install --model test-vllm --engine nim" run_install_from_state test_vllm_forced_on_nim
 INSTALL_COMMAND="ut-install --list-models" run_install_from_state models_listed_on_gb10
 INSTALL_COMMAND="ut-install --list-models" run_install_from_state models_listed_on_an_unproven_gpu
+INSTALL_COMMAND="ut-install --list-models --events /w/models_as_events_on_gb10/events.jsonl" run_install_from_state models_as_events_on_gb10
 run_install_from_state model_kept_by_name
 INSTALL_COMMAND="ut-install --no-gpu --model nemotron-3.5-bolt-74b" run_install_from_state model_on_a_control_plane
 PULL_EXIT=0 WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --inference-from https://node.example.test:8444 --inference-key-file /w/compute/key --inference-ca-file /w/compute/root.crt" \
@@ -1297,6 +1315,8 @@ property "a model is chosen only on a GPU it is proven on" \
     a_model_is_chosen_only_where_it_is_proven
 property "the models listed are those proven on this GPU, with their engine, size and license" \
     the_models_listed_are_those_proven_here
+property "with --events, each model is also an event, its columns apart, and the text is unchanged" \
+    the_models_also_come_as_events_with_their_columns_apart
 property "an engine asked for is taken only where it is proven" \
     an_engine_forced_is_taken_only_if_proven
 property "a model kept by name follows its entry on the next install" \

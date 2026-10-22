@@ -365,6 +365,28 @@ if grep -q 'say_each_image_as_it_lands' "$REPO_ROOT/bin/ut-install"; then
         "sed -i.bak 's|Installation complete in \$(( SECONDS / 60 )) min|Installation complete|' bin/ut-install"
 fi
 
+if grep -q 'say_message' "$REPO_ROOT/bin/ut-install"; then
+    capability_discriminates "a message carried over two lines told as two messages" \
+        "each message is also an event" \
+        "sed -i.bak '/&& kind=more\$/d' bin/ut-install"
+
+    capability_discriminates "an escaping that lets a quote through" \
+        "each message is also an event" \
+        "sed -i.bak '/^    text=\${text\/\/\\\\\"/d' bin/ut-install"
+
+    capability_discriminates "events written where the text goes" \
+        "each message is also an event" \
+        "sed -i.bak 's|>> \"\$EVENTS_FILE\" 2>/dev/null|2>/dev/null|' bin/ut-install"
+
+    capability_discriminates "an image that lands told to nobody" \
+        "each image that lands is also an event" \
+        "sed -i.bak '/say_event image/d' bin/ut-install"
+
+    capability_discriminates "a password told in the events" \
+        "never a password" \
+        "sed -i.bak 's|secrets \",\\\\\"file\\\\\":|secrets \",\\\\\"password\\\\\":\\\\\"admin-pw-7c1e\\\\\",\\\\\"file\\\\\":|' bin/ut-install"
+fi
+
 capability_discriminates "a builder that waits for an llm a panel does not run" \
     "the App Builder renders on a machine without a GPU" \
     "sed -i.bak '/^        required: false\$/d' compose.appbuilder.yaml"
@@ -1206,6 +1228,9 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
     install_walk_discriminates "a list that reads no license" \
         "the models listed are those proven on this GPU" \
         "sed -i.bak 's/MODEL_LICENSE 2>/NO_SUCH_KEY 2>/' bin/ut-install"
+    install_walk_discriminates "a model told without its size" \
+        "each model is also an event, its columns apart" \
+        "sed -i.bak 's|,\\\\\"size\\\\\":\$(json_string \"\$size\")||' bin/ut-install"
     install_walk_discriminates "a model chosen without its proof" \
         "a model is chosen only on a GPU it is proven on" \
         "sed -i.bak 's| \\&\\& \\[\\[ -f \"\\\$(proof_of \"\\\$id\" \"\\\$engine\" \"\\\$family\")\" \\]\\]||' bin/ut-install"

@@ -838,6 +838,7 @@ set +u
 UT_INSTALL_DIR="$PROBE" source "$REPO_ROOT/bin/ut-install" >/dev/null 2>&1
 set +eE
 trap - ERR
+EVENTS_FILE=${EVENTS:-}
 compose_in_dir() {
     case "$*" in
         "--progress json version") return "${JSON_REFUSED:-0}" ;;
@@ -870,6 +871,16 @@ the_pull_says_each_image_as_it_lands() {
         && ! grep -q $'\033' <<< "$report" \
         && grep -q 'EXIT=0' <<< "$report" && return 0
     echo "$report"
+    return 1
+}
+
+the_pull_tells_each_image_as_an_event() {
+    local events="$WORK_DIR/pull-events.jsonl"
+    EVENTS="$events" installer_pull_over >/dev/null
+    grep -qxF '{"v":1,"event":"step","text":"Downloading images"}' "$events" \
+        && grep -qxF '{"v":1,"event":"image","landed":1,"total":3,"name":"ghcr.io/x/api:1","minutes":0}' "$events" \
+        && grep -qxF '{"v":1,"event":"image","landed":2,"total":3,"name":"ghcr.io/x/caddy:2","minutes":0}' "$events" && return 0
+    cat "$events"
     return 1
 }
 
@@ -2926,6 +2937,76 @@ a_failure_tested_inside_a_substitution_stops_nothing_on_bash_3() {
     return 1
 }
 
+# Run on bash 3.2, where the escaping is the one a box would run.
+installer_messages_with_events() {
+    local probe=$1 events=$2 label=$3
+    cat > "$probe/say.sh" <<'EOF'
+set +u
+UT_INSTALL_DIR=/tmp source /w/bin/ut-install >/dev/null 2>&1
+set +eE
+trap - ERR
+EVENTS_FILE=$WITH_EVENTS
+log_step "Checking the system"
+log_info "Docker 28.4"
+log_error "Docker cannot create a network — its address pools are full."
+log_error "  Or widen the pools in /etc/docker/daemon.json and restart docker:"
+log_error '    { "default-address-pools": [ { "base": "10.100.0.0/16", "size": 24 } ] }'
+log_warn "A tab	here, a backslash \\ there, and an escape $(printf '\033')[0m"
+log_error ""
+EOF
+    docker run --rm -v "$REPO_ROOT":/w:ro -v "$probe":/p -e WITH_EVENTS="$events" "$BASH_3_IMAGE" \
+        sh -c "bash /p/say.sh > /p/$label.out 2> /p/$label.err"
+}
+
+the_events_say_what_the_text_says_and_change_none_of_it() {
+    local probe stream
+    probe=$(mktemp -d "$WORK_DIR/events.XXXXXX")
+    installer_messages_with_events "$probe" "" plain
+    installer_messages_with_events "$probe" /p/events.jsonl with-events
+    for stream in out err; do
+        [[ -s "$probe/plain.$stream" ]] || { echo "nothing on std$stream"; return 1; }
+        cmp -s "$probe/plain.$stream" "$probe/with-events.$stream" \
+            || { echo "std$stream changed:"; diff "$probe/plain.$stream" "$probe/with-events.$stream"; return 1; }
+    done
+    python3 - "$probe/events.jsonl" <<'PY'
+import json, sys
+said = [json.loads(line) for line in open(sys.argv[1])]
+expected = [
+    ("step", "Checking the system"),
+    ("ok", "Docker 28.4"),
+    ("fail", "Docker cannot create a network — its address pools are full."),
+    ("more", "  Or widen the pools in /etc/docker/daemon.json and restart docker:"),
+    ("more", '    { "default-address-pools": [ { "base": "10.100.0.0/16", "size": 24 } ] }'),
+    ("warn", "A tab\there, a backslash \\ there, and an escape [0m"),
+    ("more", ""),
+]
+got = [(event["event"], event["text"]) for event in said if event["v"] == 1]
+if got != expected:
+    print("got:", got)
+    sys.exit(1)
+PY
+}
+
+the_events_never_carry_a_password() {
+    local probe
+    probe=$(mktemp -d "$WORK_DIR/events.XXXXXX")
+    cat > "$probe/secrets.sh" <<'EOF'
+set +u
+UT_INSTALL_DIR=/p/install source /w/bin/ut-install >/dev/null 2>&1
+set +eE
+trap - ERR
+EVENTS_FILE=/p/events.jsonl
+mkdir -p /p/install
+printf 'ADMIN_SETUP_PASSWORD="admin-pw-7c1e"\nBACKUP_FILES_PASSWORD="backup-pw-93fa"\n' > /p/install/local.env
+print_secrets_out_of_band /p/install/.env
+EOF
+    docker run --rm -v "$REPO_ROOT":/w:ro -v "$probe":/p "$BASH_3_IMAGE" bash /p/secrets.sh >/dev/null 2>&1
+    grep -qF '{"v":1,"event":"secrets","file":"/p/install/local.env"}' "$probe/events.jsonl" \
+        && ! grep -qE 'admin-pw-7c1e|backup-pw-93fa' "$probe/events.jsonl" && return 0
+    cat "$probe/events.jsonl"
+    return 1
+}
+
 prepare_env
 
 group "Deployment topologies"
@@ -3041,6 +3122,12 @@ if [[ -x "$REPO_ROOT/bin/ut-install" ]]; then
         a_backup_that_does_not_work_does_not_hold_the_install_back
     capability "the download says each image as it lands, out of how many and since when" \
         the_pull_says_each_image_as_it_lands
+    capability "with --events, each image that lands is also an event" \
+        the_pull_tells_each_image_as_an_event
+    capability "with --events, each message is also an event, whole, and the text is unchanged" \
+        the_events_say_what_the_text_says_and_change_none_of_it
+    capability "the events name the file that holds the passwords, never a password" \
+        the_events_never_carry_a_password
     capability "a download that fails still stops the install" \
         a_pull_that_fails_still_stops_the_install
     capability "a project Compose refuses is named, not only the pull that failed" \
