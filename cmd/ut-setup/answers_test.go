@@ -50,8 +50,8 @@ func TestAnAddressIsTakenInLowerCase(t *testing.T) {
 }
 
 func TestTheBrowserOpensInTheSessionOfWhoeverRanSudo(t *testing.T) {
-	got := strings.Join(browserCommand("mathieu", []string{"DISPLAY=:1"}, "x-www-browser", "http://127.0.0.1:4242/?code=x"), " ")
-	want := "runuser -u mathieu -- env DISPLAY=:1 x-www-browser http://127.0.0.1:4242/?code=x"
+	got := strings.Join(browserCommand("operator", []string{"DISPLAY=:1"}, "x-www-browser", "http://127.0.0.1:4242/?code=x"), " ")
+	want := "runuser -u operator -- env DISPLAY=:1 x-www-browser http://127.0.0.1:4242/?code=x"
 	if got != want {
 		t.Fatalf("opened with %q", got)
 	}
