@@ -1381,6 +1381,10 @@ if grep -q 'checkouts_holding_settings' "$REPO_ROOT/bin/ut-install"; then
         "every variable the stack requires has a value" \
         "sed -i.bak 's| GPU_VM_API_TOKEN\\([ )]\\)|\\1|' bin/ut-install"
 
+discriminates "a model file naming one of our own boxes" \
+    "models-name-our-machines" \
+    "sed -i.bak '1s/^/# Measured on .31, at the office.\\n/' models/qwen3.8-27b-nvfp4.env"
+
 discriminates "a model entry with no variant" \
     "model-without-variant" \
     "sed -i.bak '/^NIM_LLM_MODEL_PATH=/d' models/qwen3.8-27b-nvfp4.env"
