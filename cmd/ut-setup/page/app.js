@@ -4,7 +4,7 @@ const $ = (id) => document.getElementById(id);
 const show = (id, visible = true) => { $(id).hidden = !visible; };
 
 const screens = ["check", "domain", "license", "model", "reporting", "running", "done"];
-const questions = ["domain", "license", "model", "reporting"];
+let questions = ["domain", "license", "model", "reporting"];
 const marks = { ok: ["✓", ""], done: ["✓", ""], current: ["…", ""], warn: ["⚠", "Warning: "], fail: ["✕", "Problem: "] };
 const unmarked = ["", ""];
 
@@ -13,9 +13,15 @@ function go(screen) {
   const reached = screens.indexOf(screen);
   document.querySelectorAll(".dots li").forEach((dot) => {
     const index = screens.indexOf(dot.dataset.for);
+    dot.hidden = questions.indexOf(dot.dataset.for) < 0 && ["license", "reporting"].includes(dot.dataset.for);
     dot.classList.toggle("on", index <= reached);
     dot.toggleAttribute("aria-current", index === reached);
   });
+  const asked = questions.indexOf(screen);
+  if (asked >= 0) {
+    $(screen).querySelector(".count").textContent = `Question ${asked + 1} of ${questions.length}${screen === "model" ? " · optional" : ""}`;
+    $(screen).querySelector("button.primary").textContent = asked === questions.length - 1 ? "Install" : "Continue";
+  }
   const first = $(screen).querySelector("input:not([type=radio]), input[type=radio]:checked, button.primary:not(:disabled)");
   if (first) first.focus();
 }
@@ -48,6 +54,11 @@ async function readiness() {
   const check = await answer.json();
   $("readiness").replaceChildren(...check.messages.map((m) => item(m.text, m.kind)));
   $("check-title").textContent = check.ready ? "This box can be installed" : "This box cannot be installed as it is";
+  if (check.from_folder) {
+    questions = questions.filter((name) => name !== "reporting" && (name !== "license" || !check.license_from_folder));
+    $("from-folder").textContent = `The images come from the folder ut-get was given${check.license_from_folder ? ", and so does the license" : ""}. A box with no network sends no usage reports, so that question is not asked.`;
+    show("from-folder");
+  }
   show("checking", false);
   show("check-lead", check.ready);
   show("not-ready", !check.ready);
@@ -174,7 +185,7 @@ $("answers").addEventListener("submit", (event) => {
 });
 
 for (const back of document.querySelectorAll(".back")) {
-  back.addEventListener("click", () => go(screens[screens.indexOf(current()) - 1]));
+  back.addEventListener("click", () => go(["check", ...questions][["check", ...questions].indexOf(current()) - 1]));
 }
 
 $("show-license").addEventListener("click", (event) => {
@@ -184,7 +195,7 @@ $("show-license").addEventListener("click", (event) => {
   event.target.setAttribute("aria-pressed", String(visible));
 });
 
-$("again").addEventListener("click", () => go("reporting"));
+$("again").addEventListener("click", () => go(questions[questions.length - 1]));
 
 $("reveal").addEventListener("click", async () => {
   const answer = await fetch("/secrets", { method: "POST" });

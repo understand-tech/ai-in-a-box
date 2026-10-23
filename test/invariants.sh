@@ -62,6 +62,18 @@ env_raw_value() {
     printf '%s' "$line"
 }
 
+# ut-get --from adds what it finds in the folder once it has refused, with
+# --browser, every option of the operator's own: ut-setup has to read each one.
+check_ut_setup_reads_what_ut_get_hands_it() {
+    local option
+    while read -r option; do
+        [[ -n "$option" ]] || continue
+        grep -qF "flags.String(\"${option#--}\"" "$REPO_ROOT/cmd/ut-setup/main.go" \
+            || report "handover-unread:${option}" \
+                "ut-get --from hands ${option} to ut-setup, which does not read it: the page never opens"
+    done <<< "$(sed -n '/^main() {/,/^}/p' "$REPO_ROOT/bin/ut-get" | grep -oE 'INSTALL_ARGUMENTS\+=\(--[a-z-]+' | sed 's/.*(//')"
+}
+
 check_plaintext_secrets() {
     local key value
     for key in "${SENSITIVE_KEYS[@]}"; do
@@ -803,6 +815,7 @@ check_the_stub_overlay_still_matches_the_services() {
 
 main() {
     check_plaintext_secrets
+    check_ut_setup_reads_what_ut_get_hands_it
     check_release_env_ships_no_secret
     check_compose_declares_no_secret_default
     check_healthcheck_asks_for_a_certified_name
