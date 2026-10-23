@@ -1322,11 +1322,14 @@ SWAP
         done
 
         package=understandtech_9.9.9_all.deb
-        mkdir -p "$work/signed" "$work/tampered" "$work/foreign" "$work/unsigned" "$work/browser"
+        mkdir -p "$work/signed" "$work/tampered" "$work/foreign" "$work/unsigned" "$work/browser" "$work/browser-folder/images"
         cp "$signing/package.deb" "$work/signed/$package"
         cp "$signing/package.deb.sig" "$work/signed/$package.sig"
         cp "$signing/package.deb" "$work/browser/$package"
         cp "$signing/package.deb.sig" "$work/browser/$package.sig"
+        cp "$signing/package.deb" "$work/browser-folder/$package"
+        cp "$signing/package.deb.sig" "$work/browser-folder/$package.sig"
+        printf 'machine file\n' > "$work/browser-folder/box.lic"
         cp "$signing/package.deb" "$work/tampered/$package"
         printf 'x' >> "$work/tampered/$package"
         cp "$signing/package.deb.sig" "$work/tampered/$package.sig"
@@ -1342,6 +1345,9 @@ SWAP
         docker run --rm --network none -v "$work":/w -e CASE=browser -e PATH=/w/bin:/usr/bin:/bin \
             --entrypoint bash "$MONGODB_IMAGE" /w/ut-get --from /w/browser --browser >/dev/null 2>&1
         printf 'browser=%s\n' "$(tr '\n' ';' < "$work/calls-browser" 2>/dev/null || echo nothing)" >> "$work/verdicts.txt"
+        docker run --rm --network none -v "$work":/w -e CASE=browser-folder -e PATH=/w/bin:/usr/bin:/bin \
+            --entrypoint bash "$MONGODB_IMAGE" /w/ut-get --from /w/browser-folder --browser >/dev/null 2>&1
+        printf 'browser-folder=%s\n' "$(tr '\n' ';' < "$work/calls-browser-folder" 2>/dev/null || echo nothing)" >> "$work/verdicts.txt"
     fi
     cat "$work/verdicts.txt"
 }
@@ -1360,6 +1366,10 @@ a_signed_release_is_installed_then_handed_to_ut_install() {
 
 the_launcher_continues_in_the_browser_when_asked() {
     launcher_verdict_is browser "apt-get install -y /w/browser/understandtech_9.9.9_all.deb;ut-setup ;"
+}
+
+the_launcher_gives_the_page_what_the_folder_carries() {
+    launcher_verdict_is browser-folder "apt-get install -y /w/browser-folder/understandtech_9.9.9_all.deb;ut-setup --images-from /w/browser-folder --machine-file /w/browser-folder/box.lic;"
 }
 
 the_launcher_installs_nothing_unsigned() {
@@ -3275,6 +3285,8 @@ if [[ -x "$REPO_ROOT/bin/ut-get" ]]; then
         the_launcher_carries_the_key_ut_verify_carries
     capability "with --browser, it hands over to ut-setup instead of ut-install" \
         the_launcher_continues_in_the_browser_when_asked
+    capability "from a folder, with --browser, it gives the page the folder's images and license" \
+        the_launcher_gives_the_page_what_the_folder_carries
     capability "the latest release is downloaded, checked, installed, then handed to ut-install" \
         the_latest_release_is_downloaded_checked_and_installed
     capability "a release named by --version is installed rather than the latest" \

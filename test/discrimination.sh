@@ -83,6 +83,10 @@ capability_discriminates() {
 printf '%sEvery invariant, seen failing%s %s(each on a copy, nothing here is touched)%s\n\n' \
     "$BOLD" "$NC" "$DIM" "$NC"
 
+discriminates "a page that no longer reads the folder's license" \
+    "handover-unread:--machine-file" \
+    "sed -i.bak 's/flags.String(\"machine-file\"/flags.String(\"license-from\"/' cmd/ut-setup/main.go"
+
 discriminates "a secret given a value by the release" \
     "plaintext-secret:OA_KEY" \
     "printf 'OA_KEY=\"a3f9c1d2e4b8\"\n' >> release.env"

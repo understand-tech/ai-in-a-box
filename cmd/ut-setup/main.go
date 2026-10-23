@@ -27,11 +27,20 @@ func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
-func run(args []string, stdout, stderr io.Writer) int {
+// ut-get --from passes on what it found in the folder it was given.
+func parseSetup(args []string, stderr io.Writer) (string, Folder, error) {
 	flags := flag.NewFlagSet("ut-setup", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	installer := flags.String("install", "ut-install", "the installer to run")
-	if err := flags.Parse(args); err != nil {
+	images := flags.String("images-from", "", "the folder the images come from")
+	license := flags.String("machine-file", "", "the license file the folder carries")
+	err := flags.Parse(args)
+	return *installer, Folder{Images: *images, License: *license}, err
+}
+
+func run(args []string, stdout, stderr io.Writer) int {
+	installer, folder, err := parseSetup(args, stderr)
+	if err != nil {
 		return 2
 	}
 
@@ -42,7 +51,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
 	code, session := randomCode(20), randomHex(32)
-	wizard := newWizard(runInstaller(*installer), code, session,
+	wizard := newWizard(runInstaller(installer), folder, code, session,
 		fmt.Sprintf("127.0.0.1:%d", port), fmt.Sprintf("localhost:%d", port))
 
 	server := &http.Server{Handler: wizard.Handler(), ReadHeaderTimeout: 10 * time.Second}

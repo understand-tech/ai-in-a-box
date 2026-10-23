@@ -71,8 +71,13 @@ type box struct {
 
 func newBox(t *testing.T, fake *fakeInstall) *box {
 	t.Helper()
+	return newBoxFrom(t, fake, Folder{})
+}
+
+func newBoxFrom(t *testing.T, fake *fakeInstall, folder Folder) *box {
+	t.Helper()
 	server := httptest.NewUnstartedServer(nil)
-	wizard := newWizard(fake.run, testCode, testSession, server.Listener.Addr().String())
+	wizard := newWizard(fake.run, folder, testCode, testSession, server.Listener.Addr().String())
 	server.Config.Handler = wizard.Handler()
 	server.Start()
 	t.Cleanup(server.Close)
@@ -476,6 +481,33 @@ func TestALineTooLongToReadDoesNotHoldTheInstallerUp(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the installer is still blocked on a line nobody read")
+	}
+}
+
+func TestTheFolderReachesEveryCallOfUtInstallAndTheKeyNone(t *testing.T) {
+	fake := &fakeInstall{events: []Event{said("ok", "System ready")}}
+	b := newBoxFrom(t, fake, Folder{Images: "/media/box", License: "/media/box/box.lic"})
+	b.signIn()
+	if readiness := b.readiness(); !readiness.FromFolder || !readiness.LicenseFromFolder {
+		t.Fatalf("readiness read as %+v", readiness)
+	}
+	b.get("/models").Body.Close()
+	if status := b.answer(url.Values{"domain": {"box.example.com"}, "reporting": {"yes"}}).StatusCode; status != http.StatusAccepted {
+		t.Fatalf("the answers without a key got %d", status)
+	}
+	b.waitForTheEnd()
+	calls := fake.called()
+	if len(calls) != 3 {
+		t.Fatalf("ut-install ran %d times: %v", len(calls), calls)
+	}
+	for _, call := range calls {
+		if strings.Join(call[:4], " ") != "--images-from /media/box --machine-file /media/box/box.lic" {
+			t.Fatalf("a call without the folder: %v", call)
+		}
+	}
+	install := strings.Join(calls[2], " ")
+	if strings.Contains(install, "--license-file") || !strings.HasSuffix(install, "--domain box.example.com --reporting no") {
+		t.Fatalf("installed with %q", install)
 	}
 }
 

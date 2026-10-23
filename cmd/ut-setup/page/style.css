@@ -100,3 +100,4 @@ dd { margin: .4rem 0 0; display: flex; gap: 8px; align-items: center; }
 dd code { flex: 1; min-height: 44px; display: flex; align-items: center; padding: 0 12px; border-radius: 8px; border: 1px solid var(--border); font-size: 15px; letter-spacing: .02em; overflow-wrap: anywhere; }
 label.choice { display: inline-flex; gap: .5rem; align-items: center; margin-top: 1.25rem; }
 .banner + .lead { margin-top: 1.25rem; }
+.banner + .checks { margin-top: 1rem; }

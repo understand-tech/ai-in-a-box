@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"net/url"
 	"strings"
 	"testing"
@@ -19,8 +20,30 @@ func TestAValueIsReadAsUtInstallReadsIt(t *testing.T) {
 	}
 }
 
+func TestUtGetsFolderReachesUtSetup(t *testing.T) {
+	installer, folder, err := parseSetup([]string{"--images-from", "/media/box", "--machine-file", "/media/box/box.lic"}, io.Discard)
+	if err != nil || installer != "ut-install" || folder != (Folder{Images: "/media/box", License: "/media/box/box.lic"}) {
+		t.Fatalf("read as %q, %+v, %v", installer, folder, err)
+	}
+	if _, _, err := parseSetup([]string{"--domain", "box.example.com"}, io.Discard); err == nil {
+		t.Fatal("an option the page asks for was taken from the command line")
+	}
+}
+
+func TestAFolderTakesTheKeyAndTheReportsOffThePage(t *testing.T) {
+	form := url.Values{"domain": {"box.example.com"}, "license": {"typed-anyway"}, "reporting": {"yes"}}
+	answers, err := parseAnswers(form, Folder{Images: "/media/box", License: "/media/box/box.lic"})
+	if err != nil || answers.License != "" || answers.Reporting != "no" {
+		t.Fatalf("from a folder that carries the license, read as %+v, %v", answers, err)
+	}
+	form.Del("license")
+	if _, err := parseAnswers(form, Folder{Images: "/media/box"}); err == nil {
+		t.Fatal("a folder without the license file went on without a key")
+	}
+}
+
 func TestAnAddressIsTakenInLowerCase(t *testing.T) {
-	answers, err := parseAnswers(url.Values{"domain": {" IA.Example.FR "}, "license": {"k"}, "reporting": {"yes"}})
+	answers, err := parseAnswers(url.Values{"domain": {" IA.Example.FR "}, "license": {"k"}, "reporting": {"yes"}}, Folder{})
 	if err != nil || answers.Domain != "ia.example.fr" {
 		t.Fatalf("read as %+v, %v", answers, err)
 	}

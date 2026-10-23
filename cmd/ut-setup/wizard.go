@@ -23,6 +23,7 @@ type Installer func(ctx context.Context, args []string, said func(string), happe
 
 type Wizard struct {
 	installer Installer
+	folder    Folder
 	hosts     map[string]bool
 	stop      chan string
 
@@ -51,16 +52,22 @@ type Model struct {
 }
 
 type Readiness struct {
-	Ready    bool      `json:"ready"`
-	Messages []Message `json:"messages"`
+	Ready             bool      `json:"ready"`
+	Messages          []Message `json:"messages"`
+	FromFolder        bool      `json:"from_folder"`
+	LicenseFromFolder bool      `json:"license_from_folder"`
 }
 
-func newWizard(installer Installer, code, session string, hosts ...string) *Wizard {
+func newWizard(installer Installer, folder Folder, code, session string, hosts ...string) *Wizard {
 	allowed := map[string]bool{}
 	for _, host := range hosts {
 		allowed[host] = true
 	}
-	return &Wizard{installer: installer, hosts: allowed, stop: make(chan string, 1), code: code, session: session}
+	return &Wizard{installer: installer, folder: folder, hosts: allowed, stop: make(chan string, 1), code: code, session: session}
+}
+
+func (w *Wizard) run(args []string, said func(string), happened func(Event)) error {
+	return w.installer(context.Background(), append(w.folder.arguments(), args...), said, happened)
 }
 
 func (w *Wizard) Stopped() <-chan string { return w.stop }
@@ -175,7 +182,7 @@ func (w *Wizard) install(rw http.ResponseWriter, r *http.Request) {
 		http.Error(rw, "unreadable form", http.StatusBadRequest)
 		return
 	}
-	answers, err := parseAnswers(r.PostForm)
+	answers, err := parseAnswers(r.PostForm, w.folder)
 	if err != nil {
 		http.Error(rw, err.Error(), http.StatusUnprocessableEntity)
 		return
@@ -195,19 +202,24 @@ func (w *Wizard) install(rw http.ResponseWriter, r *http.Request) {
 	w.progress = Progress{Running: true, Domain: answers.Domain, started: time.Now()}
 	w.mu.Unlock()
 
-	license, err := writeLicense(answers.License)
-	if err != nil {
-		w.record(func(p Progress) Progress { return p.apply(Event{Event: "fail", Text: err.Error()}).finish(false) })
-		http.Error(rw, "the license key could not be kept for ut-install", http.StatusInternalServerError)
-		return
+	license := ""
+	if w.folder.License == "" {
+		license, err = writeLicense(answers.License)
+		if err != nil {
+			w.record(func(p Progress) Progress { return p.apply(Event{Event: "fail", Text: err.Error()}).finish(false) })
+			http.Error(rw, "the license key could not be kept for ut-install", http.StatusInternalServerError)
+			return
+		}
 	}
 	go func() {
-		err := w.installer(context.Background(), installArguments(answers, license), func(line string) {
+		err := w.run(installArguments(answers, license), func(line string) {
 			w.record(func(p Progress) Progress { return p.read(line) })
 		}, func(event Event) {
 			w.record(func(p Progress) Progress { return p.apply(event) })
 		})
-		os.Remove(license)
+		if license != "" {
+			os.Remove(license)
+		}
 		w.record(func(p Progress) Progress { return p.finish(err == nil) })
 	}()
 	rw.WriteHeader(http.StatusAccepted)
@@ -220,8 +232,8 @@ func (w *Wizard) check(rw http.ResponseWriter, _ *http.Request) {
 	w.checking.Lock()
 	if !w.readiness.Ready {
 		messages := []Message{}
-		err := w.installer(context.Background(), []string{"--check"}, func(string) {}, func(event Event) { messages = told(messages, event) })
-		w.readiness = Readiness{Ready: err == nil, Messages: messages}
+		err := w.run([]string{"--check"}, func(string) {}, func(event Event) { messages = told(messages, event) })
+		w.readiness = Readiness{Ready: err == nil, Messages: messages, FromFolder: w.folder.Images != "", LicenseFromFolder: w.folder.License != ""}
 	}
 	readiness := w.readiness
 	w.checking.Unlock()
@@ -234,7 +246,7 @@ func (w *Wizard) modelsHere() []Model {
 	defer w.listing.Unlock()
 	if !w.listed {
 		listed := []Model{}
-		err := w.installer(context.Background(), []string{"--list-models"}, func(string) {}, func(event Event) {
+		err := w.run([]string{"--list-models"}, func(string) {}, func(event Event) {
 			if event.Event == "model" {
 				listed = append(listed, Model{ID: event.ID, Served: event.Served, Size: event.Size, License: event.License, RunsItsOwnCode: event.RunsItsOwnCode})
 			}

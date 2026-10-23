@@ -122,6 +122,18 @@ your answers, shows each step and each image as it lands, then the two
 passwords, once. Then `ut-setup` stops. Give it no `ut-install` option: the page
 asks for them. On a box already installed, `sudo ut-setup` does the same.
 
+A box with no network goes through the page too, from its prepared folder:
+
+```bash
+sudo bash ut-get --from <folder> --browser
+```
+
+The images come from the folder, and so does the license when the folder holds
+the license file UnderstandTech sent: the page then asks for no key. It asks
+nothing about usage reports either — a box with no network sends none. A folder
+prepared for another role, release or processor is refused on the first screen,
+before any question.
+
 ### From your own machine, through SSH
 
 The page listens on the box only, so reach it through an SSH tunnel. On the
