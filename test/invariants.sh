@@ -587,6 +587,16 @@ check_every_proof_names_the_image_it_proves() {
     done
 }
 
+# models/ ships to every customer whole: the vendor's own boxes, addresses and
+# office have no place in it.
+check_models_name_none_of_our_own_machines() {
+    local file line
+    while IFS=: read -r file line; do
+        report "models-name-our-machines:${file#"$REPO_ROOT"/}:${line}" "${file#"$REPO_ROOT"/}:${line} names one of our own machines, addresses or the office"
+    done < <(grep -rnoiE "(\boffice\b|bureau|192\.168\.|100\.[0-9]+\.[0-9]+\.[0-9]+|\.(31|40|56)\b|gb10-[0-9]+|new-understand|understand\.internal|tailscale)" \
+        "$REPO_ROOT/models" --include='*.env' --include='*.md' | cut -d: -f1,2)
+}
+
 # release.env serves its model without --model; its entry must say the same, or
 # --model with that very name would change what the box serves.
 check_the_shipped_model_agrees_with_the_release() {
@@ -827,6 +837,7 @@ main() {
     check_every_model_has_a_pinned_variant
     check_every_proof_names_the_image_it_proves
     check_the_shipped_model_agrees_with_the_release
+    check_models_name_none_of_our_own_machines
     check_the_recorder_is_bounded
     check_services_that_mount_a_release_file_follow_the_release
     check_the_install_starts_the_stack_as_boot_does

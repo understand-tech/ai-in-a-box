@@ -4,7 +4,7 @@
 |---|---|
 | Image | `sha256:20e10652de4cf63d25417c0bcb0c35497b573cad575c3ba0a5296625c89b4bff` (model-free-nim 2.0.12) |
 | Family | `gb10`: NVIDIA GB10, arm64, driver 580.142 |
-| Box | the office's full-stack box, package `2026.10.0-rc7` |
+| Box | a full-stack appliance, package `2026.10.0-rc7` |
 | Date | 2026-10-20 |
 
 Served model, read from the engine: manifest `Qwen3.8-27B-NVFP4`, `/v1/models` `Qwen/Qwen3.8-27B`.
