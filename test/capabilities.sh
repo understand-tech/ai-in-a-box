@@ -742,6 +742,28 @@ EOF
     python3 "$SCRIPT_DIR/answer-a-prompt.py" "$probe/run.sh" "$answer" | tr -d '\r'
 }
 
+# Both callers read this list through a process substitution, whose status nobody
+# sees: what keeps it whole is that it never fails for want of a settings image.
+the_images_a_stack_runs_are_listed_without_a_settings_image() {
+    local probe report
+    probe=$(mktemp -d "$WORK_DIR/images.XXXXXX")
+    printf 'API_IMAGE="ghcr.io/x/api:1"\n' > "$probe/release.env"
+    printf 'UT_DOMAIN="box.example.test"\n' > "$probe/local.env"
+    cat > "$probe/run.sh" <<EOF
+set +u
+UT_INSTALL_DIR="$probe" source "$REPO_ROOT/bin/ut-install" >/dev/null 2>&1
+set +eEu
+trap - ERR
+INSTALL_DIR="$probe"
+every_image_the_stack_names
+printf 'EXIT=%s\n' "\$?"
+EOF
+    report=$(bash "$probe/run.sh" 2>&1)
+    grep -qx 'API_IMAGE=ghcr.io/x/api:1' <<< "$report" && grep -qx 'EXIT=0' <<< "$report" && return 0
+    echo "$report"
+    return 1
+}
+
 # step_wait_healthy is never reached by fresh-install.sh, which stops where the
 # installer would pull images. Driving the function directly, with the container
 # list it reads replaced, is the only way to watch it decide.
@@ -2186,12 +2208,14 @@ a_release_names_every_image_it_ships() {
 }
 
 a_bill_of_materials_refuses_an_image_that_can_move() {
-    local probe="$WORK_DIR/bom"
+    local probe="$WORK_DIR/bom" said
     mkdir -p "$probe"
     printf 'LOOSE_IMAGE="registry.test/thing:1.2"\n' > "$probe/release.env"
-    RELEASE_ENV="$probe/release.env" "$REPO_ROOT/packaging/release-bom.sh" 9999.99.9 >/dev/null 2>&1 \
-        || return 0
-    echo "it described a tag as though it named one image"
+    said=$(RELEASE_ENV="$probe/release.env" "$REPO_ROOT/packaging/release-bom.sh" 9999.99.9 2>&1 >/dev/null) \
+        && { echo "it described a tag as though it named one image"; return 1; }
+    grep -q 'which a registry can repoint' <<< "$said" && grep -q 'registry.test/thing:1.2' <<< "$said" && return 0
+    echo "it stopped, but not on the tag that can move:"
+    tail -3 <<< "$said"
     return 1
 }
 
@@ -2861,16 +2885,25 @@ a_password_that_does_not_open_the_repository_is_named() {
 # Bounded by the clock rather than by a count of tries: on a loaded x86 runner
 # each try is several seconds of mongosh, and sixty of them ran out while two
 # servers were still starting. A server that died is not waited for.
+#
+# Under load the second start can find the port still held by the first, and
+# exits 48. Started again, the image skips the account it already made — what
+# compose's restart policy does for the platform's own server.
 mongo_ready() {
-    local node=$1 user=$2 password=$3 started=$SECONDS deadline=$((SECONDS + 180))
+    local node=$1 user=$2 password=$3 started=$SECONDS deadline=$((SECONDS + 180)) restarted=""
     while (( SECONDS < deadline )); do
-        [[ "$(docker inspect -f '{{.State.Running}}' "$node" 2>/dev/null)" == true ]] || break
+        if [[ "$(docker inspect -f '{{.State.Running}}' "$node" 2>/dev/null)" != true ]]; then
+            [[ -z "$restarted" && "$(docker inspect -f '{{.State.ExitCode}}' "$node" 2>/dev/null)" == 48 ]] || break
+            restarted=", started again after exit 48"
+            docker start "$node" >/dev/null 2>&1 || break
+            continue
+        fi
         docker logs "$node" 2>&1 | grep -q 'init process complete' \
             && docker exec "$node" mongosh --quiet -u "$user" -p "$password" --authenticationDatabase admin \
                 --eval 'db.runCommand({ping:1}).ok' 2>/dev/null | grep -qx 1 && return 0
         sleep 1
     done
-    echo "$node never came up: $(docker inspect -f 'status={{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}}' "$node" 2>&1), after $((SECONDS - started))s"
+    echo "$node never came up: $(docker inspect -f 'status={{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}}' "$node" 2>&1), after $((SECONDS - started))s$restarted"
     docker logs --tail 5 "$node" 2>&1 | sed 's/^/    /'
     return 1
 }
@@ -3122,6 +3155,8 @@ if [[ -x "$REPO_ROOT/bin/ut-install" ]]; then
         a_backup_that_does_not_work_does_not_hold_the_install_back
     capability "the download says each image as it lands, out of how many and since when" \
         the_pull_says_each_image_as_it_lands
+    capability "the images a stack runs are listed even when the settings file names none of its own" \
+        the_images_a_stack_runs_are_listed_without_a_settings_image
     capability "with --events, each image that lands is also an event" \
         the_pull_tells_each_image_as_an_event
     capability "with --events, each message is also an event, whole, and the text is unchanged" \
