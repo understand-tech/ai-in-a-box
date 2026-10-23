@@ -357,25 +357,64 @@ func TestTheWarningsAndTheStepsReachThePage(t *testing.T) {
 	}
 }
 
-func TestTheBoxIsCheckedOnceWithCheck(t *testing.T) {
+func (b *box) readiness() Readiness {
+	b.t.Helper()
+	var readiness Readiness
+	response := b.get("/check")
+	json.NewDecoder(response.Body).Decode(&readiness)
+	response.Body.Close()
+	return readiness
+}
+
+func (f *fakeInstall) nowSays(events ...Event) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.fail, f.events = false, events
+}
+
+func TestABoxFoundNotReadyIsCheckedAgainAndOneFoundReadyIsNot(t *testing.T) {
 	fake := &fakeInstall{events: []Event{said("ok", "Docker 29.2.1"), said("fail", "Disk: 91 GB free, 250 GB needed")}, fail: true}
 	b := newBox(t, fake)
 	if status := b.get("/check").StatusCode; status != http.StatusForbidden {
 		t.Fatalf("the check without the session answered %d", status)
 	}
 	b.signIn()
-	var readiness Readiness
 	for range 2 {
-		response := b.get("/check")
-		json.NewDecoder(response.Body).Decode(&readiness)
-		response.Body.Close()
+		if readiness := b.readiness(); readiness.Ready || len(readiness.Messages) != 2 || readiness.Messages[1].Kind != "fail" {
+			t.Fatalf("readiness read as %+v", readiness)
+		}
 	}
-	if readiness.Ready || len(readiness.Messages) != 2 || readiness.Messages[1].Kind != "fail" {
-		t.Fatalf("readiness read as %+v", readiness)
+	fake.nowSays(said("ok", "Disk: 300 GB free"))
+	for range 2 {
+		if readiness := b.readiness(); !readiness.Ready {
+			t.Fatalf("a box fixed in between still read as %+v", readiness)
+		}
 	}
 	calls := fake.called()
-	if len(calls) != 1 || strings.Join(calls[0], " ") != "--check" {
-		t.Fatalf("ut-install was called %v", calls)
+	if len(calls) != 3 {
+		t.Fatalf("ut-install --check ran %d times, not 3: %v", len(calls), calls)
+	}
+	for _, call := range calls {
+		if strings.Join(call, " ") != "--check" {
+			t.Fatalf("ut-install was called %v", calls)
+		}
+	}
+}
+
+func TestModelsThatCouldNotBeListedAreAskedForAgain(t *testing.T) {
+	fake := &fakeInstall{fail: true}
+	b := newBox(t, fake)
+	b.signIn()
+	b.get("/models").Body.Close()
+	fake.nowSays(Event{V: eventsVersion, Event: "model", ID: "qwen3.8-27b-nvfp4"})
+	var models []Model
+	for range 2 {
+		response := b.get("/models")
+		json.NewDecoder(response.Body).Decode(&models)
+		response.Body.Close()
+	}
+	if len(models) != 1 || len(fake.called()) != 2 {
+		t.Fatalf("offered %+v after %d calls", models, len(fake.called()))
 	}
 }
 
