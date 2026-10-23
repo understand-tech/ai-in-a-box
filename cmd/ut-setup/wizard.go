@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
-	"strings"
 	"sync"
 	"time"
 )
@@ -20,7 +19,7 @@ const (
 //go:embed page
 var page embed.FS
 
-type Installer func(ctx context.Context, args []string, line func(string)) error
+type Installer func(ctx context.Context, args []string, said func(string), happened func(Event)) error
 
 type Wizard struct {
 	installer Installer
@@ -43,27 +42,16 @@ type Wizard struct {
 }
 
 type Model struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
-}
-
-// ut-install --list-models prints one model a line, the name --model takes
-// first; the lines it logs start with their level in brackets.
-func modelsListed(lines []string) []Model {
-	models := []Model{}
-	for _, line := range lines {
-		fields := strings.Fields(line)
-		if len(fields) == 0 || strings.HasPrefix(line, "[") {
-			continue
-		}
-		models = append(models, Model{ID: fields[0], Label: strings.Join(fields, " ")})
-	}
-	return models
+	ID             string `json:"id"`
+	Served         string `json:"served"`
+	Size           string `json:"size"`
+	License        string `json:"license"`
+	RunsItsOwnCode bool   `json:"runs_its_own_code"`
 }
 
 type Readiness struct {
-	Ready bool     `json:"ready"`
-	Lines []string `json:"lines"`
+	Ready    bool      `json:"ready"`
+	Messages []Message `json:"messages"`
 }
 
 func newWizard(installer Installer, code, session string, hosts ...string) *Wizard {
@@ -208,13 +196,15 @@ func (w *Wizard) install(rw http.ResponseWriter, r *http.Request) {
 
 	license, err := writeLicense(answers.License)
 	if err != nil {
-		w.record(func(p Progress) Progress { return p.read("[fail] " + err.Error()).finish(false) })
+		w.record(func(p Progress) Progress { return p.apply(Event{Event: "fail", Text: err.Error()}).finish(false) })
 		http.Error(rw, "the license key could not be kept for ut-install", http.StatusInternalServerError)
 		return
 	}
 	go func() {
 		err := w.installer(context.Background(), installArguments(answers, license), func(line string) {
 			w.record(func(p Progress) Progress { return p.read(line) })
+		}, func(event Event) {
+			w.record(func(p Progress) Progress { return p.apply(event) })
 		})
 		os.Remove(license)
 		w.record(func(p Progress) Progress { return p.finish(err == nil) })
@@ -226,9 +216,9 @@ func (w *Wizard) install(rw http.ResponseWriter, r *http.Request) {
 // the first time the page asks, and its answer is kept for every reload.
 func (w *Wizard) check(rw http.ResponseWriter, _ *http.Request) {
 	w.checking.Do(func() {
-		var lines []string
-		err := w.installer(context.Background(), []string{"--check"}, func(line string) { lines = append(lines, line) })
-		w.readiness = Readiness{Ready: err == nil, Lines: lines}
+		messages := []Message{}
+		err := w.installer(context.Background(), []string{"--check"}, func(string) {}, func(event Event) { messages = told(messages, event) })
+		w.readiness = Readiness{Ready: err == nil, Messages: messages}
 	})
 	rw.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(rw).Encode(w.readiness)
@@ -236,11 +226,15 @@ func (w *Wizard) check(rw http.ResponseWriter, _ *http.Request) {
 
 func (w *Wizard) modelsHere() []Model {
 	w.listing.Do(func() {
-		var lines []string
-		err := w.installer(context.Background(), []string{"--list-models"}, func(line string) { lines = append(lines, line) })
+		listed := []Model{}
+		err := w.installer(context.Background(), []string{"--list-models"}, func(string) {}, func(event Event) {
+			if event.Event == "model" {
+				listed = append(listed, Model{ID: event.ID, Served: event.Served, Size: event.Size, License: event.License, RunsItsOwnCode: event.RunsItsOwnCode})
+			}
+		})
 		w.models = []Model{}
 		if err == nil {
-			w.models = modelsListed(lines)
+			w.models = listed
 		}
 	})
 	return w.models
@@ -271,7 +265,7 @@ func (w *Wizard) report(rw http.ResponseWriter, _ *http.Request) {
 	progress := w.progress
 	progress.Lines = append([]string{}, progress.Lines...)
 	progress.Steps = append([]string{}, progress.Steps...)
-	progress.Warnings = append([]string{}, progress.Warnings...)
+	progress.Messages = append([]Message{}, progress.Messages...)
 	if !progress.started.IsZero() {
 		progress.Elapsed = int(time.Since(progress.started).Seconds())
 	}

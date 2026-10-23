@@ -4,96 +4,114 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>UnderstandTech AI in a Box — installation</title>
+<link rel="stylesheet" href="/page/tokens.css">
 <link rel="stylesheet" href="/page/style.css">
+<script src="/page/theme.js"></script>
 <script src="/page/app.js" defer></script>
 </head>
 <body>
-<header>
-  <p class="brand">UnderstandTech <span>AI in a Box</span></p>
-  <ol class="stepper" aria-label="Installation steps">
-    <li id="stage-answers" aria-current="step">Check and answer</li>
-    <li id="stage-install">Install</li>
-    <li id="stage-done">Done</li>
-  </ol>
-</header>
-<main>
+<header class="brand"><img src="/page/logo.svg" alt="UnderstandTech"><span>AI in a Box</span></header>
+<main class="focus">
+<ol class="dots" aria-label="Installation steps">
+  <li data-for="check">Check this box</li>
+  <li data-for="domain">Address</li>
+  <li data-for="license">License key</li>
+  <li data-for="model">Model</li>
+  <li data-for="reporting">Usage reports</li>
+  <li data-for="running">Install</li>
+  <li data-for="done">Done</li>
+</ol>
 
-<section id="questions" hidden>
-  <div class="card">
-    <h2>This box</h2>
-    <p id="checking" class="muted">Checking this box…</p>
-    <ul id="readiness" class="checklist" aria-live="polite"></ul>
-    <p id="not-ready" class="banner failure" hidden>This box cannot be installed as it is. Fix what is marked <b>✕ Problem</b>, then reload this page.</p>
-  </div>
-
-  <form id="answers" class="card">
-    <h2>Four answers</h2>
-    <p class="hint"><span class="required" aria-hidden="true">*</span> required</p>
-
-    <label for="domain">The address people will open <span class="required" aria-hidden="true">*</span></label>
-    <input id="domain" name="domain" required value="understand.local" autocomplete="off" spellcheck="false">
-    <p class="hint">Keep <code>understand.local</code> on a single network with no DNS server. With one, use a name in your zone, such as <code>ai.example.com</code>, and publish it and <code>*.ai.example.com</code> pointing at this box.</p>
-
-    <label for="license">The license key UnderstandTech sent <span class="required" aria-hidden="true">*</span></label>
-    <div class="secret-input">
-      <input id="license" name="license" type="password" required autocomplete="off" spellcheck="false">
-      <button type="button" id="show-license" class="quiet" aria-pressed="false">Show</button>
-    </div>
-
-    <label for="model">The model this box serves</label>
-    <select id="model" name="model">
-      <option value="">The model this release ships</option>
-    </select>
-    <p class="hint">Only the models proven on this box's GPU are offered: their engine, how much they download, their license, and whether they run code of their own.</p>
-
-    <fieldset>
-      <legend>Send UnderstandTech usage reports? <span class="required" aria-hidden="true">*</span></legend>
-      <p class="hint">How loaded the box was and how many people it served — counts, never content, never who. Answer no on a box with no Internet.</p>
-      <label class="choice"><input type="radio" name="reporting" value="yes" required> Yes</label>
-      <label class="choice"><input type="radio" name="reporting" value="no"> No</label>
-    </fieldset>
-
-    <p id="refused" class="banner failure" role="alert" hidden></p>
-    <button id="install" class="primary">Install</button>
-  </form>
+<section id="check" class="screen" hidden>
+  <p class="count">Before anything</p>
+  <h1 id="check-title">Checking this box</h1>
+  <p id="checking" class="lead"><span class="spinner" aria-hidden="true"></span>ut-install is looking at this machine. It changes nothing.</p>
+  <p id="check-lead" class="lead" hidden>Each line is what ut-install found.</p>
+  <ul id="readiness" class="checks" aria-live="polite"></ul>
+  <p id="not-ready" class="banner failure" hidden>This box cannot be installed as it is. Fix what is marked <b>✕ Problem</b>, then reload this page.</p>
+  <div class="nav"><span></span><button type="button" id="checked" class="primary" disabled>Continue</button></div>
 </section>
 
-<section id="running" class="card" hidden>
-  <h2 id="step" aria-live="polite">Starting</h2>
-  <p class="muted"><span id="elapsed">0:00</span> elapsed</p>
+<form id="answers" novalidate>
+  <section id="domain" class="screen" hidden>
+    <p class="count">Question 1 of 4</p>
+    <h1><label for="domain-input">The address people will open</label></h1>
+    <p class="lead">Keep <code>understand.local</code> on a single network with no DNS server. With one, use a name in your zone, such as <code>ai.example.com</code>, and publish it and <code>*.ai.example.com</code> pointing at this box.</p>
+    <input id="domain-input" name="domain" required value="understand.local" autocomplete="off" spellcheck="false">
+    <div class="nav"><button type="button" class="back">Back</button><button class="primary">Continue</button></div>
+  </section>
+
+  <section id="license" class="screen" hidden>
+    <p class="count">Question 2 of 4</p>
+    <h1><label for="license-input">The license key UnderstandTech sent</label></h1>
+    <p class="lead">Paste it as it came, on one line. It stays on this box.</p>
+    <div class="secret-input">
+      <input id="license-input" name="license" type="password" required autocomplete="off" spellcheck="false">
+      <button type="button" id="show-license" class="quiet" aria-pressed="false">Show</button>
+    </div>
+    <div class="nav"><button type="button" class="back">Back</button><button class="primary">Continue</button></div>
+  </section>
+
+  <section id="model" class="screen" hidden>
+    <p class="count">Question 3 of 4 · optional</p>
+    <h1 id="model-title">The model this box serves</h1>
+    <p class="lead">Only the models proven on this box's GPU are offered.</p>
+    <div id="models" class="options" role="radiogroup" aria-labelledby="model-title">
+      <label class="option"><input type="radio" name="model" value="" checked><span><b>The model this release ships</b><small>Chosen for this release by UnderstandTech</small></span></label>
+    </div>
+    <div class="nav"><button type="button" class="back">Back</button><button class="primary">Continue</button></div>
+  </section>
+
+  <section id="reporting" class="screen" hidden>
+    <p class="count">Question 4 of 4</p>
+    <h1 id="reporting-title">Send UnderstandTech usage reports?</h1>
+    <p class="lead">How loaded the box was and how many people it served — counts, never content, never who. Answer no on a box with no Internet.</p>
+    <div class="segmented" role="radiogroup" aria-labelledby="reporting-title">
+      <label><input type="radio" name="reporting" value="yes" required><span>Yes</span></label>
+      <label><input type="radio" name="reporting" value="no"><span>No</span></label>
+    </div>
+    <p id="refused" class="banner failure" role="alert" hidden></p>
+    <div class="nav"><button type="button" class="back">Back</button><button id="install" class="primary">Install</button></div>
+  </section>
+</form>
+
+<section id="running" class="screen" hidden>
+  <p class="count"><span id="working" class="spinner" aria-hidden="true"></span><span id="step" aria-live="polite">Starting</span> · <span id="elapsed">0:00</span> elapsed</p>
+  <h1 id="running-title">Installing</h1>
   <div id="images-block" hidden>
-    <progress id="images" aria-describedby="count"></progress>
-    <p id="count"></p>
+    <p class="big"><span id="landed">0</span> <small>of <span id="total">0</span> images</small></p>
+    <progress id="images" aria-label="Images on the box"></progress>
   </div>
-  <ol id="steps" class="checklist"></ol>
+  <ol id="steps" class="steps"></ol>
+  <p id="keep-open" class="banner info">Keep this page open: the two passwords appear here, once, at the end.</p>
   <div id="warnings-block" class="banner warning" hidden>
     <p><b>⚠ Worth reading</b></p>
     <ul id="warnings"></ul>
   </div>
   <div id="failure-block" class="banner failure" role="alert" hidden>
     <p><b>✕ The install stopped</b> during <span id="failed-step"></span>.</p>
-    <p id="failure"></p>
+    <ul id="failures"></ul>
     <p>Nothing was rolled back: running it again resumes where it stopped.</p>
-    <button id="again" class="primary">Try again</button>
+    <button type="button" id="again" class="primary">Try again</button>
   </div>
   <details><summary>Everything ut-install said</summary><pre id="lines"></pre></details>
 </section>
 
-<section id="done" class="card" hidden>
-  <h2>✓ Installed <span id="took"></span></h2>
-  <p>Open <a id="address"></a>. The initial admin password below opens the first-run wizard there: models, sign-on, data sources.</p>
+<section id="done" class="screen" hidden>
+  <div class="done-mark" aria-hidden="true">✓</div>
+  <h1>Installed <span id="took"></span></h1>
+  <p class="lead">The platform answers at <a id="address"></a>. The initial admin password opens its first-run wizard: models, sign-on, data sources.</p>
   <p class="banner warning">Two passwords are shown once, here, and nowhere else. Without the backup password, no backup can ever be read.</p>
-  <button id="reveal" class="primary">Show the passwords</button>
+  <button type="button" id="reveal" class="primary">Show the passwords</button>
   <dl id="secrets" hidden>
     <dt>Initial admin password</dt>
     <dd><code id="admin"></code> <button type="button" class="quiet copy" data-copy="admin">Copy</button></dd>
     <dt>Backup password</dt>
     <dd><code id="backup"></code> <button type="button" class="quiet copy" data-copy="backup">Copy</button></dd>
   </dl>
-  <label id="noted" class="choice" hidden><input type="checkbox" id="written" required> I wrote both down somewhere other than this box <span class="required" aria-hidden="true">*</span></label>
-  <p id="open-block" hidden><a id="open" class="button primary" aria-disabled="true">Open the platform</a></p>
+  <label id="noted" class="choice" hidden><input type="checkbox" id="written"> I wrote both down somewhere other than this box</label>
+  <div id="open-block" class="nav" hidden><span></span><a id="open" class="button primary" aria-disabled="true">Open the platform</a></div>
 </section>
-
 </main>
 </body>
 </html>

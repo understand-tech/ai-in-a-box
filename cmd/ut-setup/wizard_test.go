@@ -26,10 +26,13 @@ type fakeInstall struct {
 	calls   [][]string
 	license string
 	lines   []string
+	events  []Event
 	fail    bool
 }
 
-func (f *fakeInstall) run(_ context.Context, args []string, line func(string)) error {
+func said(kind, text string) Event { return Event{V: eventsVersion, Event: kind, Text: text} }
+
+func (f *fakeInstall) run(_ context.Context, args []string, line func(string), happened func(Event)) error {
 	f.mu.Lock()
 	f.calls = append(f.calls, args)
 	for i, arg := range args {
@@ -38,10 +41,13 @@ func (f *fakeInstall) run(_ context.Context, args []string, line func(string)) e
 			f.license = string(content)
 		}
 	}
-	lines, fail := f.lines, f.fail
+	lines, events, fail := f.lines, f.events, f.fail
 	f.mu.Unlock()
 	for _, l := range lines {
 		line(l)
+	}
+	for _, event := range events {
+		happened(event)
 	}
 	if fail {
 		return errors.New("ut-install exited with 1")
@@ -275,7 +281,8 @@ func TestAnswersThatAreNotAnswersRunNothing(t *testing.T) {
 }
 
 func TestTheProgressIsWhatUtInstallSays(t *testing.T) {
-	b := newBox(t, &fakeInstall{lines: []string{"==> Downloading images", "     7/13  ghcr.io/x/api:1  (2 min)"}})
+	total := 13
+	b := newBox(t, &fakeInstall{events: []Event{said("step", "Downloading images"), {V: eventsVersion, Event: "image", Landed: 7, Total: &total, Name: "ghcr.io/x/api:1"}}})
 	b.signIn()
 	b.answer(goodAnswers())
 	progress := b.waitForTheEnd()
@@ -285,12 +292,12 @@ func TestTheProgressIsWhatUtInstallSays(t *testing.T) {
 }
 
 func TestAFailedInstallSaysWhyAndCanRunAgain(t *testing.T) {
-	fake := &fakeInstall{lines: []string{"==> Downloading images", "[fail] Image pull failed. Check the token and the network."}, fail: true}
+	fake := &fakeInstall{events: []Event{said("step", "Downloading images"), said("fail", "Image pull failed. Check the token and the network.")}, fail: true}
 	b := newBox(t, fake)
 	b.signIn()
 	b.answer(goodAnswers())
 	progress := b.waitForTheEnd()
-	if progress.Succeeded || progress.Failure != "Image pull failed. Check the token and the network." {
+	if progress.Succeeded || len(progress.Messages) != 1 || progress.Messages[0] != (Message{"fail", "Image pull failed. Check the token and the network."}) {
 		t.Fatalf("a failure read as %+v", progress)
 	}
 	if status := b.answer(goodAnswers()).StatusCode; status != http.StatusAccepted {
@@ -305,7 +312,7 @@ func TestAFailedInstallSaysWhyAndCanRunAgain(t *testing.T) {
 func TestTheSecretsAreShownOnceThenTheWizardStops(t *testing.T) {
 	settings := filepath.Join(t.TempDir(), "local.env")
 	os.WriteFile(settings, []byte("ADMIN_SETUP_PASSWORD=\"first-door\"\nBACKUP_FILES_PASSWORD=\"keep-it-safe\"\n"), 0o600)
-	b := newBox(t, &fakeInstall{lines: []string{"[ ok ] No terminal here, so nothing was printed. The secrets are in " + settings}})
+	b := newBox(t, &fakeInstall{events: []Event{{V: eventsVersion, Event: "secrets", File: settings}}})
 	b.signIn()
 	if status := b.post("/secrets", nil, b.server.URL).StatusCode; status != http.StatusGone {
 		t.Fatalf("secrets before the install answered %d", status)
@@ -333,11 +340,11 @@ func TestTheSecretsAreShownOnceThenTheWizardStops(t *testing.T) {
 }
 
 func TestTheWarningsAndTheStepsReachThePage(t *testing.T) {
-	b := newBox(t, &fakeInstall{lines: []string{
-		"==> Writing the configuration",
-		"[warn] OA_KEY has no value. The platform API builds an OpenAI client as it",
-		"==> Starting services",
-		"[fail] Install stopped at line 226 (exit 1).",
+	b := newBox(t, &fakeInstall{events: []Event{
+		said("step", "Writing the configuration"),
+		said("warn", "OA_KEY has no value. The platform API builds an OpenAI client as it"),
+		said("step", "Starting services"),
+		said("fail", "Install stopped at line 226 (exit 1)."),
 	}, fail: true})
 	b.signIn()
 	b.answer(goodAnswers())
@@ -345,13 +352,13 @@ func TestTheWarningsAndTheStepsReachThePage(t *testing.T) {
 	if strings.Join(progress.Steps, "|") != "Writing the configuration|Starting services" {
 		t.Fatalf("steps read as %q", progress.Steps)
 	}
-	if len(progress.Warnings) != 1 || !strings.HasPrefix(progress.Warnings[0], "OA_KEY has no value") {
-		t.Fatalf("warnings read as %q", progress.Warnings)
+	if len(progress.Messages) != 2 || progress.Messages[0].Kind != "warn" || !strings.HasPrefix(progress.Messages[0].Text, "OA_KEY has no value") {
+		t.Fatalf("messages read as %q", progress.Messages)
 	}
 }
 
 func TestTheBoxIsCheckedOnceWithCheck(t *testing.T) {
-	fake := &fakeInstall{lines: []string{"[ ok ] Docker 29.2.1", "[fail] Disk: 91 GB free, 250 GB needed"}, fail: true}
+	fake := &fakeInstall{events: []Event{said("ok", "Docker 29.2.1"), said("fail", "Disk: 91 GB free, 250 GB needed")}, fail: true}
 	b := newBox(t, fake)
 	if status := b.get("/check").StatusCode; status != http.StatusForbidden {
 		t.Fatalf("the check without the session answered %d", status)
@@ -363,7 +370,7 @@ func TestTheBoxIsCheckedOnceWithCheck(t *testing.T) {
 		json.NewDecoder(response.Body).Decode(&readiness)
 		response.Body.Close()
 	}
-	if readiness.Ready || len(readiness.Lines) != 2 {
+	if readiness.Ready || len(readiness.Messages) != 2 || readiness.Messages[1].Kind != "fail" {
 		t.Fatalf("readiness read as %+v", readiness)
 	}
 	calls := fake.called()
@@ -385,30 +392,77 @@ func TestTheWizardListensOnThisMachineOnly(t *testing.T) {
 
 func TestAnInstallerThatCannotStartIsAFailure(t *testing.T) {
 	var said []string
-	err := runInstaller(filepath.Join(t.TempDir(), "absent"))(context.Background(), nil, func(l string) { said = append(said, l) })
+	err := runInstaller(filepath.Join(t.TempDir(), "absent"))(context.Background(), nil, func(l string) { said = append(said, l) }, func(Event) {})
 	if err == nil {
 		t.Fatal("a missing installer was a success")
 	}
 }
 
-func TestTheRealInstallerIsReadLineByLine(t *testing.T) {
+func TestTheRealInstallerIsReadLineByLineAndEventByEvent(t *testing.T) {
 	script := filepath.Join(t.TempDir(), "ut-install")
-	os.WriteFile(script, []byte("#!/bin/sh\necho '==> Downloading images'\necho '[fail] stopped' >&2\nexit 3\n"), 0o755)
-	var said []string
-	err := runInstaller(script)(context.Background(), nil, func(l string) { said = append(said, l) })
+	os.WriteFile(script, []byte(`#!/bin/sh
+[ "$1" = --events ] || exit 9
+echo '==> Downloading images'
+printf '{"v":1,"event":"step","text":"Downloading images"}\n' >> "$2"
+echo '[fail] stopped' >&2
+printf 'not an event\n{"v":2,"event":"fail","text":"a version this page does not read"}\n' >> "$2"
+printf '{"v":1,"event":"fail","text":"stopped"}\n' >> "$2"
+exit 3
+`), 0o755)
+	var lines []string
+	var events []Event
+	err := runInstaller(script)(context.Background(), []string{"--check"}, func(l string) { lines = append(lines, l) }, func(e Event) { events = append(events, e) })
 	if err == nil || !strings.Contains(err.Error(), "exited with 3") {
 		t.Fatalf("exit read as %v", err)
 	}
-	if strings.Join(said, "|") != "==> Downloading images|[fail] stopped" {
-		t.Fatalf("lines read as %q", said)
+	if strings.Join(lines, "|") != "==> Downloading images|[fail] stopped" {
+		t.Fatalf("lines read as %q", lines)
+	}
+	if len(events) != 2 || events[0].Text != "Downloading images" || events[1] != said("fail", "stopped") {
+		t.Fatalf("events read as %+v", events)
+	}
+}
+
+func TestALineTooLongToReadDoesNotHoldTheInstallerUp(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "ut-install")
+	os.WriteFile(script, []byte("#!/bin/sh\nhead -c 2097152 /dev/zero | tr '\\0' x\necho\necho after\n"), 0o755)
+	finished := make(chan error, 1)
+	go func() {
+		finished <- runInstaller(script)(context.Background(), nil, func(string) {}, func(Event) {})
+	}()
+	select {
+	case err := <-finished:
+		if err != nil {
+			t.Fatalf("the installer ended with %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the installer is still blocked on a line nobody read")
+	}
+}
+
+func TestAMessageCarriedOverSeveralLinesReachesThePageWhole(t *testing.T) {
+	b := newBox(t, &fakeInstall{events: []Event{
+		said("ok", "Docker 29.2.1"),
+		said("fail", "Docker cannot create a network — its address pools are full."),
+		said("more", "  The stack needs four. Reclaim the ones nothing uses:"),
+		said("more", "    docker network prune"),
+		said("more", ""),
+		said("fail", "Blocking problems found. Nothing was changed."),
+	}, fail: true})
+	b.signIn()
+	b.answer(goodAnswers())
+	progress := b.waitForTheEnd()
+	whole := "Docker cannot create a network — its address pools are full.\n  The stack needs four. Reclaim the ones nothing uses:\n    docker network prune"
+	if len(progress.Messages) != 3 || progress.Messages[1] != (Message{"fail", whole}) || progress.Messages[2].Text != "Blocking problems found. Nothing was changed." {
+		t.Fatalf("messages read as %q", progress.Messages)
 	}
 }
 
 func TestTheModelsOfferedAreThoseUtInstallLists(t *testing.T) {
-	fake := &fakeInstall{lines: []string{
-		"nemotron-3.5-bolt-74b        vLLM on gb10      25.1 GB    OpenMDW-1.1    runs code of its own",
-		"qwen3.8-27b-nvfp4            NIM on gb10       26.4 GB    apache-2.0",
-		"[warn] Not proven on gb10: other-model",
+	fake := &fakeInstall{events: []Event{
+		{V: eventsVersion, Event: "model", ID: "nemotron-3.5-bolt-74b", Served: "vLLM on gb10", Size: "25.1 GB", License: "OpenMDW-1.1", RunsItsOwnCode: true},
+		{V: eventsVersion, Event: "model", ID: "qwen3.8-27b-nvfp4", Served: "NIM on gb10", Size: "26.4 GB", License: "apache-2.0"},
+		said("warn", "Not proven on gb10: other-model"),
 	}}
 	b := newBox(t, fake)
 	b.signIn()
@@ -418,7 +472,7 @@ func TestTheModelsOfferedAreThoseUtInstallLists(t *testing.T) {
 		json.NewDecoder(response.Body).Decode(&models)
 		response.Body.Close()
 	}
-	if len(models) != 2 || models[0].ID != "nemotron-3.5-bolt-74b" || models[1].Label != "qwen3.8-27b-nvfp4 NIM on gb10 26.4 GB apache-2.0" {
+	if len(models) != 2 || models[0] != (Model{"nemotron-3.5-bolt-74b", "vLLM on gb10", "25.1 GB", "OpenMDW-1.1", true}) || models[1].License != "apache-2.0" || models[1].RunsItsOwnCode {
 		t.Fatalf("offered %+v", models)
 	}
 	calls := fake.called()
@@ -428,7 +482,7 @@ func TestTheModelsOfferedAreThoseUtInstallLists(t *testing.T) {
 }
 
 func TestAModelChosenReachesUtInstall(t *testing.T) {
-	fake := &fakeInstall{lines: []string{"qwen3.8-27b-nvfp4            NIM on gb10       26.4 GB    apache-2.0"}}
+	fake := &fakeInstall{events: []Event{{V: eventsVersion, Event: "model", ID: "qwen3.8-27b-nvfp4"}}}
 	b := newBox(t, fake)
 	b.signIn()
 	answers := goodAnswers()
@@ -444,7 +498,7 @@ func TestAModelChosenReachesUtInstall(t *testing.T) {
 }
 
 func TestAModelThisBoxDoesNotListInstallsNothing(t *testing.T) {
-	fake := &fakeInstall{lines: []string{"qwen3.8-27b-nvfp4            NIM on gb10       26.4 GB    apache-2.0", "[warn] Not proven on gb10: other-model"}}
+	fake := &fakeInstall{events: []Event{{V: eventsVersion, Event: "model", ID: "qwen3.8-27b-nvfp4"}, said("warn", "Not proven on gb10: other-model")}}
 	b := newBox(t, fake)
 	b.signIn()
 	for _, model := range []string{"other-model", "--engine", "Qwen; reboot"} {

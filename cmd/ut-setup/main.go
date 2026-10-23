@@ -65,14 +65,26 @@ func run(args []string, stdout, stderr io.Writer) int {
 // Setsid leaves ut-install without a terminal: it then prints no secret on
 // /dev/tty and says which file holds them, which is what the wizard reads.
 func runInstaller(path string) Installer {
-	return func(ctx context.Context, args []string, line func(string)) error {
-		command := exec.CommandContext(ctx, path, args...)
+	return func(ctx context.Context, args []string, said func(string), happened func(Event)) error {
+		folder, err := os.MkdirTemp("", "ut-setup-events-*")
+		if err != nil {
+			return fmt.Errorf("cannot keep what %s tells: %w", path, err)
+		}
+		defer os.RemoveAll(folder)
+		events := filepath.Join(folder, "events.jsonl")
+
+		command := exec.CommandContext(ctx, path, append([]string{"--events", events}, args...)...)
 		command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 		reader, writer := io.Pipe()
 		command.Stdout, command.Stderr = writer, writer
 		if err := command.Start(); err != nil {
 			return fmt.Errorf("cannot start %s: %w", path, err)
 		}
+		stop, followed := make(chan struct{}), make(chan struct{})
+		go func() {
+			follow(events, stop, happened)
+			close(followed)
+		}()
 		done := make(chan error, 1)
 		go func() {
 			err := command.Wait()
@@ -82,9 +94,14 @@ func runInstaller(path string) Installer {
 		scanner := bufio.NewScanner(reader)
 		scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 		for scanner.Scan() {
-			line(scanner.Text())
+			said(scanner.Text())
 		}
-		err := <-done
+		// A line longer than the scanner takes ends the loop early, and ut-install
+		// would then block writing to a pipe nobody reads.
+		io.Copy(io.Discard, reader)
+		err = <-done
+		close(stop)
+		<-followed
 		var exit *exec.ExitError
 		if errors.As(err, &exit) {
 			return fmt.Errorf("ut-install exited with %d", exit.ExitCode())

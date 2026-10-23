@@ -32,6 +32,7 @@ MIN_RAM_KB_NO_INFERENCE=$((12 * 1024 * 1024))
 NIM_COLD_START_SECONDS=2700
 
 ACTION="install"
+EVENTS_FILE=""
 DO_UPDATE=false
 DO_AUTOSTART=true
 DO_PULL=true
@@ -78,10 +79,35 @@ else
 fi
 
 log()       { printf '%s\n' "$*"; }
-log_info()  { printf '%s[ ok ]%s %s\n' "$GREEN" "$NC" "$*"; }
-log_warn()  { printf '%s[warn]%s %s\n' "$YELLOW" "$NC" "$*"; }
-log_error() { printf '%s[fail]%s %s\n' "$RED" "$NC" "$*" >&2; }
-log_step()  { CURRENT_STEP=$*; printf '\n%s==>%s %s%s%s\n' "$CYAN" "$NC" "$BOLD" "$*" "$NC"; }
+log_info()  { printf '%s[ ok ]%s %s\n' "$GREEN" "$NC" "$*"; say_message ok "$*"; }
+log_warn()  { printf '%s[warn]%s %s\n' "$YELLOW" "$NC" "$*"; say_message warn "$*"; }
+log_error() { printf '%s[fail]%s %s\n' "$RED" "$NC" "$*" >&2; say_message fail "$*"; }
+log_step()  { CURRENT_STEP=$*; printf '\n%s==>%s %s%s%s\n' "$CYAN" "$NC" "$BOLD" "$*" "$NC"; say_message step "$*"; }
+
+# --events writes each of these beside the text, never instead of it: ut-setup
+# reads the events, a person reads the text, and neither changes the other.
+json_string() {
+    local text=$1
+    text=${text//\\/\\\\}
+    text=${text//\"/\\\"}
+    text=${text//$'\t'/\\t}
+    text=${text//$'\r'/\\r}
+    text=${text//$'\n'/\\n}
+    printf '"%s"' "$(tr -d '\000-\010\013\014\016-\037\177' <<< "$text")"
+}
+
+say_event() {
+    [[ -n "$EVENTS_FILE" ]] || return 0
+    printf '{"v":1,"event":"%s"%s}\n' "$1" "${2:-}" >> "$EVENTS_FILE" 2>/dev/null || true
+}
+
+# A message carried on over several lines indents the lines after its first.
+say_message() {
+    [[ -n "$EVENTS_FILE" ]] || return 0
+    local kind=$1 text=$2
+    [[ -z "$text" || "$text" == " "* ]] && kind=more
+    say_event "$kind" ",\"text\":$(json_string "$text")"
+}
 
 die() { log_error "$*"; exit 1; }
 
@@ -113,7 +139,10 @@ Options
                        name --model takes, the engine, the size of the weights,
                        the license, and whether it runs code of its own. Changes
                        nothing.
-  --update             Fast-forward an existing checkout to the target ref.
+  --events FILE        Also append each step, message, image and model to FILE,
+                       one JSON object a line, for ut-setup. What is printed
+                       does not change.
+  --update            Fast-forward an existing checkout to the target ref.
                        Off by default so a support fix applied on the machine
                        is not silently discarded.
   --license-file PATH  The license key UnderstandTech issued for this machine.
@@ -1241,7 +1270,7 @@ size_of_the_weights_of() {
 }
 
 list_the_models_this_machine_serves() {
-    local id entry family="" engine served code unproven=""
+    local id entry family="" engine served code unproven="" size license
     this_machine_goes_without_its_accelerator || family=$(gpu_family)
     while read -r id; do
         [[ -n "$id" ]] || continue
@@ -1256,8 +1285,10 @@ list_the_models_this_machine_serves() {
         fi
         code=""
         grep -q -- '--trust-remote-code' "$entry" && code="runs code of its own"
-        printf '%-28s %-34s %-10s %-14s %s\n' "$id" "$served" "$(size_of_the_weights_of "$id")" \
-            "$(env_get "$entry" MODEL_LICENSE 2>/dev/null || echo 'license not read')" "$code"
+        size=$(size_of_the_weights_of "$id") || true
+        license=$(env_get "$entry" MODEL_LICENSE 2>/dev/null || echo 'license not read')
+        printf '%-28s %-34s %-10s %-14s %s\n' "$id" "$served" "$size" "$license" "$code"
+        [[ -z "$EVENTS_FILE" ]] || say_event model ",\"id\":$(json_string "$id"),\"served\":$(json_string "$served"),\"size\":$(json_string "$size"),\"license\":$(json_string "$license"),\"runs_its_own_code\":$( [[ -n "$code" ]] && echo true || echo false )"
     done <<< "$(models_listed)"
     [[ -z "$unproven" ]] || log_warn "Not proven on ${family:-an unknown GPU}:${unproven}"
 }
@@ -1787,6 +1818,7 @@ say_each_image_as_it_lands() {
             *'"status":"Done"'*)
                 landed=$((landed + 1))
                 log "     ${landed}/${total}  ${image}  ($(( (SECONDS - started) / 60 )) min)"
+                [[ -z "$EVENTS_FILE" ]] || say_event image ",\"landed\":${landed},\"total\":$( [[ "$total" == "?" ]] && echo null || echo "$total" ),\"name\":$(json_string "$image"),\"minutes\":$(( (SECONDS - started) / 60 ))"
                 ;;
             *'"status":"Error"'*)
                 log_error "${image}: $(sed -n 's/.*"text":"\([^"]*\)".*/\1/p' <<< "$line")"
@@ -2328,6 +2360,7 @@ print_secrets_out_of_band() {
     local env_file=$1 admin_password backup_password
     if ! terminal_is_reachable; then
         log_info "No terminal here, so nothing was printed. The secrets are in $(settings_directory "$env_file")/local.env"
+        [[ -z "$EVENTS_FILE" ]] || say_event secrets ",\"file\":$(json_string "$(settings_directory "$env_file")/local.env")"
         return 0
     fi
 
@@ -2519,6 +2552,7 @@ parse_arguments() {
         case "$1" in
             --check)          ACTION="check" ;;
             --list-models)    ACTION="list-models" ;;
+            --events)         EVENTS_FILE="${2:?--events needs a file}"; shift ;;
             --no-gpu)         NO_GPU=true ;;
             --update)         DO_UPDATE=true ;;
             --no-autostart)   DO_AUTOSTART=false ;;
@@ -2551,6 +2585,7 @@ parse_arguments() {
 
 main() {
     parse_arguments "$@"
+    [[ -z "$EVENTS_FILE" ]] || : >> "$EVENTS_FILE" || die "Cannot write the events to ${EVENTS_FILE}."
     die_on_a_compute_node_given_wrong
     die_on_a_compute_role_given_wrong
     resolve_install_dir
@@ -2591,6 +2626,7 @@ main() {
     step_autostart
     step_reporting
     print_summary
+    [[ -z "$EVENTS_FILE" ]] || say_event done ",\"address\":$(json_string "https://${DOMAIN}"),\"minutes\":$(( SECONDS / 60 ))"
 }
 
 # An `if` rather than `&&`: a false condition would otherwise be the script's

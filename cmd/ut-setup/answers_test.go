@@ -45,13 +45,13 @@ func TestTheSessionIsReadFromAGraphicalProcess(t *testing.T) {
 	}
 }
 
-func TestAnImageLineIsReadOnlyWhenItIsOne(t *testing.T) {
-	p := Progress{}.read("     2/?  ghcr.io/x/api:1  (0 min)")
+func TestAnImageIsCountedFromItsEventOnly(t *testing.T) {
+	p := Progress{}.apply(Event{V: eventsVersion, Event: "image", Landed: 2, Name: "ghcr.io/x/api:1"})
 	if p.Landed != 2 || p.Total != 0 {
 		t.Fatalf("an unknown total read as %+v", p)
 	}
-	p = Progress{}.read("The image 3/4 was big (5 min)")
+	p = Progress{}.read("     3/4  ghcr.io/x/api:1  (5 min)")
 	if p.Landed != 0 {
-		t.Fatalf("a sentence read as an image: %+v", p)
+		t.Fatalf("a line of text moved the count: %+v", p)
 	}
 }
