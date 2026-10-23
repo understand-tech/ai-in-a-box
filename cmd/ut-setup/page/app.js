@@ -128,7 +128,13 @@ function render(p) {
 }
 
 async function follow() {
-  const answer = await fetch("/progress");
+  let answer;
+  try {
+    answer = await fetch("/progress");
+  } catch {
+    setTimeout(follow, 2000);
+    return;
+  }
   if (!answer.ok) return;
   const p = await answer.json();
   render(p);
