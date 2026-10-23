@@ -742,6 +742,28 @@ EOF
     python3 "$SCRIPT_DIR/answer-a-prompt.py" "$probe/run.sh" "$answer" | tr -d '\r'
 }
 
+# Both callers read this list through a process substitution, whose status nobody
+# sees: what keeps it whole is that it never fails for want of a settings image.
+the_images_a_stack_runs_are_listed_without_a_settings_image() {
+    local probe report
+    probe=$(mktemp -d "$WORK_DIR/images.XXXXXX")
+    printf 'API_IMAGE="ghcr.io/x/api:1"\n' > "$probe/release.env"
+    printf 'UT_DOMAIN="box.example.test"\n' > "$probe/local.env"
+    cat > "$probe/run.sh" <<EOF
+set +u
+UT_INSTALL_DIR="$probe" source "$REPO_ROOT/bin/ut-install" >/dev/null 2>&1
+set +eEu
+trap - ERR
+INSTALL_DIR="$probe"
+every_image_the_stack_names
+printf 'EXIT=%s\n' "\$?"
+EOF
+    report=$(bash "$probe/run.sh" 2>&1)
+    grep -qx 'API_IMAGE=ghcr.io/x/api:1' <<< "$report" && grep -qx 'EXIT=0' <<< "$report" && return 0
+    echo "$report"
+    return 1
+}
+
 # step_wait_healthy is never reached by fresh-install.sh, which stops where the
 # installer would pull images. Driving the function directly, with the container
 # list it reads replaced, is the only way to watch it decide.
@@ -2186,12 +2208,14 @@ a_release_names_every_image_it_ships() {
 }
 
 a_bill_of_materials_refuses_an_image_that_can_move() {
-    local probe="$WORK_DIR/bom"
+    local probe="$WORK_DIR/bom" said
     mkdir -p "$probe"
     printf 'LOOSE_IMAGE="registry.test/thing:1.2"\n' > "$probe/release.env"
-    RELEASE_ENV="$probe/release.env" "$REPO_ROOT/packaging/release-bom.sh" 9999.99.9 >/dev/null 2>&1 \
-        || return 0
-    echo "it described a tag as though it named one image"
+    said=$(RELEASE_ENV="$probe/release.env" "$REPO_ROOT/packaging/release-bom.sh" 9999.99.9 2>&1 >/dev/null) \
+        && { echo "it described a tag as though it named one image"; return 1; }
+    grep -q 'which a registry can repoint' <<< "$said" && grep -q 'registry.test/thing:1.2' <<< "$said" && return 0
+    echo "it stopped, but not on the tag that can move:"
+    tail -3 <<< "$said"
     return 1
 }
 
@@ -3122,6 +3146,8 @@ if [[ -x "$REPO_ROOT/bin/ut-install" ]]; then
         a_backup_that_does_not_work_does_not_hold_the_install_back
     capability "the download says each image as it lands, out of how many and since when" \
         the_pull_says_each_image_as_it_lands
+    capability "the images a stack runs are listed even when the settings file names none of its own" \
+        the_images_a_stack_runs_are_listed_without_a_settings_image
     capability "with --events, each image that lands is also an event" \
         the_pull_tells_each_image_as_an_event
     capability "with --events, each message is also an event, whole, and the text is unchanged" \

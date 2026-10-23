@@ -1129,7 +1129,7 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
 
     install_walk_discriminates "a login with some other token than the license's" \
         "logs in with the token it carries" \
-        "sed -i.bak 's|^    REGISTRY_TOKEN=\$(\"\$tool\" field registry_token \"\$machine\" 2>/dev/null)|    REGISTRY_TOKEN=some-other-token|' bin/ut-install"
+        "sed -i.bak 's|^    if ! REGISTRY_TOKEN=\$(\"\$tool\" field registry_token \"\$machine\" 2>/dev/null); then|    if ! REGISTRY_TOKEN=some-other-token; then|' bin/ut-install"
 
     install_walk_discriminates "a license file read without being checked" \
         "an altered license file stops the install before any request" \
@@ -1137,7 +1137,7 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
 
     install_walk_discriminates "a license file replaced from Keygen rather than checked" \
         "an altered license file stops the install before any request" \
-        "sed -i.bak 's|^    if \[\[ -s \"\$MACHINE_FILE\" \]\] \&\& stored_license_is \"\$key\"; then|    if false; then|' bin/ut-install"
+        "sed -i.bak 's|^    elif \[\[ -s \"\$MACHINE_FILE\" \]\] \&\& stored_license_is \"\$key\"; then|    elif false; then|' bin/ut-install"
 
     install_walk_discriminates "a license file that ended, refused instead of renewed" \
         "a license file that has ended is renewed from Keygen" \
@@ -1283,8 +1283,8 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
         "a license with no registry token is refused to pull, and taken when nothing is pulled" \
         "sed -i.bak 's|^        if \$DO_PULL; then\$|        if true; then|' bin/ut-install"
 
-    install_walk_discriminates "a settings file with no image of its own read as a failed install" \
-        "a refused folder says how to prepare it again" \
+    capability_discriminates "a settings file with no image of its own read as a failed install" \
+        "listed even when the settings file names none of its own" \
         "sed -i.bak 's/^    { grep -E .^\\[A-Z_\\]+_IMAGE=. \"\\\$local_file\" 2>\\/dev\\/null || true; } | while/    grep -E '\\''^[A-Z_]+_IMAGE='\\'' \"\$local_file\" 2>\\/dev\\/null | while/' bin/ut-install"
 
     install_walk_discriminates "a refused folder told to prepare a version that does not exist" \
