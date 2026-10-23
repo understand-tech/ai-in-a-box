@@ -2821,6 +2821,7 @@ the_sftp_destination_has_to_prove_who_it_is() {
             echo "a host whose key was not the pinned one was trusted"
         elif ! grep -qE 'Host key verification failed|HOST IDENTIFICATION HAS CHANGED' <<< "$output"; then
             echo "$output"
+            docker exec "$server" tail -n 12 /config/logs/openssh/current 2>&1 | sed 's/^/    sshd: /'
         else
             printf '%s\n' "$scanned" | pin_host_keys "$ssh_dir"
             output=$(backup_over_sftp "$source" "$ssh_dir" "$repository" "$net") && verdict=0 \
