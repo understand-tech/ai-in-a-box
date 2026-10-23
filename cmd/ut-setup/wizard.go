@@ -34,10 +34,11 @@ type Wizard struct {
 	served   bool
 	stopped  bool
 
-	checking  sync.Once
+	checking  sync.Mutex
 	readiness Readiness
 
-	listing sync.Once
+	listing sync.Mutex
+	listed  bool
 	models  []Model
 }
 
@@ -212,31 +213,37 @@ func (w *Wizard) install(rw http.ResponseWriter, r *http.Request) {
 	rw.WriteHeader(http.StatusAccepted)
 }
 
-// ut-install --check changes nothing and takes a few seconds: it runs once,
-// the first time the page asks, and its answer is kept for every reload.
+// ut-install --check changes nothing and takes a few seconds: a box found ready
+// is not checked again, and one that was not is checked on every reload, so what
+// the operator fixed in between shows.
 func (w *Wizard) check(rw http.ResponseWriter, _ *http.Request) {
-	w.checking.Do(func() {
+	w.checking.Lock()
+	if !w.readiness.Ready {
 		messages := []Message{}
 		err := w.installer(context.Background(), []string{"--check"}, func(string) {}, func(event Event) { messages = told(messages, event) })
 		w.readiness = Readiness{Ready: err == nil, Messages: messages}
-	})
+	}
+	readiness := w.readiness
+	w.checking.Unlock()
 	rw.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(rw).Encode(w.readiness)
+	json.NewEncoder(rw).Encode(readiness)
 }
 
 func (w *Wizard) modelsHere() []Model {
-	w.listing.Do(func() {
+	w.listing.Lock()
+	defer w.listing.Unlock()
+	if !w.listed {
 		listed := []Model{}
 		err := w.installer(context.Background(), []string{"--list-models"}, func(string) {}, func(event Event) {
 			if event.Event == "model" {
 				listed = append(listed, Model{ID: event.ID, Served: event.Served, Size: event.Size, License: event.License, RunsItsOwnCode: event.RunsItsOwnCode})
 			}
 		})
-		w.models = []Model{}
-		if err == nil {
+		w.models, w.listed = []Model{}, err == nil
+		if w.listed {
 			w.models = listed
 		}
-	})
+	}
 	return w.models
 }
 
