@@ -10,12 +10,6 @@ name: ${COMPOSE_PROJECT_NAME:-understandtech}
 #   COMPOSE_FILE="compose.yaml:compose.arbiter.yaml"
 #   COMPOSE_PROFILES=""
 #
-# This first slice keeps Caddy running but publishes nothing yet: the default
-# Caddyfile's platform routes point at api/frontend, which this role turns off,
-# and serving them would 502 on every request. The heartbeat surface and the
-# service that answers it are a later slice of the same increment — see
-# notes/features/basculer-automatiquement-entre-deux-box.md.
-#
 # Named after the role rather than the product it arbitrates, so the same file
 # applies whatever the two paired boxes' own palier (GB10, GB300, rack) or role.
 
@@ -25,7 +19,34 @@ services:
     # frontend, both off on this role; depending on them would never go
     # healthy, and publishing 80/443 would 502 on every request.
     depends_on: !reset null
-    ports: !override []
+    # A list merges with the base service's by default in this version of
+    # Compose — !override replaces it, or 80/443 stay published alongside
+    # 8446 instead of being swapped out for it.
+    ports: !override
+      - "${UT_ARBITER_BIND_ADDRESS:-0.0.0.0}:${UT_ARBITER_PORT:-8446}:8446"
+    environment:
+      UT_ARBITER_ADDRESS: ${UT_ARBITER_ADDRESS:-${UT_DOMAIN:-understand.local}}
+      UT_ARBITER_API_KEY: ${UT_ARBITER_API_KEY:?ut-install generates it}
+    networks:
+      ut-backend-network:
+    volumes: !override
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/ingress-${UT_INGRESS_MODE:-internal}.caddy:/etc/caddy/ingress.caddy:ro
+      - ${UT_CERT_DIR:-./caddy/certs}:/etc/caddy/certs:ro
+      - ./caddy/arbiter-surface.caddy:/etc/caddy/inference.caddy:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+  arbiter:
+    labels:
+      ut.role: "arbiter"
+    image: ${ARBITER_IMAGE:?ut-install pins the arbiter image; see github.com/understand-tech/ut-arbiter}
+    restart: unless-stopped
+    environment:
+      UT_ARBITER_ADDR: "0.0.0.0:8446"
+    networks:
+      ut-backend-network:
+
   redis:
     profiles: ["control-plane-only"]
   mongodb:
