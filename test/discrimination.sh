@@ -585,9 +585,17 @@ capability_discriminates "a replaced image judged by its own digest rather than 
     "an image the settings file runs instead of the role's is required from the folder" \
     "sed -i.bak 's/grep -qxF \"\\\${released##\\*@}\" <<< \"\\\$digests\"/grep -qxF \"\\\${line##*@}\" <<< \"\\\$digests\"/' bin/ut-install"
 
+capability_discriminates "a copy tried once" \
+    "a copy a registry refuses twice is tried a third time" \
+    "sed -i.bak 's/for attempt in 1 2 3; do/for attempt in 1; do/' bin/ut-get"
+
+capability_discriminates "an engine listed once for each model it serves" \
+    "two models on one engine are one component of the bill" \
+    "sed -i.bak 's/ | LC_ALL=C sort | awk .*\$//' packaging/release-bom.sh"
+
 capability_discriminates "a model's engine carried for every model" \
     "a model's own engine is carried for that model only" \
-    "sed -i.bak 's/\\[\\[ -z \"\\\$for_model\" || \"\\\$for_model\" == \"\\\$model\" \\]\\] || continue/:/' bin/ut-get"
+    "sed -i.bak '/\\[\\[ -z \"\\\$for_model\" ||/s/|| continue\$/|| :/' bin/ut-get"
 
 capability_discriminates "a failure inside a substitution reported as the install's" \
     "a failure ut-install tests for is not reported as the install stopping" \

@@ -180,7 +180,7 @@ images_of_the_bill() {
     sed -n 's|.*"purl": "pkg:oci/[^@]*@\(sha256:[0-9a-f]\{64\}\)?repository_url=\([^&"]*\)\([^"]*\)".*|\2@\1 \3|p' "$bill" \
         | while read -r reference qualifiers; do
             for_model=$(sed -n 's/.*&model=\([^&#]*\).*/\1/p' <<< "$qualifiers")
-            [[ -z "$for_model" || "$for_model" == "$model" ]] || continue
+            [[ -z "$for_model" || "+${for_model}+" == *"+${model}+"* ]] || continue
             runs_in_the_role "$qualifiers" "$role" && printf '%s\n' "$reference"
         done
 }
@@ -265,6 +265,33 @@ skopeo_in() {
 # only: two requests to the registry instead of one per platform, which Docker
 # Hub's anonymous limit did not survive on 2026-10-20. The box proves the second
 # belongs to the first.
+# quay.io answered 503 now and then on 2026-10-24, in CI and here: a copy is
+# tried three times, from scratch each time, before the preparation stops.
+with_retries() {
+    local attempt
+    for attempt in 1 2 3; do
+        "$@" && return 0
+        (( attempt == 3 )) || sleep $(( attempt * ${UT_GET_RETRY_SECONDS:-10} ))
+    done
+    return 1
+}
+
+copy_an_image() {
+    local folder=$1 auth=$2 path=$3 source=$4
+    rm -rf "${folder:?}/$path/box"
+    skopeo_in "$folder" "$auth" inspect --raw "$source" > "$folder/$path/named.json" \
+        && skopeo_in "$folder" "$auth" --override-os linux --override-arch "$BOX_ARCHITECTURE" \
+            copy -q --preserve-digests "$source" "dir:/folder/$path/box"
+}
+
+copy_a_tool() {
+    local folder=$1 auth=$2 tool=$3 name=$4
+    rm -f "$folder/tools/$name.part"
+    skopeo_in "$folder" "$auth" --override-os linux --override-arch "$BOX_ARCHITECTURE" \
+        copy -q "docker://$(fully_qualified "$(repository_of "$tool")@${tool#*@}")" \
+        "docker-archive:/folder/tools/$name.part:${tool%@*}"
+}
+
 copy_the_images_into() {
     local folder=$1 auth=$2 reference path source
     while read -r reference; do
@@ -277,9 +304,7 @@ copy_the_images_into() {
         rm -rf "${folder:?}/$path"
         mkdir -p "$folder/$path"
         source="docker://$(fully_qualified "$reference")"
-        skopeo_in "$folder" "$auth" inspect --raw "$source" > "$folder/$path/named.json" \
-            && skopeo_in "$folder" "$auth" --override-os linux --override-arch "$BOX_ARCHITECTURE" \
-                copy -q --preserve-digests "$source" "dir:/folder/$path/box" \
+        with_retries copy_an_image "$folder" "$auth" "$path" "$source" \
             || fail "Could not copy ${reference%@*} — check the token and the network, then run the same command again"
         log_info "${reference%@*} copied"
     done
@@ -291,9 +316,7 @@ copy_the_tools_into() {
     for tool in "$FOLDER_REGISTRY_TOOL" "$FOLDER_SKOPEO_TOOL"; do
         name=$(basename "${tool%%:*}").tar
         [[ -f "$folder/tools/$name" ]] && continue
-        skopeo_in "$folder" "$auth" --override-os linux --override-arch "$BOX_ARCHITECTURE" \
-            copy -q "docker://$(fully_qualified "$(repository_of "$tool")@${tool#*@}")" \
-            "docker-archive:/folder/tools/$name.part:${tool%@*}" \
+        with_retries copy_a_tool "$folder" "$auth" "$tool" "$name" \
             || fail "Could not copy the tool ${tool%@*}"
         mv "$folder/tools/$name.part" "$folder/tools/$name"
     done
