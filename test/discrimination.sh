@@ -29,7 +29,7 @@ fresh_copy() {
     rm -rf "$COPY"
     mkdir -p "$COPY"
     ( cd "$REPO_ROOT" && tar -cf - release.env compose.yaml compose.appbuilder.yaml \
-        compose.compute.yaml compose.no-gpu.yaml compose.backup-mount.yaml compose.backup-network.yaml compose.remote-inference.yaml compose.engine-vllm.yaml models \
+        compose.compute.yaml compose.no-gpu.yaml compose.arbiter.yaml compose.backup-mount.yaml compose.backup-network.yaml compose.remote-inference.yaml compose.engine-vllm.yaml models \
         Caddyfile caddy metrics backup-files.sh \
         setup-autostart.sh bin go.mod cmd appbuilder docs \
         packaging README.md test .github 2>/dev/null ) | tar -xf - -C "$COPY" 2>/dev/null
@@ -420,6 +420,10 @@ capability_discriminates "an engine port declared again, which Docker never publ
 capability_discriminates "a compute node that starts without an engine key" \
     "a compute node lets other machines reach its engine only with its key" \
     "sed -i.bak 's|VLLM_API_KEY: \${VLLM_API_KEY:?ut-install generates it}|VLLM_API_KEY: \${VLLM_API_KEY:-}|' compose.compute.yaml"
+
+capability_discriminates "an arbiter that also starts the control plane's API" \
+    "the arbiter role keeps only Caddy, no control plane and no GPU" \
+    "sed -i.bak '/^  api:\$/,+1d' compose.arbiter.yaml"
 
 capability_discriminates "the arguments of a vLLM model passed as one" \
     "each argument of the model reaches vLLM whole, JSON included" \

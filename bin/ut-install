@@ -37,6 +37,7 @@ DO_UPDATE=false
 DO_AUTOSTART=true
 DO_PULL=true
 NO_GPU=false
+ARBITER=false
 TOKEN_FILE=""
 REGISTRY_TOKEN="${UT_REGISTRY_TOKEN:-}"
 LICENSE_FILE=""
@@ -187,6 +188,10 @@ Options
                        root, as its own install printed them. No engine starts
                        here; a GPU, when there is one, stays with llm, which
                        searches the documents. Without one, as --no-gpu.
+  --arbiter            This machine judges which of a paired box of calcul is
+                       reachable, to settle a two-box failover without two
+                       primaries. No GPU, no control-plane state of its own.
+                       Starts nothing but Caddy. Kept by later runs.
   --health-timeout N   Seconds to wait for services (default: 3600).
   --reporting yes|no   Whether this machine sends its usage reports to
                        UnderstandTech (docs/usage-report.md says what they hold).
@@ -1155,6 +1160,38 @@ write_the_settings_a_compute_role_needs() {
     log_info "Compute node, reached at https://${COMPUTE_ADDRESS}:8444 by its control plane"
 }
 
+problem_with_the_arbiter_role_given() {
+    $ARBITER || return 1
+    if [[ -n "$COMPUTE_ADDRESS" ]]; then
+        echo "--arbiter judges a pair of box of calcul; it goes with neither --compute nor a model"
+    elif [[ -n "$INFERENCE_FROM" ]]; then
+        echo "--arbiter judges a pair of box of calcul; it goes with neither --inference-from nor a model"
+    elif [[ -n "$MODEL_ID" || -n "$ENGINE_CHOICE" ]]; then
+        echo "--arbiter serves no model; it goes with neither --model nor --engine"
+    else
+        return 1
+    fi
+}
+
+die_on_an_arbiter_role_given_wrong() {
+    local problem
+    problem=$(problem_with_the_arbiter_role_given) || return 0
+    log_error "$problem"
+    exit 1
+}
+
+write_the_settings_an_arbiter_role_needs() {
+    local local_file=$1 compose_files
+    $ARBITER || return 0
+    compose_files=$(env_get "$local_file" COMPOSE_FILE 2>/dev/null || true)
+    [[ -n "$compose_files" ]] || compose_files=$(release_declares COMPOSE_FILE || echo "compose.yaml")
+    case "$compose_files" in
+        *compose.arbiter.yaml*) ;;
+        *) env_set "$local_file" COMPOSE_FILE "${compose_files}:compose.arbiter.yaml" ;;
+    esac
+    log_info "Arbiter: no GPU, no control-plane state, judges which box of calcul is reachable"
+}
+
 die_on_a_compute_node_given_wrong() {
     local problem
     problem=$(problem_with_the_compute_node_given) || return 0
@@ -1626,6 +1663,7 @@ step_configure() {
     fi
 
     write_the_settings_a_compute_role_needs "$local_file"
+    write_the_settings_an_arbiter_role_needs "$local_file"
     write_the_settings_the_model_needs "$local_file"
     write_the_settings_a_compute_node_needs "$local_file"
     if this_machine_goes_without_its_accelerator; then
@@ -1805,7 +1843,9 @@ name_in_the_folder_registry() {
 role_this_install_takes() {
     local compose_files
     compose_files=$(env_get "$INSTALL_DIR/.env" COMPOSE_FILE 2>/dev/null || true)
-    if [[ -n "$COMPUTE_ADDRESS" || "$compose_files" == *compose.compute.yaml* ]]; then
+    if $ARBITER || [[ "$compose_files" == *compose.arbiter.yaml* ]]; then
+        echo arbiter
+    elif [[ -n "$COMPUTE_ADDRESS" || "$compose_files" == *compose.compute.yaml* ]]; then
         echo compute
     elif [[ -n "$INFERENCE_FROM" ]] || $NO_GPU || [[ "$compose_files" == *compose.remote-inference.yaml* || "$compose_files" == *compose.no-gpu.yaml* ]]; then
         echo control-plane
@@ -2497,6 +2537,7 @@ parse_arguments() {
             --list-models)    ACTION="list-models" ;;
             --events)         EVENTS_FILE="${2:?--events needs a file}"; shift ;;
             --no-gpu)         NO_GPU=true ;;
+            --arbiter)        ARBITER=true ;;
             --update)         DO_UPDATE=true ;;
             --no-autostart)   DO_AUTOSTART=false ;;
             --skip-pull)      DO_PULL=false ;;
@@ -2531,6 +2572,7 @@ main() {
     [[ -z "$EVENTS_FILE" ]] || : >> "$EVENTS_FILE" || die "Cannot write the events to ${EVENTS_FILE}."
     die_on_a_compute_node_given_wrong
     die_on_a_compute_role_given_wrong
+    die_on_an_arbiter_role_given_wrong
     resolve_install_dir
     die_on_a_folder_that_misses_an_image
     die_on_a_model_nobody_listed
