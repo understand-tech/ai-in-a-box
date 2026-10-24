@@ -78,3 +78,59 @@ func TestAnImageIsCountedFromItsEventOnly(t *testing.T) {
 		t.Fatalf("a line of text moved the count: %+v", p)
 	}
 }
+
+func TestAComputeNodeIsInstalledByItsAddressAndNoDomain(t *testing.T) {
+	answers, err := parseAnswers(url.Values{"role": {"compute"}, "compute_address": {" 10.0.0.12 "}, "license": {"k"}, "reporting": {"no"}}, Folder{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(installArguments(answers, "/tmp/key"), " "); got != "--compute 10.0.0.12 --license-file /tmp/key --reporting no" {
+		t.Fatalf("installed with %q", got)
+	}
+	for _, address := range []string{"gpu.local", "not an address", ""} {
+		if _, err := parseAnswers(url.Values{"role": {"compute"}, "compute_address": {address}, "license": {"k"}, "reporting": {"no"}}, Folder{}); err == nil {
+			t.Fatalf("the compute address %q was taken", address)
+		}
+	}
+}
+
+func TestHowTLSEndsReachesTheInstaller(t *testing.T) {
+	base := url.Values{"domain": {"box.example.com"}, "license": {"k"}, "reporting": {"yes"}}
+	cases := map[string]url.Values{
+		"--domain box.example.com --certificate-dir /etc/understandtech/certs --license-file /tmp/key --reporting yes": {"tls": {"certificate"}, "certificate_dir": {"/etc/understandtech/certs"}},
+		"--domain box.example.com --behind-proxy 10.42.0.0/16,10.43.0.0/16 --license-file /tmp/key --reporting yes":    {"tls": {"proxy"}, "proxy_ranges": {"10.42.0.0/16, 10.43.0.0/16"}},
+		"--domain box.example.com --license-file /tmp/key --reporting yes":                                             {"tls": {"internal"}},
+	}
+	for want, extra := range cases {
+		form := url.Values{}
+		for key, values := range base {
+			form[key] = values
+		}
+		for key, values := range extra {
+			form[key] = values
+		}
+		answers, err := parseAnswers(form, Folder{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Join(installArguments(answers, "/tmp/key"), " "); got != want {
+			t.Fatalf("installed with %q, not %q", got, want)
+		}
+	}
+	for name, extra := range map[string]url.Values{
+		"a relative folder":     {"tls": {"certificate"}, "certificate_dir": {"certs"}},
+		"a range with a script": {"tls": {"proxy"}, "proxy_ranges": {"10.0.0.0/8;reboot"}},
+		"an unknown way":        {"tls": {"magic"}},
+	} {
+		form := url.Values{}
+		for key, values := range base {
+			form[key] = values
+		}
+		for key, values := range extra {
+			form[key] = values
+		}
+		if _, err := parseAnswers(form, Folder{}); err == nil {
+			t.Fatalf("%s was taken", name)
+		}
+	}
+}

@@ -256,6 +256,9 @@ func (w *Wizard) install(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.progress = Progress{Running: true, Domain: answers.Domain, started: time.Now()}
+	if answers.Role == "compute" {
+		w.progress = Progress{Running: true, Compute: true, Domain: answers.ComputeAddress, started: time.Now()}
+	}
 	w.mu.Unlock()
 
 	license := ""

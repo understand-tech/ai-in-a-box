@@ -3,13 +3,38 @@
 const $ = (id) => document.getElementById(id);
 const show = (id, visible = true) => { $(id).hidden = !visible; };
 
-const screens = ["check", "update", "domain", "license", "model", "reporting", "running", "done"];
-const askable = ["domain", "license", "model", "reporting"];
+const screens = ["check", "update", "role", "domain", "compute", "tls", "license", "model", "reporting", "running", "done"];
+const askable = ["role", "domain", "compute", "tls", "license", "model", "reporting"];
 let questions = [...askable];
 let updating = false;
+let fromFolder = false;
+let licenseFromFolder = false;
 const roles = { appliance: "Complete box: the platform and its inference", compute: "Inference only, served to another box" };
 const marks = { ok: ["✓", ""], done: ["✓", ""], current: ["…", ""], warn: ["⚠", "Warning: "], fail: ["✕", "Problem: "] };
 const unmarked = ["", ""];
+
+function chosen(name) {
+  const input = document.querySelector(`input[name=${name}]:checked`);
+  return input ? input.value : "";
+}
+
+function refreshQuestions() {
+  if (updating) {
+    questions = [];
+    return;
+  }
+  const compute = chosen("role") === "compute";
+  questions = askable.filter((name) => !(compute ? ["domain", "tls"] : ["compute"]).includes(name)
+    && !(fromFolder && name === "reporting") && !(licenseFromFolder && name === "license"));
+}
+
+function refreshTLS() {
+  for (const [kind, block, input] of [["certificate", "certificate-block", "certificate-input"], ["proxy", "proxy-block", "proxy-input"]]) {
+    const picked = chosen("tls") === kind;
+    show(block, picked);
+    $(input).disabled = !picked;
+  }
+}
 
 function go(screen) {
   for (const name of screens) show(name, name === screen);
@@ -60,7 +85,9 @@ async function readiness() {
   const verb = updating ? "updated" : "installed";
   $("check-title").textContent = check.ready ? `This box can be ${verb}` : `This box cannot be ${verb} as it is`;
   if (check.from_folder) {
-    questions = questions.filter((name) => name !== "reporting" && (name !== "license" || !check.license_from_folder));
+    fromFolder = true;
+    licenseFromFolder = check.license_from_folder;
+    refreshQuestions();
     $("from-folder").textContent = `The images come from the folder ut-get was given${check.license_from_folder ? ", and so does the license" : ""}. A box with no network sends no usage reports, so that question is not asked.`;
     show("from-folder");
   }
@@ -73,7 +100,7 @@ async function readiness() {
 
 function showInstalled(installed) {
   updating = true;
-  questions = [];
+  refreshQuestions();
   document.querySelector('.dots li[data-for="running"]').textContent = "Update";
   $("installed-role").textContent = roles[installed.role] || `Platform; its inference comes from ${installed.node || "another box"}`;
   $("installed-address").textContent = installed.address;
@@ -153,15 +180,20 @@ function render(p) {
   $("took").textContent = done ? `in ${Math.max(1, Math.round(p.elapsed / 60))} min` : "";
   $("done-title").textContent = p.update ? "Up to date" : "Installed";
   if (p.update) $("done-next").textContent = "Its accounts, documents and settings are as they were.";
-  show("passwords-warning", !p.update);
-  show("reveal", !p.update && $("secrets").hidden);
+  if (p.compute) {
+    $("done-where").textContent = "This box serves inference at";
+    $("done-next").textContent = "Link the box that runs the platform to it: “Adding a second machine” in docs/certificates-and-dns.md.";
+  }
+  show("passwords-warning", !p.update && !p.compute);
+  show("reveal", !p.update && !p.compute && $("secrets").hidden);
   if (p.update) {
     show("open-block");
     $("open").setAttribute("aria-disabled", "false");
     $("open").tabIndex = 0;
   }
-  $("address").textContent = `https://${p.domain}`;
-  $("address").href = `https://${p.domain}`;
+  $("address").textContent = p.compute ? `https://${p.domain}:8444/v1` : `https://${p.domain}`;
+  if (p.compute) $("address").removeAttribute("href");
+  else $("address").href = `https://${p.domain}`;
   $("open").href = `https://${p.domain}`;
 }
 
@@ -200,7 +232,15 @@ async function install() {
   follow();
 }
 
-$("checked").addEventListener("click", () => go(updating ? "update" : "domain"));
+$("checked").addEventListener("click", () => go(updating ? "update" : questions[0]));
+
+for (const input of document.querySelectorAll("input[name=role]")) {
+  input.addEventListener("change", () => { refreshQuestions(); go("role"); });
+}
+
+for (const input of document.querySelectorAll("input[name=tls]")) {
+  input.addEventListener("change", refreshTLS);
+}
 
 $("update-back").addEventListener("click", () => go("check"));
 
@@ -267,4 +307,5 @@ $("written").addEventListener("change", (event) => {
 });
 $("open").tabIndex = -1;
 
+refreshQuestions();
 follow();

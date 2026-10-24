@@ -101,3 +101,5 @@ dd code { flex: 1; min-height: 44px; display: flex; align-items: center; padding
 label.choice { display: inline-flex; gap: .5rem; align-items: center; margin-top: 1.25rem; }
 .banner + .lead { margin-top: 1.25rem; }
 .banner + .checks { margin-top: 1rem; }
+.detail { margin-top: 1.25rem; }
+.detail label { display: block; font-weight: 600; font-size: 14.5px; margin-bottom: .4rem; }

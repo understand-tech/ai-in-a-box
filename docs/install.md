@@ -106,9 +106,11 @@ step 5. Nothing is installed from a package it cannot verify.
 
 On a box with a screen and a desktop session, `--browser` hands over to
 `ut-setup` instead of `ut-install`. A page shows what `ut-install --check` found,
-then asks the questions one per screen — the address, the license key, the model
-among those `ut-install --list-models` shows proven on this GPU, and usage
-reports:
+then asks the questions one per screen — whether the box runs the whole platform
+or serves its inference to another box, the address, for the whole platform how
+TLS ends (its own certificate, one you supply, or your load balancer — as
+`--certificate-dir` and `--behind-proxy`), the license key, the model among those
+`ut-install --list-models` shows proven on this GPU, and usage reports:
 
 ```bash
 sudo bash ut-get --version "$VERSION" --browser
