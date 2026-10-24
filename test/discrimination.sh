@@ -87,6 +87,10 @@ discriminates "a page that no longer reads the folder's license" \
     "handover-unread:--machine-file" \
     "sed -i.bak 's/flags.String(\"machine-file\"/flags.String(\"license-from\"/' cmd/ut-setup/main.go"
 
+discriminates "a Redis that evicts the keys it holds with a lifetime" \
+    "queue-eviction:redis" \
+    "sed -i.bak 's/maxmemory-policy noeviction/maxmemory-policy volatile-lru/' compose.yaml"
+
 discriminates "a secret given a value by the release" \
     "plaintext-secret:OA_KEY" \
     "printf 'OA_KEY=\"a3f9c1d2e4b8\"\n' >> release.env"

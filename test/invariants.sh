@@ -699,9 +699,9 @@ check_production_defaults() {
             "LOG_LEVEL=${log_level} in release.env — verbose logs on a customer's appliance"
     fi
 
-    if grep -q 'maxmemory-policy allkeys-lru' "$REPO_ROOT/compose.yaml"; then
+    if ! grep -q 'maxmemory-policy noeviction' "$REPO_ROOT/compose.yaml"; then
         report "queue-eviction:redis" \
-            "redis runs allkeys-lru while holding the RQ queues — tasks can be evicted under memory pressure"
+            "redis may evict keys, and it holds the RQ queues and ut-api's session revocations and sign-in counters — any policy but noeviction drops them silently under memory pressure"
     fi
 }
 
