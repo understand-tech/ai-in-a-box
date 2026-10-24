@@ -460,13 +460,13 @@ a_model_engine_is_carried_for_that_model_only() {
     return 1
 }
 
-a_copy_a_registry_refuses_twice_is_tried_a_third_time() {
+a_copy_a_registry_refuses_four_times_is_tried_a_fifth_time() {
     local tries="$WORK_DIR/tries" outcome
     flaky() { echo x >> "$tries"; [[ $(wc -l < "$tries") -ge "$1" ]]; }
     outcome=$( set +u; source "$REPO_ROOT/bin/ut-get"; set +eE; export UT_GET_RETRY_SECONDS=0
-        : > "$tries"; with_retries flaky 3 && echo "third:$(wc -l < "$tries" | tr -d ' ')"
-        : > "$tries"; with_retries flaky 4 || echo "fourth:$(wc -l < "$tries" | tr -d ' ')" )
-    [[ "$outcome" == "$(printf 'third:3\nfourth:3')" ]] && return 0
+        : > "$tries"; with_retries flaky 5 && echo "fifth:$(wc -l < "$tries" | tr -d ' ')"
+        : > "$tries"; with_retries flaky 6 || echo "sixth:$(wc -l < "$tries" | tr -d ' ')" )
+    [[ "$outcome" == "$(printf 'fifth:5\nsixth:5')" ]] && return 0
     echo "retries: ${outcome//$'\n'/, }"
     return 1
 }
@@ -3156,8 +3156,8 @@ if grep -q 'step_images_from_a_folder' "$REPO_ROOT/bin/ut-install"; then
         a_platform_without_its_images_is_refused
     capability "the bill of materials says which role runs each image and each weight" \
         the_bill_says_which_role_runs_each_image
-    capability "a copy a registry refuses twice is tried a third time, and no more" \
-        a_copy_a_registry_refuses_twice_is_tried_a_third_time
+    capability "a copy a registry refuses four times is tried a fifth time, and no more" \
+        a_copy_a_registry_refuses_four_times_is_tried_a_fifth_time
     capability "two models on one engine are one component of the bill, carried for either" \
         two_models_on_one_engine_are_one_component_carried_for_both
     capability "a model's own engine is carried for that model only, with its weights" \

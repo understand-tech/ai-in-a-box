@@ -586,8 +586,8 @@ capability_discriminates "a replaced image judged by its own digest rather than 
     "sed -i.bak 's/grep -qxF \"\\\${released##\\*@}\" <<< \"\\\$digests\"/grep -qxF \"\\\${line##*@}\" <<< \"\\\$digests\"/' bin/ut-install"
 
 capability_discriminates "a copy tried once" \
-    "a copy a registry refuses twice is tried a third time" \
-    "sed -i.bak 's/for attempt in 1 2 3; do/for attempt in 1; do/' bin/ut-get"
+    "a copy a registry refuses four times is tried a fifth time" \
+    "sed -i.bak 's/for attempt in 1 2 3 4 5; do/for attempt in 1; do/' bin/ut-get"
 
 capability_discriminates "an engine listed once for each model it serves" \
     "two models on one engine are one component of the bill" \

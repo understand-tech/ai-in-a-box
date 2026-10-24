@@ -40,6 +40,85 @@ x-public-urls:
   app-assistants-cors: &url-app-assistants-cors ${APP_ASSISTANTS_CORS_ORIGINS:-${UT_PUBLIC_SCHEME:-https}://assistants.${UT_DOMAIN:-understand.local}}
   app-builder:         &url-app-builder         ${APP_BUILDER_BASE_URL:-${UT_PUBLIC_SCHEME:-https}://builder.${UT_DOMAIN:-understand.local}}
 
+# Env vars that api and api-customer, workers and workers-customer, app-llms
+# and app-assistants agree on byte for byte. Each pair's own service keeps
+# only what makes it that service, so a variable added to one side and
+# forgotten on the other shows up as a missing key instead of a silent drift.
+x-api-shared-env: &api-shared-env
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  TYPE_DEPLOIEMENT: ${TYPE_DEPLOIEMENT:-onprem}
+  LOCAL_STORAGE_BASE: ${LOCAL_STORAGE_BASE:-}
+  DB_PROVIDER: ${DB_PROVIDER:-mongodb}
+  STORAGE_PROVIDER: ${STORAGE_PROVIDER:-}
+  openid_scope: ${openid_scope:-}
+  DOMAIN_URL: *url-domain
+  MONGODB_HOST: ${MONGODB_HOST:-mongodb}
+  MONGODB_PORT: ${MONGODB_PORT:-27017}
+  MONGODB_USERNAME: ${MONGODB_USERNAME:?ut-install generates it}
+  MONGODB_PASSWORD: ${MONGODB_PASSWORD:?ut-install generates it}
+  MONGODB_DATABASE: ${MONGODB_DATABASE:-}
+  REDIS_PORT: ${REDIS_PORT:-}
+  REDIS_HOST: ${REDIS_HOST:-}
+  PUBLIC_BASE_URL: *url-public-base
+  REDIRECT_PATH: *url-redirect-path
+  REDIRECT_URI: *url-redirect-uri
+  STATE_SECRET: ${STATE_SECRET:?ut-install generates it}
+  GPU_VM_API_TOKEN: ${GPU_VM_API_TOKEN:?ut-install generates it}
+  GPU_VM_URL: ${GPU_VM_URL:-}
+  ADMIN_MAIL: ${ADMIN_MAIL:-}
+  BACKEND_URL: *url-backend
+  FRONTEND_URL_AUTH: *url-frontend-auth
+  OA_KEY: ${OA_KEY:-}
+  DEPLOY_ENV: ${DEPLOY_ENV:-}
+  VLLM_LLM_BASE_URL: ${VLLM_LLM_BASE_URL:-}
+  VLLM_VLM_BASE_URL: ${VLLM_VLM_BASE_URL:-}
+  VLLM_API_KEY: ${VLLM_API_KEY:-}
+  LLM_FILE_TOKEN_BUDGET: ${LLM_FILE_TOKEN_BUDGET:-}
+  GATEWAY_DEFAULT_MODEL: ${GATEWAY_DEFAULT_MODEL:-}
+  GATEWAY_LLM_SERVED_NAME: ${GATEWAY_LLM_SERVED_NAME:-}
+  GATEWAY_VLM_MODEL: ${GATEWAY_VLM_MODEL:-}
+  GATEWAY_PUBLIC_URL: *url-gateway-public
+  GATEWAY_RPM_PER_KEY: ${GATEWAY_RPM_PER_KEY:-}
+  GATEWAY_MAX_PROMPT_TOKENS: ${GATEWAY_MAX_PROMPT_TOKENS:-}
+  # The app builder's key may name the person behind each call, so each
+  # of its users gets a rate limit of their own.
+  GATEWAY_TRUSTED_PROXY_KEYS: ${GATEWAY_TRUSTED_PROXY_KEYS:-${APP_BUILDER_GATEWAY_API_KEY:-}}
+  GATEWAY_RPM_PER_USER: ${GATEWAY_RPM_PER_USER:-}
+  GATEWAY_RPM_PER_KEY_TOTAL: ${GATEWAY_RPM_PER_KEY_TOTAL:-}
+  GATEWAY_METRICS_TOKEN: ${GATEWAY_METRICS_TOKEN:-}
+  API_KEY_HASH_NEW_KEYS: ${API_KEY_HASH_NEW_KEYS:-}
+  API_KEY_HASH_LAZY_MIGRATION: ${API_KEY_HASH_LAZY_MIGRATION:-}
+  GATEWAY_MODELS: ${GATEWAY_MODELS:-}
+
+x-worker-shared-env: &worker-shared-env
+  DB_PROVIDER: ${DB_PROVIDER:-mongodb}
+  STORAGE_PROVIDER: ${STORAGE_PROVIDER:-}
+  REDIS_HOST: ${REDIS_HOST:-}
+  REDIS_PORT: ${REDIS_PORT:-}
+  MONGODB_HOST: ${MONGODB_HOST:-mongodb}
+  MONGODB_PORT: ${MONGODB_PORT:-27017}
+  MONGODB_USERNAME: ${MONGODB_USERNAME:?ut-install generates it}
+  MONGODB_PASSWORD: ${MONGODB_PASSWORD:?ut-install generates it}
+  MONGODB_DATABASE: ${MONGODB_DATABASE:-}
+  GPU_VM_URL: ${GPU_VM_URL:-}
+  GPU_VM_API_TOKEN: ${GPU_VM_API_TOKEN:?ut-install generates it}
+  DOMAIN_URL: *url-domain
+  FRONTEND_URL_AUTH: *url-frontend-auth
+  ADMIN_MAIL: ${ADMIN_MAIL:-}
+
+x-app-satellite-shared-env: &app-satellite-shared-env
+  MONGODB_HOST: ${MONGODB_HOST:-mongodb}
+  MONGODB_PORT: ${MONGODB_PORT:-27017}
+  MONGODB_USERNAME: ${MONGODB_USERNAME:?ut-install generates it}
+  MONGODB_PASSWORD: ${MONGODB_PASSWORD:?ut-install generates it}
+  VITE_DB_PROVIDER: ${DB_PROVIDER:-mongodb}
+  VITE_API_BASE_URL: *url-vite-api-base
+  VITE_UT_APP_URL: *url-vite-ut-app
+  UT_APP_BASE_URL: http://api:8501/api
+  UT_CUSTOMER_URL: http://api-customer:8501
+  UNDERSTAND_API_VERSION: ${UNDERSTAND_API_VERSION:-v3}
+  UT_JWT_SECRET: ${JWT_SECRET:?ut-install generates it}
+
 services:
 
   caddy:
@@ -314,53 +393,10 @@ services:
     expose:
       - "8501"
     environment:
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      TYPE_DEPLOIEMENT: ${TYPE_DEPLOIEMENT:-onprem}
-      LOCAL_STORAGE_BASE: ${LOCAL_STORAGE_BASE:-}
-      DB_PROVIDER: ${DB_PROVIDER:-mongodb}
-      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-}
-      openid_scope: ${openid_scope:-}
-      DOMAIN_URL: *url-domain
-      MONGODB_HOST: ${MONGODB_HOST:-mongodb}
-      MONGODB_PORT: ${MONGODB_PORT:-27017}
-      MONGODB_USERNAME: ${MONGODB_USERNAME:?ut-install generates it}
-      MONGODB_PASSWORD: ${MONGODB_PASSWORD:?ut-install generates it}
-      MONGODB_DATABASE: ${MONGODB_DATABASE:-}
-      REDIS_PORT: ${REDIS_PORT:-}
-      REDIS_HOST: ${REDIS_HOST:-}
-      PUBLIC_BASE_URL: *url-public-base
-      REDIRECT_PATH: *url-redirect-path
-      REDIRECT_URI: *url-redirect-uri
-      STATE_SECRET: ${STATE_SECRET:?ut-install generates it}
-      GPU_VM_API_TOKEN: ${GPU_VM_API_TOKEN:?ut-install generates it}
-      GPU_VM_URL: ${GPU_VM_URL:-}
-      ADMIN_MAIL: ${ADMIN_MAIL:-}
-      BACKEND_URL: *url-backend
-      FRONTEND_URL_AUTH: *url-frontend-auth
+      <<: *api-shared-env
       ADMIN_SETUP_PASSWORD: ${ADMIN_SETUP_PASSWORD:-}
-      OA_KEY: ${OA_KEY:-}
-      DEPLOY_ENV: ${DEPLOY_ENV:-}
       EXTRA_ALLOWED_ORIGINS: *url-allowed-origins
       JWT_SECRET: ${JWT_SECRET:?ut-install generates it}
-      VLLM_LLM_BASE_URL: ${VLLM_LLM_BASE_URL:-}
-      VLLM_VLM_BASE_URL: ${VLLM_VLM_BASE_URL:-}
-      VLLM_API_KEY: ${VLLM_API_KEY:-}
-      LLM_FILE_TOKEN_BUDGET: ${LLM_FILE_TOKEN_BUDGET:-}
-      GATEWAY_DEFAULT_MODEL: ${GATEWAY_DEFAULT_MODEL:-}
-      GATEWAY_LLM_SERVED_NAME: ${GATEWAY_LLM_SERVED_NAME:-}
-      GATEWAY_VLM_MODEL: ${GATEWAY_VLM_MODEL:-}
-      GATEWAY_PUBLIC_URL: *url-gateway-public
-      GATEWAY_RPM_PER_KEY: ${GATEWAY_RPM_PER_KEY:-}
-      GATEWAY_MAX_PROMPT_TOKENS: ${GATEWAY_MAX_PROMPT_TOKENS:-}
-      # The app builder's key may name the person behind each call, so each
-      # of its users gets a rate limit of their own.
-      GATEWAY_TRUSTED_PROXY_KEYS: ${GATEWAY_TRUSTED_PROXY_KEYS:-${APP_BUILDER_GATEWAY_API_KEY:-}}
-      GATEWAY_RPM_PER_USER: ${GATEWAY_RPM_PER_USER:-}
-      GATEWAY_RPM_PER_KEY_TOTAL: ${GATEWAY_RPM_PER_KEY_TOTAL:-}
-      GATEWAY_METRICS_TOKEN: ${GATEWAY_METRICS_TOKEN:-}
-      API_KEY_HASH_NEW_KEYS: ${API_KEY_HASH_NEW_KEYS:-}
-      API_KEY_HASH_LAZY_MIGRATION: ${API_KEY_HASH_LAZY_MIGRATION:-}
-      GATEWAY_MODELS: ${GATEWAY_MODELS:-}
       APP_BUILDER_BASE_URL: *url-app-builder
     volumes:
       - uploads-data:/tmp/uploads
@@ -397,23 +433,10 @@ services:
     restart: unless-stopped
     command: ["sh", "-c", "rq worker --url redis://redis:6379 ut-api"]
     environment:
+      <<: *worker-shared-env
       TYPE_DEPLOIEMENT: ${TYPE_DEPLOIEMENT:-onprem}
       BACKEND_URL: *url-backend
       LOCAL_STORAGE_BASE: ${LOCAL_STORAGE_BASE:-}
-      DB_PROVIDER: ${DB_PROVIDER:-mongodb}
-      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-}
-      REDIS_HOST: ${REDIS_HOST:-}
-      REDIS_PORT: ${REDIS_PORT:-}
-      MONGODB_HOST: ${MONGODB_HOST:-mongodb}
-      MONGODB_PORT: ${MONGODB_PORT:-27017}
-      MONGODB_USERNAME: ${MONGODB_USERNAME:?ut-install generates it}
-      MONGODB_PASSWORD: ${MONGODB_PASSWORD:?ut-install generates it}
-      MONGODB_DATABASE: ${MONGODB_DATABASE:-}
-      GPU_VM_URL: ${GPU_VM_URL:-}
-      GPU_VM_API_TOKEN: ${GPU_VM_API_TOKEN:?ut-install generates it}
-      DOMAIN_URL: *url-domain
-      FRONTEND_URL_AUTH: *url-frontend-auth
-      ADMIN_MAIL: ${ADMIN_MAIL:-}
     volumes:
       - uploads-data:/tmp/uploads
       - ${DATA_ROOT:-/var/lib/understandtech}/app-data:/app/storage
@@ -487,51 +510,8 @@ services:
     expose:
       - "8501"
     environment:
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      TYPE_DEPLOIEMENT: ${TYPE_DEPLOIEMENT:-onprem}
-      LOCAL_STORAGE_BASE: ${LOCAL_STORAGE_BASE:-}
-      DB_PROVIDER: ${DB_PROVIDER:-mongodb}
-      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-}
-      openid_scope: ${openid_scope:-}
-      DOMAIN_URL: *url-domain
-      MONGODB_HOST: ${MONGODB_HOST:-mongodb}
-      MONGODB_PORT: ${MONGODB_PORT:-27017}
-      MONGODB_USERNAME: ${MONGODB_USERNAME:?ut-install generates it}
-      MONGODB_PASSWORD: ${MONGODB_PASSWORD:?ut-install generates it}
-      MONGODB_DATABASE: ${MONGODB_DATABASE:-}
-      REDIS_PORT: ${REDIS_PORT:-}
-      REDIS_HOST: ${REDIS_HOST:-}
-      PUBLIC_BASE_URL: *url-public-base
-      REDIRECT_PATH: *url-redirect-path
-      REDIRECT_URI: *url-redirect-uri
-      STATE_SECRET: ${STATE_SECRET:?ut-install generates it}
-      GPU_VM_API_TOKEN: ${GPU_VM_API_TOKEN:?ut-install generates it}
-      GPU_VM_URL: ${GPU_VM_URL:-}
-      ADMIN_MAIL: ${ADMIN_MAIL:-}
-      BACKEND_URL: *url-backend
-      FRONTEND_URL_AUTH: *url-frontend-auth
-      OA_KEY: ${OA_KEY:-}
+      <<: *api-shared-env
       SENDGRID_API_KEY: ${SENDGRID_API_KEY:-}
-      DEPLOY_ENV: ${DEPLOY_ENV:-}
-      VLLM_LLM_BASE_URL: ${VLLM_LLM_BASE_URL:-}
-      VLLM_VLM_BASE_URL: ${VLLM_VLM_BASE_URL:-}
-      VLLM_API_KEY: ${VLLM_API_KEY:-}
-      LLM_FILE_TOKEN_BUDGET: ${LLM_FILE_TOKEN_BUDGET:-}
-      GATEWAY_DEFAULT_MODEL: ${GATEWAY_DEFAULT_MODEL:-}
-      GATEWAY_LLM_SERVED_NAME: ${GATEWAY_LLM_SERVED_NAME:-}
-      GATEWAY_VLM_MODEL: ${GATEWAY_VLM_MODEL:-}
-      GATEWAY_PUBLIC_URL: *url-gateway-public
-      GATEWAY_RPM_PER_KEY: ${GATEWAY_RPM_PER_KEY:-}
-      GATEWAY_MAX_PROMPT_TOKENS: ${GATEWAY_MAX_PROMPT_TOKENS:-}
-      # The app builder's key may name the person behind each call, so each
-      # of its users gets a rate limit of their own.
-      GATEWAY_TRUSTED_PROXY_KEYS: ${GATEWAY_TRUSTED_PROXY_KEYS:-${APP_BUILDER_GATEWAY_API_KEY:-}}
-      GATEWAY_RPM_PER_USER: ${GATEWAY_RPM_PER_USER:-}
-      GATEWAY_RPM_PER_KEY_TOTAL: ${GATEWAY_RPM_PER_KEY_TOTAL:-}
-      GATEWAY_METRICS_TOKEN: ${GATEWAY_METRICS_TOKEN:-}
-      API_KEY_HASH_NEW_KEYS: ${API_KEY_HASH_NEW_KEYS:-}
-      API_KEY_HASH_LAZY_MIGRATION: ${API_KEY_HASH_LAZY_MIGRATION:-}
-      GATEWAY_MODELS: ${GATEWAY_MODELS:-}
     volumes:
       - uploads-data:/tmp/uploads
       - ${DATA_ROOT:-/var/lib/understandtech}/app-data:/app/storage
@@ -566,21 +546,8 @@ services:
     restart: unless-stopped
     command: ["sh", "-c", "rq worker --url redis://redis:6379 ut-api-partners"]
     environment:
-      DB_PROVIDER: ${DB_PROVIDER:-mongodb}
-      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-}
-      REDIS_HOST: ${REDIS_HOST:-}
-      REDIS_PORT: ${REDIS_PORT:-}
-      MONGODB_HOST: ${MONGODB_HOST:-mongodb}
-      MONGODB_PORT: ${MONGODB_PORT:-27017}
-      MONGODB_USERNAME: ${MONGODB_USERNAME:?ut-install generates it}
-      MONGODB_PASSWORD: ${MONGODB_PASSWORD:?ut-install generates it}
-      MONGODB_DATABASE: ${MONGODB_DATABASE:-}
-      GPU_VM_URL: ${GPU_VM_URL:-}
-      GPU_VM_API_TOKEN: ${GPU_VM_API_TOKEN:?ut-install generates it}
-      DOMAIN_URL: *url-domain
-      FRONTEND_URL_AUTH: *url-frontend-auth
+      <<: *worker-shared-env
       GROQ_API_KEY: ${GROQ_API_KEY:-}
-      ADMIN_MAIL: ${ADMIN_MAIL:-}
     volumes:
       - uploads-data:/tmp/uploads
       - ${DATA_ROOT:-/var/lib/understandtech}/app-data:/app/storage
@@ -619,18 +586,8 @@ services:
     expose:
       - "80"
     environment:
-      MONGODB_HOST: ${MONGODB_HOST:-mongodb}
-      MONGODB_PORT: ${MONGODB_PORT:-27017}
-      MONGODB_USERNAME: ${MONGODB_USERNAME:?ut-install generates it}
-      MONGODB_PASSWORD: ${MONGODB_PASSWORD:?ut-install generates it}
+      <<: *app-satellite-shared-env
       MONGODB_DB: ${APP_LLMS_MONGODB_DB:-ut-app-llms}
-      VITE_DB_PROVIDER: ${DB_PROVIDER:-mongodb}
-      VITE_API_BASE_URL: *url-vite-api-base
-      VITE_UT_APP_URL: *url-vite-ut-app
-      UT_APP_BASE_URL: http://api:8501/api
-      UT_CUSTOMER_URL: http://api-customer:8501
-      UNDERSTAND_API_VERSION: ${UNDERSTAND_API_VERSION:-v3}
-      UT_JWT_SECRET: ${JWT_SECRET:?ut-install generates it}
       UT_APP_LLMS_BASE_URL: *url-app-llms
       CORS_ORIGINS: *url-app-llms-cors
     networks:
@@ -661,18 +618,8 @@ services:
     expose:
       - "80"
     environment:
-      MONGODB_HOST: ${MONGODB_HOST:-mongodb}
-      MONGODB_PORT: ${MONGODB_PORT:-27017}
-      MONGODB_USERNAME: ${MONGODB_USERNAME:?ut-install generates it}
-      MONGODB_PASSWORD: ${MONGODB_PASSWORD:?ut-install generates it}
+      <<: *app-satellite-shared-env
       MONGO_DB: ${APP_ASSISTANTS_MONGODB_DB:-ut-app-assistants}
-      VITE_DB_PROVIDER: ${DB_PROVIDER:-mongodb}
-      VITE_API_BASE_URL: *url-vite-api-base
-      VITE_UT_APP_URL: *url-vite-ut-app
-      UT_APP_BASE_URL: http://api:8501/api
-      UT_CUSTOMER_URL: http://api-customer:8501
-      UNDERSTAND_API_VERSION: ${UNDERSTAND_API_VERSION:-v3}
-      UT_JWT_SECRET: ${JWT_SECRET:?ut-install generates it}
       UT_APP_ASSISTANTS_BASE_URL: *url-app-assistants
       CORS_ORIGINS: *url-app-assistants-cors
     volumes:
