@@ -87,6 +87,10 @@ discriminates "a page that no longer reads the folder's license" \
     "handover-unread:--machine-file" \
     "sed -i.bak 's/flags.String(\"machine-file\"/flags.String(\"license-from\"/' cmd/ut-setup/main.go"
 
+discriminates "a volume declared and mounted by no service" \
+    "volume-mounted-nowhere:metrics-data" \
+    "sed -i.bak '/- metrics-data:/d' compose.yaml"
+
 discriminates "a secret given a value by the release" \
     "plaintext-secret:OA_KEY" \
     "printf 'OA_KEY=\"a3f9c1d2e4b8\"\n' >> release.env"

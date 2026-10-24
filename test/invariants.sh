@@ -391,6 +391,16 @@ check_every_setting_reaches_something() {
     done <<< "$(env_keys)"
 }
 
+check_every_volume_is_mounted() {
+    local volume
+    while read -r volume; do
+        [[ -n "$volume" ]] || continue
+        grep -qE "^[[:space:]]+- ${volume}:" "$REPO_ROOT"/compose*.yaml \
+            || report "volume-mounted-nowhere:${volume}" \
+                "compose.yaml declares the volume ${volume} and no service mounts it: every box keeps it, nothing fills it"
+    done <<< "$(awk '/^volumes:/ { inside = 1; next } /^[^[:space:]#]/ { inside = 0 } inside && /^  [a-z][a-z0-9-]*:/ { sub(/^  /, ""); sub(/:.*/, ""); print }' "$REPO_ROOT/compose.yaml")"
+}
+
 check_defaults_do_not_diverge() {
     local key defaults count
     while read -r key; do
@@ -834,6 +844,7 @@ main() {
     check_every_service_declares_a_healthcheck
     check_the_first_backup_is_not_deferred_to_a_clock_time
     check_every_setting_reaches_something
+    check_every_volume_is_mounted
     check_the_gateway_trusts_the_app_builder_key
     check_defaults_do_not_diverge
     check_required_variables_appear_in_the_template
