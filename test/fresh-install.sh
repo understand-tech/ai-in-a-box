@@ -258,6 +258,10 @@ state_setup() {
         # past, and it needs no stub around date, which everything else uses.
         clock_before_the_release)
             echo "sed -i 's|^UT_RELEASE_BUILT_AT=.*|UT_RELEASE_BUILT_AT=\"4102444800\"|' /usr/share/understandtech/release.env" ;;
+        # What an earlier install leaves in the settings, secrets included, looked at
+        # by the check the page runs first.
+        installed_and_checked)
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'UT_DOMAIN="carried.example"\nUT_RELEASE_VERSION="2026.10.0-rc16"\nUT_MODEL="qwen3.8-27b-nvfp4"\nJWT_SECRET="neverinanevent0123456789abcdef0123456789abcd"\n'"'"' > /etc/understandtech/.env && printf '"'"'UT1-license-never-in-an-event\n'"'"' > /etc/understandtech/license' ;;
         orphan_volume) echo ': # the volume is asserted through the stub' ;;
         volume_with_shipped_password)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'MONGODB_USERNAME="mongoadmin"\nMONGODB_PASSWORD="12345678"\n'"'"' > /etc/understandtech/local.env' ;;
@@ -736,6 +740,17 @@ tls_ends_at_the_given_proxy() {
         && grep -qx 'UT_TRUSTED_PROXIES="10.42.0.0/16"' <<< "$settings" && return 0
     echo "$settings"
     output_of behind_a_proxy | tail -5
+    return 1
+}
+
+the_check_says_what_is_installed_and_no_secret() {
+    local events
+    events=$(of_state installed_and_checked events.jsonl)
+    grep -q '"event":"installed","role":"appliance","address":"carried.example"' <<< "$events" \
+        && grep -q '"model":"qwen3.8-27b-nvfp4"' <<< "$events" && grep -q '"licensed":true' <<< "$events" \
+        && grep -q "\"installed\":\"2026.10.0-rc16\",\"release\":\"${VERSION}" <<< "$events" \
+        && ! grep -qE 'neverinanevent|UT1-license' <<< "$events" && return 0
+    grep '"installed"' <<< "$events" || output_of installed_and_checked | tail -5
     return 1
 }
 
@@ -1337,6 +1352,7 @@ WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --inference-from http
 PULL_EXIT=0 INSTALL_COMMAND="ut-install --compute 192.0.2.10" \
     run_install_from_state compute_by_flag -
 INSTALL_COMMAND="ut-install --compute node.local" run_install_from_state compute_named_by_mdns
+INSTALL_COMMAND="ut-install --check --events /w/installed_and_checked/events.jsonl" run_install_from_state installed_and_checked -
 WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --certificate-dir /w/certs/good" run_install_from_state certificate_given
 WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --certificate-dir /w/certs/short" run_install_from_state certificate_short
 WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --certificate-dir /w/certs/with_another_key" run_install_from_state certificate_with_another_key
@@ -1467,6 +1483,8 @@ property "a node reached over plain http is refused before anything is written" 
     a_compute_node_over_http_is_refused
 property "a node named by mDNS is refused before anything is written" \
     refused_before_anything_is_written pointed_at_an_mdns_node "names a .local host"
+property "the check says what an installed box runs, and none of its secrets" \
+    the_check_says_what_is_installed_and_no_secret
 property "a certificate given to the installer is the one the front door serves" \
     tls_ends_with_the_given_certificate
 property "a certificate that misses a name is refused before anything is written" \

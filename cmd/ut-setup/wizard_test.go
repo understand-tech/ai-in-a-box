@@ -585,3 +585,55 @@ func TestAModelThisBoxDoesNotListInstallsNothing(t *testing.T) {
 		}
 	}
 }
+
+func installedHere() Event {
+	return Event{V: eventsVersion, Event: "installed", Role: "appliance", Address: "box.example.com", Model: "qwen3.8-27b-nvfp4",
+		Reporting: true, Licensed: true, Installed: "2026.10.0-rc16", Release: "2026.10.0-rc17"}
+}
+
+func TestAnInstalledBoxIsUpdatedAsItIsWithNoAnswerPassed(t *testing.T) {
+	fake := &fakeInstall{events: []Event{installedHere(), said("ok", "System ready")}}
+	b := newBox(t, fake)
+	b.signIn()
+	installed := b.readiness().Installed
+	if installed == nil || installed.Address != "box.example.com" || installed.Installed != "2026.10.0-rc16" || installed.Release != "2026.10.0-rc17" || !installed.Licensed {
+		t.Fatalf("the installation read as %+v", installed)
+	}
+	if status := b.post("/update", url.Values{}, b.server.URL).StatusCode; status != http.StatusAccepted {
+		t.Fatalf("the update got %d", status)
+	}
+	progress := b.waitForTheEnd()
+	if !progress.Update || progress.Domain != "box.example.com" {
+		t.Fatalf("the update reported %+v", progress)
+	}
+	calls := fake.called()
+	if last := calls[len(calls)-1]; len(last) != 0 {
+		t.Fatalf("the update passed %v, which would replace what the box runs", last)
+	}
+}
+
+func TestAnInstalledBoxRefusesAnswersThatWouldReplaceItsSettings(t *testing.T) {
+	fake := &fakeInstall{events: []Event{installedHere(), said("ok", "System ready")}}
+	b := newBox(t, fake)
+	b.signIn()
+	b.readiness()
+	response := b.answer(url.Values{"domain": {"understand.local"}, "license": {"UT1-key"}, "reporting": {"no"}})
+	response.Body.Close()
+	if response.StatusCode != http.StatusConflict || len(fake.called()) != 1 {
+		t.Fatalf("answers on an installed box got %d after %d calls", response.StatusCode, len(fake.called()))
+	}
+}
+
+func TestABoxWithNothingInstalledHasNothingToUpdate(t *testing.T) {
+	fake := &fakeInstall{events: []Event{said("ok", "System ready")}}
+	b := newBox(t, fake)
+	b.signIn()
+	if b.readiness().Installed != nil {
+		t.Fatal("a fresh box read as installed")
+	}
+	response := b.post("/update", url.Values{}, b.server.URL)
+	response.Body.Close()
+	if response.StatusCode != http.StatusConflict || len(fake.called()) != 1 {
+		t.Fatalf("an update of nothing got %d after %d calls", response.StatusCode, len(fake.called()))
+	}
+}

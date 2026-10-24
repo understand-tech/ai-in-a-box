@@ -11,6 +11,7 @@ type Progress struct {
 	Running   bool      `json:"running"`
 	Finished  bool      `json:"finished"`
 	Succeeded bool      `json:"succeeded"`
+	Update    bool      `json:"update"`
 	Domain    string    `json:"domain"`
 	Step      string    `json:"step"`
 	Steps     []string  `json:"steps"`

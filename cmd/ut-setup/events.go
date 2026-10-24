@@ -26,6 +26,14 @@ type Event struct {
 	Size           string `json:"size"`
 	License        string `json:"license"`
 	RunsItsOwnCode bool   `json:"runs_its_own_code"`
+	Role           string `json:"role"`
+	Address        string `json:"address"`
+	Node           string `json:"node"`
+	Model          string `json:"model"`
+	Reporting      bool   `json:"reporting_decided"`
+	Licensed       bool   `json:"licensed"`
+	Installed      string `json:"installed"`
+	Release        string `json:"release"`
 }
 
 type Message struct {

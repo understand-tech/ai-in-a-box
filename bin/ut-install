@@ -358,6 +358,29 @@ role_this_machine_was_installed_as() {
     fi
 }
 
+# What ut-setup needs to offer an update instead of a fresh install. Settings
+# and versions only: no key, no password, no license.
+say_what_is_installed() {
+    local env_file="$INSTALL_DIR/.env" address role node="" model reporting=false licensed=false installed release
+    address=$(env_get "$env_file" UT_DOMAIN 2>/dev/null || true)
+    [[ -n "$address" ]] || return 0
+    if this_machine_is_a_compute_node; then
+        role=compute
+    elif ! the_inference_url_names_a_service_this_machine_will_not_run || the_inference_is_served_by_another_machine; then
+        role=control-plane
+        node=$(env_get "$env_file" VLLM_LLM_BASE_URL 2>/dev/null || true)
+    else
+        role=appliance
+    fi
+    model=$(env_get "$env_file" UT_MODEL 2>/dev/null || true)
+    command -v "$UT_SEND" >/dev/null 2>&1 && reporting_already_decided && reporting=true
+    [[ -s "$LICENSE_STORE" ]] && licensed=true
+    installed=$(env_get "$env_file" UT_RELEASE_VERSION 2>/dev/null || true)
+    release=$(env_get "$INSTALL_DIR/release.env" UT_RELEASE_VERSION 2>/dev/null || true)
+    log_info "Installed here: ${role} at ${address}, release ${installed:-unknown}; this package is ${release:-unknown}"
+    say_event installed ",\"role\":$(json_string "$role"),\"address\":$(json_string "$address"),\"node\":$(json_string "$node"),\"model\":$(json_string "$model"),\"reporting_decided\":${reporting},\"licensed\":${licensed},\"installed\":$(json_string "$installed"),\"release\":$(json_string "$release")"
+}
+
 an_accelerator_answers() {
     command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1
 }
@@ -2675,6 +2698,7 @@ main() {
 
     if [[ "$ACTION" == "check" ]]; then
         DOMAIN=$(domain_to_check)
+        say_what_is_installed
         preflight
         exit 0
     fi
