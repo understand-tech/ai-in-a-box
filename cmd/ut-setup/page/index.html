@@ -15,7 +15,10 @@
 <ol class="dots" aria-label="Installation steps">
   <li data-for="check">Check this box</li>
   <li data-for="update" hidden>Update</li>
+  <li data-for="role">Role</li>
   <li data-for="domain">Address</li>
+  <li data-for="compute">Address</li>
+  <li data-for="tls">Certificate</li>
   <li data-for="license">License key</li>
   <li data-for="model">Model</li>
   <li data-for="reporting">Usage reports</li>
@@ -49,16 +52,54 @@
 </section>
 
 <form id="answers" novalidate>
+  <section id="role" class="screen" hidden>
+    <p class="count">Question</p>
+    <h1 id="role-title">What this box will do</h1>
+    <div class="options" role="radiogroup" aria-labelledby="role-title">
+      <label class="option"><input type="radio" name="role" value="complete" checked><span><b>The whole platform</b><small>People open it in their browser, and it runs its own model.</small></span></label>
+      <label class="option"><input type="radio" name="role" value="compute"><span><b>Inference only, for another box</b><small>Serves its GPU to the box that runs the platform. No platform and no admin password here.</small></span></label>
+    </div>
+    <div class="nav"><button type="button" class="back">Back</button><button class="primary">Continue</button></div>
+  </section>
+
   <section id="domain" class="screen" hidden>
-    <p class="count">Question 1 of 4</p>
+    <p class="count">Question</p>
     <h1><label for="domain-input">The address people will open</label></h1>
     <p class="lead">Keep <code>understand.local</code> on a single network with no DNS server. With one, use a name in your zone, such as <code>ai.example.com</code>, and publish it and <code>*.ai.example.com</code> pointing at this box.</p>
     <input id="domain-input" name="domain" required value="understand.local" autocomplete="off" spellcheck="false">
     <div class="nav"><button type="button" class="back">Back</button><button class="primary">Continue</button></div>
   </section>
 
+  <section id="compute" class="screen" hidden>
+    <p class="count">Question</p>
+    <h1><label for="compute-input">The address the platform reaches this box at</label></h1>
+    <p class="lead">An IP address or a DNS name the other box can reach. Never a <code>.local</code> name: the platform's containers cannot resolve it.</p>
+    <input id="compute-input" name="compute_address" required autocomplete="off" spellcheck="false" placeholder="10.0.0.12">
+    <div class="nav"><button type="button" class="back">Back</button><button class="primary">Continue</button></div>
+  </section>
+
+  <section id="tls" class="screen" hidden>
+    <p class="count">Question</p>
+    <h1 id="tls-title">How browsers reach it securely</h1>
+    <p class="lead">Leave it to this box unless you were given a certificate, or a load balancer sits in front of it.</p>
+    <div class="options" role="radiogroup" aria-labelledby="tls-title">
+      <label class="option"><input type="radio" name="tls" value="internal" checked><span><b>This box signs its own certificate</b><small>Nothing to prepare. Browsers warn until each machine installs its root, or until ut-certificate obtains a public one.</small></span></label>
+      <label class="option"><input type="radio" name="tls" value="certificate"><span><b>A certificate you supply</b><small>fullchain.pem and privkey.pem in a folder on this box, checked before anything is written.</small></span></label>
+      <label class="option"><input type="radio" name="tls" value="proxy"><span><b>Your load balancer terminates TLS</b><small>This box serves it plain HTTP, and believes the addresses it forwards from its range only.</small></span></label>
+    </div>
+    <div id="certificate-block" class="detail" hidden>
+      <label for="certificate-input">The folder on this box</label>
+      <input id="certificate-input" name="certificate_dir" required disabled autocomplete="off" spellcheck="false" placeholder="/etc/understandtech/certs">
+    </div>
+    <div id="proxy-block" class="detail" hidden>
+      <label for="proxy-input">The range your load balancer connects from</label>
+      <input id="proxy-input" name="proxy_ranges" required disabled autocomplete="off" spellcheck="false" placeholder="10.42.0.0/16">
+    </div>
+    <div class="nav"><button type="button" class="back">Back</button><button class="primary">Continue</button></div>
+  </section>
+
   <section id="license" class="screen" hidden>
-    <p class="count">Question 2 of 4</p>
+    <p class="count">Question</p>
     <h1><label for="license-input">The license key UnderstandTech sent</label></h1>
     <p class="lead">Paste it as it came, on one line. It stays on this box.</p>
     <div class="secret-input">
@@ -69,7 +110,7 @@
   </section>
 
   <section id="model" class="screen" hidden>
-    <p class="count">Question 3 of 4 · optional</p>
+    <p class="count">Question</p>
     <h1 id="model-title">The model this box serves</h1>
     <p class="lead">Only the models proven on this box's GPU are offered.</p>
     <div id="models" class="options" role="radiogroup" aria-labelledby="model-title">
@@ -79,7 +120,7 @@
   </section>
 
   <section id="reporting" class="screen" hidden>
-    <p class="count">Question 4 of 4</p>
+    <p class="count">Question</p>
     <h1 id="reporting-title">Send UnderstandTech usage reports?</h1>
     <p class="lead">How loaded the box was and how many people it served — counts, never content, never who. Answer no on a box with no Internet.</p>
     <div class="segmented" role="radiogroup" aria-labelledby="reporting-title">
@@ -116,7 +157,7 @@
 <section id="done" class="screen" hidden>
   <div class="done-mark" aria-hidden="true">✓</div>
   <h1><span id="done-title">Installed</span> <span id="took"></span></h1>
-  <p class="lead">The platform answers at <a id="address"></a>. <span id="done-next">The initial admin password opens its first-run wizard: models, sign-on, data sources.</span></p>
+  <p class="lead"><span id="done-where">The platform answers at</span> <a id="address"></a>. <span id="done-next">The initial admin password opens its first-run wizard: models, sign-on, data sources.</span></p>
   <p id="passwords-warning" class="banner warning">Two passwords are shown once, here, and nowhere else. Without the backup password, no backup can ever be read.</p>
   <button type="button" id="reveal" class="primary">Show the passwords</button>
   <dl id="secrets" hidden>
