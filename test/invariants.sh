@@ -123,22 +123,6 @@ check_compose_declares_no_secret_default() {
     done
 }
 
-# A variable falling back to one value in one service and another elsewhere is
-# a difference nobody chose. MONGODB_HOST read `mongodb` for the App Builder and
-# the empty string for the seven services in compose.yaml, so an .env without
-# that line started them against a database host of "".
-check_healthcheck_asks_for_a_certified_name() {
-    local url host names
-    url=$(grep -h 'step", "ca", "health"' "${COMPOSE_FILES[@]}" 2>/dev/null \
-        | grep -oE 'https://[^"]+' | head -1) || return 0
-    [[ -n "$url" ]] || return 0
-    host=${url#https://}; host=${host%%:*}
-    names=$(grep -h 'DOCKER_STEPCA_INIT_DNS_NAMES' "${COMPOSE_FILES[@]}" 2>/dev/null) || return 0
-    grep -q "[ ,:]${host}\(,\|$\)" <<< "$names" && return 0
-    report "healthcheck-name-not-certified:${host}" \
-        "the authority's healthcheck asks for ${host}, which DOCKER_STEPCA_INIT_DNS_NAMES does not list — it can never pass, and everything waiting on it stops"
-}
-
 seconds_in_duration() {
     local duration=$1 number=${1%[a-z]}
     case "$duration" in
@@ -397,6 +381,10 @@ check_every_volume_is_mounted() {
     done <<< "$(awk '/^volumes:/ { inside = 1; next } /^[^[:space:]#]/ { inside = 0 } inside && /^  [a-z][a-z0-9-]*:/ { sub(/^  /, ""); sub(/:.*/, ""); print }' "$REPO_ROOT/compose.yaml")"
 }
 
+# A variable falling back to one value in one service and another elsewhere is
+# a difference nobody chose. MONGODB_HOST read `mongodb` for the App Builder and
+# the empty string for the seven services in compose.yaml, so an .env without
+# that line started them against a database host of "".
 check_defaults_do_not_diverge() {
     local key defaults count
     while read -r key; do
@@ -834,7 +822,6 @@ main() {
     check_ut_setup_reads_what_ut_get_hands_it
     check_release_env_ships_no_secret
     check_compose_declares_no_secret_default
-    check_healthcheck_asks_for_a_certified_name
     check_no_service_starts_slower_than_the_installer_waits
     check_every_service_declares_its_role
     check_every_service_declares_a_healthcheck

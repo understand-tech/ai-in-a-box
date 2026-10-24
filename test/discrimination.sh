@@ -117,12 +117,6 @@ discriminates "the App Builder's token key defaulted in its overlay" \
     "compose-secret-default:APP_BUILDER_TOKEN_ENCRYPTION_KEY" \
     "sed -i.bak 's|\${APP_BUILDER_TOKEN_ENCRYPTION_KEY:-}|\${APP_BUILDER_TOKEN_ENCRYPTION_KEY:-shipped-value}|' compose.appbuilder.yaml"
 
-if grep -q 'check_healthcheck_asks_for_a_certified_name' "$REPO_ROOT/test/invariants.sh"; then
-    discriminates "a healthcheck asking for a name the certificate does not carry" \
-        "healthcheck-name-not-certified:localhost" \
-        "sed -i.bak 's|https://step-ca:9000|https://localhost:9000|' compose.yaml"
-fi
-
 if grep -q 'check_no_service_starts_slower_than_the_installer_waits' "$REPO_ROOT/test/invariants.sh"; then
     discriminates "a service given longer to start than the install waits" \
         "start-period-outlasts-the-install:mongodb-backup" \
@@ -407,10 +401,6 @@ capability_discriminates "a builder that waits for an llm a panel does not run" 
     "the App Builder renders on a machine without a GPU" \
     "sed -i.bak '/^        required: false\$/d' compose.appbuilder.yaml"
 
-capability_discriminates "the authority removed from the stack" \
-    "the appliance runs its own certificate authority" \
-    "sed -i.bak 's|^  step-ca:|  step-ca:\n    profiles: [\"never-enabled\"]|' compose.yaml"
-
 capability_discriminates "the recorder left out where an engine runs" \
     "a machine that runs an engine records its load" \
     "sed -i.bak 's|^  metrics:\$|  metrics:\n    profiles: [\"never-enabled\"]|' compose.yaml"
@@ -540,14 +530,6 @@ if grep -q 'install_status_timer' "$REPO_ROOT/setup-autostart.sh"; then
         "removing the units removes the status check" \
         "sed -i.bak '/rm -f .*STATUS_TIMER_FILE/d' setup-autostart.sh"
 fi
-
-capability_discriminates "the authority root moved out of the backed-up path" \
-    "its root sits where the file backup looks" \
-    "sed -i.bak 's|\${DATA_ROOT:-/var/lib/understandtech}/ca:/home/step|step-ca-data:/home/step|' compose.yaml"
-
-capability_discriminates "the machine surface pointed at something else" \
-    "the machine-facing surface takes its certificate from that authority" \
-    "sed -i.bak 's|step-ca:9000/acme|acme-v02.api.letsencrypt.org|' caddy/internal-surface.caddy"
 
 capability_discriminates "a folder image taken without proving it is the one the release names" \
     "a folder holding an image the release does not name is refused" \
@@ -1366,10 +1348,6 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
     install_walk_discriminates "a role read from the overlay rather than from where generation comes from" \
         "the summary says where generation comes from" \
         "sed -i.bak 's|printf .control plane — generation comes from %s.|printf \"appliance — inference runs on this machine\"|' bin/ut-install"
-
-    install_walk_discriminates "a compute node held to an authority it does not run" \
-        "a compute node installs to the end, with no authority of its own" \
-        "sed -i.bak '/^step_certificate_policy() {\$/,/^    fi\$/ s|this_machine_is_a_compute_node|false|' bin/ut-install"
 
     install_walk_discriminates "a compute node handed the summary of a platform it does not run" \
         "a compute node's summary hands the control plane what it needs" \

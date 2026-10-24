@@ -88,7 +88,6 @@ case "$1 $2" in
     "compose pull")       exit "${PULL_EXIT:-0}" ;;
     "compose --progress") case "$*" in *" pull") exit "${PULL_EXIT:-0}" ;; esac ;;
     "login "*)            cat > /stub/docker-login-stdin ;;
-    "compose exec")       case "$*" in *step-ca*) [ "${STEP_CA_RUNS:-yes}" = yes ] ;; esac ;;
     *)                    exit 0 ;;
 esac
 DOCKER
@@ -160,7 +159,6 @@ PROBE
         -e MONGO_VOLUME_EXISTS="${MONGO_VOLUME_EXISTS:-no}" \
         -e NETWORK_CREATE_EXIT="${NETWORK_CREATE_EXIT:-0}" \
         -e PULL_EXIT="${PULL_EXIT:-9}" \
-        -e STEP_CA_RUNS="${STEP_CA_RUNS:-yes}" \
         -e DISK_AVAIL_BYTES="${DISK_AVAIL_BYTES:-}" \
         "${WALK_IMAGE:-$DEBIAN_IMAGE}" bash /w/walk-$state.sh >/dev/null 2>&1
 }
@@ -679,9 +677,6 @@ the_summary_says_where_generation_comes_from() {
     return 1
 }
 
-# The authority belongs to the control plane: a compute node starts none, and
-# its install once stopped at the certificate policy, before autostart and
-# reporting, with the summary of a platform it does not run.
 a_compute_node_installs_to_the_end() {
     local output
     output=$(output_of compute_node_runs_through)
@@ -1276,7 +1271,7 @@ prepare_a_vllm_entry
 
 run_install_from_state bare
 PULL_EXIT=0 run_install_from_state install_runs_through
-PULL_EXIT=0 STEP_CA_RUNS=no run_install_from_state compute_node_runs_through
+PULL_EXIT=0 run_install_from_state compute_node_runs_through
 INSTALL_TOKEN= INSTALL_COMMAND=/srv/clone/bin/ut-install \
     run_install_from_state launched_from_a_checkout
 INSTALL_TOKEN= INSTALL_COMMAND=/srv/clone/bin/ut-install \
@@ -1303,7 +1298,7 @@ WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --inference-from http
     run_install_from_state compute_node_over_http
 WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --inference-from https://node.local:8444 --inference-key-file /w/compute/key --inference-ca-file /w/compute/root.crt" \
     run_install_from_state pointed_at_an_mdns_node
-PULL_EXIT=0 STEP_CA_RUNS=no INSTALL_COMMAND="ut-install --compute 192.0.2.10" \
+PULL_EXIT=0 INSTALL_COMMAND="ut-install --compute 192.0.2.10" \
     run_install_from_state compute_by_flag -
 INSTALL_COMMAND="ut-install --compute node.local" run_install_from_state compute_named_by_mdns
 INSTALL_COMMAND="ut-install --compute 192.0.2.10 --no-gpu" run_install_from_state compute_without_its_gpu
@@ -1421,7 +1416,7 @@ property "a control plane without a GPU is installed as with --no-gpu" \
     a_control_plane_without_a_gpu_goes_without_it
 property "the summary says where generation comes from" \
     the_summary_says_where_generation_comes_from
-property "a compute node installs to the end, with no authority of its own" \
+property "a compute node installs to the end" \
     a_compute_node_installs_to_the_end
 property "a compute node's summary hands the control plane what it needs" \
     a_compute_node_hands_the_control_plane_what_it_needs

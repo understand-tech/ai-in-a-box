@@ -13,8 +13,8 @@ PASSED=0; FAILED=0
 
 # Every other suite stops before `docker compose up`, because the application
 # images are private. This one goes past that line on public stand-ins, so the
-# four services the lifecycle actually leans on — mongodb, redis, step-ca and
-# caddy — are exercised for real, up to healthy, with no registry token.
+# three services the lifecycle actually leans on — mongodb, redis and caddy —
+# are exercised for real, up to healthy, with no registry token.
 #
 # What it does NOT prove: that the application images behave. The stubs answer
 # the same routes on the same ports, nothing more. Their healthchecks are the
@@ -41,7 +41,7 @@ check() {
 # DATA_ROOT is redirected into the work directory: the real one is /var/lib,
 # and a suite that writes there would need root and would outlive itself.
 write_settings() {
-    install -d "$WORK_DIR/data/ca/certs" "$WORK_DIR/data/app-data"
+    install -d "$WORK_DIR/data/app-data"
     cat > "$WORK_DIR/env" <<SETTINGS
 COMPOSE_PROJECT_NAME="$PROJECT"
 COMPOSE_PROFILES=""
@@ -61,7 +61,6 @@ REDIS_HOST="redis"
 REDIS_PORT="6379"
 JWT_SECRET="$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9')"
 STATE_SECRET="$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9')"
-CA_PASSWORD="$(head -c 24 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9')"
 GPU_VM_API_TOKEN="unused-by-the-stubs"
 BACKUP_FILES_PASSWORD="unused-by-the-stubs"
 WORKER_REPLICAS="1"
@@ -79,14 +78,6 @@ compose_here() {
         && docker compose --env-file "$WORK_DIR/env" -p "$PROJECT" $COMPOSE_ARGS "$@" )
 }
 
-service_is_healthy() {
-    local service=$1 id state
-    id=$(compose_here ps -q "$service" 2>/dev/null | head -1)
-    [[ -n "$id" ]] || return 1
-    state=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$id" 2>/dev/null)
-    [[ "$state" == "healthy" || "$state" == "running" ]]
-}
-
 the_stack_reaches_healthy() {
     compose_here up -d --wait --wait-timeout "$WAIT_SECONDS"
 }
@@ -96,7 +87,7 @@ a_real_service_answers() {
     compose_here exec -T "$service" "$@"
 }
 
-printf '%sThe stack, brought up on public stand-ins%s %s(mongodb, redis, step-ca and caddy are real)%s\n\n' \
+printf '%sThe stack, brought up on public stand-ins%s %s(mongodb, redis and caddy are real)%s\n\n' \
     "$BOLD" "$NC" "$BOLD" "$NC"
 
 write_settings
@@ -114,8 +105,6 @@ check "the database answers its own healthcheck, not a stub's" \
     a_real_service_answers mongodb mongosh --quiet --eval 'db.adminCommand("ping").ok'
 check "redis answers" \
     a_real_service_answers redis redis-cli ping
-check "the certificate authority is up" \
-    service_is_healthy step-ca
 check "the front door validates the real Caddyfile" \
     a_real_service_answers caddy caddy validate --config /etc/caddy/Caddyfile
 check "a stubbed upstream answers the route its healthcheck asks for" \

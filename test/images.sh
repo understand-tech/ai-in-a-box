@@ -10,7 +10,6 @@ release_image() {
 }
 
 CADDY_IMAGE=$(release_image CADDY_IMAGE)
-STEP_CA_IMAGE=$(release_image STEP_CA_IMAGE)
 MONGODB_IMAGE=$(release_image MONGODB_IMAGE)
 RESTIC_IMAGE=$(release_image FILES_BACKUP_IMAGE)
 PROMETHEUS_IMAGE=$(release_image PROMETHEUS_IMAGE)
