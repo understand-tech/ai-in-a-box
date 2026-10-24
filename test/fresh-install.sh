@@ -489,16 +489,72 @@ a_model_is_chosen_only_where_it_is_proven() {
     return 1
 }
 
+# The source of truth for which models are proven, on which engine, for
+# which family: one file per combination under models/proven/. Reading it
+# here instead of copying its contents into this test means a model freshly
+# qualified and dropped into that folder is expected automatically, not
+# missed until a release walk catches the mismatch by hand.
+proven_model_ids() {
+    local family=$1 f id
+    for f in "$REPO_ROOT"/models/proven/*."$family".md; do
+        [[ -e "$f" ]] || continue
+        id=$(basename "$f" ".$family.md")
+        id=${id%.*}
+        printf '%s\n' "$id"
+    done | sort
+}
+
+proven_model_engine() {
+    local family=$1 id=$2 f
+    for f in "$REPO_ROOT"/models/proven/"$id".*."$family".md; do
+        [[ -e "$f" ]] || continue
+        f=$(basename "$f" ".$family.md")
+        printf '%s' "${f#"$id".}"
+        return 0
+    done
+}
+
+proven_model_license() {
+    grep -m1 '^MODEL_LICENSE=' "$REPO_ROOT/models/$1.env" | sed -E 's/^MODEL_LICENSE="?([^"]*)"?$/\1/'
+}
+
+proven_model_runs_its_own_code() {
+    grep -q -- '--trust-remote-code' "$REPO_ROOT/models/$1.env"
+}
+
 the_models_listed_are_those_proven_here() {
-    local here elsewhere
+    local here elsewhere id engine display_engine license pattern ok=true
+
     here=$(output_of models_listed_on_gb10)
     elsewhere=$(output_of models_listed_on_an_unproven_gpu)
-    grep -qE '^qwen3\.8-27b-nvfp4 +NIM on gb10 +[0-9.]+ GB +apache-2\.0 *$' <<< "$here" \
-        && grep -qE '^nemotron-3\.5-bolt-74b +vLLM on gb10 +[0-9.]+ GB +OpenMDW-1\.1 +runs code of its own$' <<< "$here" \
-        && grep -q '^EXIT=0$' <<< "$here" && ! grep -q 'Install stopped' <<< "$here" \
-        && ! grep -qE '^(qwen|nemotron)' <<< "$elsewhere" \
-        && grep -q 'Not proven on h100-80gb-hbm3: nemotron-3.5-bolt-74b qwen3.8-27b-nvfp4' <<< "$elsewhere" \
-        && grep -q '^EXIT=0$' <<< "$elsewhere" && ! grep -q 'Install stopped' <<< "$elsewhere" && return 0
+
+    while IFS= read -r id; do
+        [[ -n "$id" ]] || continue
+        engine=$(proven_model_engine gb10 "$id")
+        case "$engine" in
+            vllm) display_engine="vLLM" ;;
+            nim)  display_engine="NIM" ;;
+            *)    display_engine="$engine" ;;
+        esac
+        license=$(proven_model_license "$id")
+        pattern="^${id//./\\.} +${display_engine} on gb10 +[0-9.]+ GB +${license//./\\.}"
+        if proven_model_runs_its_own_code "$id"; then
+            pattern+=" +runs code of its own\$"
+        else
+            pattern+=" *\$"
+        fi
+        grep -qE "$pattern" <<< "$here" || { echo "no row matching: $pattern"; ok=false; }
+    done < <(proven_model_ids gb10)
+
+    local expected_elsewhere="Not proven on h100-80gb-hbm3: $(proven_model_ids gb10 | tr '\n' ' ' | sed 's/ *$//')"
+    grep -q '^EXIT=0$' <<< "$here" || ok=false
+    ! grep -q 'Install stopped' <<< "$here" || ok=false
+    ! grep -qE '^(qwen|nemotron)' <<< "$elsewhere" || ok=false
+    grep -qF "$expected_elsewhere" <<< "$elsewhere" || { echo "expected: $expected_elsewhere"; ok=false; }
+    grep -q '^EXIT=0$' <<< "$elsewhere" || ok=false
+    ! grep -q 'Install stopped' <<< "$elsewhere" || ok=false
+
+    $ok && return 0
     echo "on gb10:"; echo "$here" | tail -5
     echo "on h100:"; echo "$elsewhere" | tail -3
     return 1
@@ -507,16 +563,38 @@ the_models_listed_are_those_proven_here() {
 the_models_also_come_as_events_with_their_columns_apart() {
     [[ "$(output_of models_as_events_on_gb10)" == "$(output_of models_listed_on_gb10)" ]] \
         || { echo "the text changed with --events"; diff <(output_of models_listed_on_gb10) <(output_of models_as_events_on_gb10); return 1; }
-    python3 - "$WORK_DIR/models_as_events_on_gb10/events.jsonl" <<'PY'
-import json, re, sys
+
+    local id engine display_engine license code expected=""
+    while IFS= read -r id; do
+        [[ -n "$id" ]] || continue
+        engine=$(proven_model_engine gb10 "$id")
+        case "$engine" in
+            vllm) display_engine="vLLM" ;;
+            nim)  display_engine="NIM" ;;
+            *)    display_engine="$engine" ;;
+        esac
+        license=$(proven_model_license "$id")
+        if proven_model_runs_its_own_code "$id"; then code=true; else code=false; fi
+        expected+="$id|$display_engine on gb10|$license|$code"$'\n'
+    done < <(proven_model_ids gb10)
+
+    EXPECTED="$expected" python3 - "$WORK_DIR/models_as_events_on_gb10/events.jsonl" <<'PY'
+import json, os, re, sys
 models = {event["id"]: event for event in map(json.loads, open(sys.argv[1])) if event["event"] == "model"}
-qwen, bolt = models.get("qwen3.8-27b-nvfp4", {}), models.get("nemotron-3.5-bolt-74b", {})
-apart = (sorted(models) == ["nemotron-3.5-bolt-74b", "qwen3.8-27b-nvfp4"]
-         and qwen.get("served") == "NIM on gb10" and qwen.get("license") == "apache-2.0" and qwen.get("runs_its_own_code") is False
-         and bolt.get("served") == "vLLM on gb10" and bolt.get("license") == "OpenMDW-1.1" and bolt.get("runs_its_own_code") is True
-         and all(re.fullmatch(r"[0-9.]+ GB", model.get("size", "")) for model in models.values()))
-if not apart:
+expected = {}
+for line in os.environ["EXPECTED"].splitlines():
+    if not line:
+        continue
+    model_id, served, license, code = line.split("|")
+    expected[model_id] = (served, license, code == "true")
+ok = sorted(models) == sorted(expected)
+for model_id, (served, license, code) in expected.items():
+    m = models.get(model_id, {})
+    ok = ok and m.get("served") == served and m.get("license") == license and m.get("runs_its_own_code") is code
+ok = ok and all(re.fullmatch(r"[0-9.]+ GB", m.get("size", "")) for m in models.values())
+if not ok:
     print(json.dumps(models, indent=1))
+    print("expected:", expected)
     sys.exit(1)
 PY
 }
