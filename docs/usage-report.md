@@ -66,7 +66,8 @@ What goes out on top of the report below:
   healthy; the background queues and how many jobs wait or failed; space on the
   disks the platform writes to; for each inference engine, the model it serves
   and the GPU memory it holds; when the last backup ran; the validity dates of
-  the HTTPS certificates; whether the clock is synchronised;
+  the HTTPS certificates; whether the clock is synchronised; how much memory
+  Redis uses against its ceiling;
 - **use of each tool**: requests per hour, and people over the last 7 days, per
   tool of the platform — counts only, and a tool the platform does not ship is
   counted as `other`, never by its name;
