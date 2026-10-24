@@ -265,13 +265,14 @@ skopeo_in() {
 # only: two requests to the registry instead of one per platform, which Docker
 # Hub's anonymous limit did not survive on 2026-10-20. The box proves the second
 # belongs to the first.
-# quay.io answered 503 now and then on 2026-10-24, in CI and here: a copy is
-# tried three times, from scratch each time, before the preparation stops.
+# quay.io answered 503 for more than 35 s at a time on 2026-10-24, in CI and
+# here: a copy is tried five times, from scratch each time, waiting 10, 20, 40
+# then 80 s, before the preparation stops.
 with_retries() {
     local attempt
-    for attempt in 1 2 3; do
+    for attempt in 1 2 3 4 5; do
         "$@" && return 0
-        (( attempt == 3 )) || sleep $(( attempt * ${UT_GET_RETRY_SECONDS:-10} ))
+        (( attempt == 5 )) || sleep $(( (1 << (attempt - 1)) * ${UT_GET_RETRY_SECONDS:-10} ))
     done
     return 1
 }
