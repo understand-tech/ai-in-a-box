@@ -1,0 +1,56 @@
+name: ${COMPOSE_PROJECT_NAME:-understandtech}
+
+# Overlay for the third machine of a two-box high-availability pair: a light
+# arbiter, no GPU, no control-plane state of its own. It exists to tell the two
+# box of calcul apart from a network partition between them, so a failure of
+# either one can promote the other without producing two primaries.
+#
+#   COMPOSE_FILE="compose.yaml:compose.arbiter.yaml"
+#   COMPOSE_PROFILES=""
+#
+# This first slice keeps Caddy running but publishes nothing yet: the default
+# Caddyfile's platform routes point at api/frontend, which this role turns off,
+# and serving them would 502 on every request. The heartbeat surface and the
+# service that answers it are a later slice of the same increment — see
+# notes/features/basculer-automatiquement-entre-deux-box.md.
+#
+# Named after the role rather than the product it arbitrates, so the same file
+# applies whatever the two box of calcul's own palier (GB10, GB300, rack).
+
+services:
+  caddy:
+    # The platform routes in the default Caddyfile reverse_proxy to api and
+    # frontend, both off on this role; depending on them would never go
+    # healthy, and publishing 80/443 would 502 on every request.
+    depends_on: !reset null
+    ports: !override []
+  redis:
+    profiles: ["control-plane-only"]
+  mongodb:
+    profiles: ["control-plane-only"]
+  mongodb-backup:
+    profiles: ["control-plane-only"]
+  files-backup:
+    profiles: ["control-plane-only"]
+  api:
+    profiles: ["control-plane-only"]
+  workers:
+    profiles: ["control-plane-only"]
+  frontend:
+    profiles: ["control-plane-only"]
+  api-customer:
+    profiles: ["control-plane-only"]
+  workers-customer:
+    profiles: ["control-plane-only"]
+  app-llms:
+    profiles: ["control-plane-only"]
+  app-assistants:
+    profiles: ["control-plane-only"]
+  admin-portal:
+    profiles: ["control-plane-only"]
+  llm:
+    profiles: ["gpu-only"]
+  nim-llm:
+    profiles: ["gpu-only"]
+  metrics:
+    profiles: ["control-plane-only"]

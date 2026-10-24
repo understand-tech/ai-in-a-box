@@ -104,6 +104,15 @@ requests_no_gpu() {
     ! compose_config "$@" | grep -q 'driver: nvidia'
 }
 
+# The arbiter judges a pair of box of calcul from the outside: it must run
+# nothing of its own that a control plane or an inference engine runs, or its
+# own failure stops meaning anything about theirs.
+arbiter_role_keeps_only_caddy() {
+    local got
+    got=$(compose_services -f compose.yaml -f compose.arbiter.yaml)
+    [[ "$got" == "caddy" ]]
+}
+
 renders_valid_configuration() {
     ( cd "$WORK_DIR" && docker compose "$@" config >/dev/null )
 }
@@ -3009,6 +3018,10 @@ capability "a machine that runs an engine records its load" \
     with_profiles nim lists_service metrics -f compose.yaml
 capability "a machine without a GPU still records what its gateway and front door served" \
     lists_service metrics -f compose.yaml -f compose.no-gpu.yaml
+capability "the arbiter role renders a valid stack" \
+    renders_valid_configuration -f compose.yaml -f compose.arbiter.yaml
+capability "the arbiter role keeps only Caddy, no control plane and no GPU" \
+    arbiter_role_keeps_only_caddy
 
 if [[ -x "$REPO_ROOT/bin/ut-certificate" ]]; then
     group "Public certificate"
