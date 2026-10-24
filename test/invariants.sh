@@ -123,22 +123,6 @@ check_compose_declares_no_secret_default() {
     done
 }
 
-# A variable falling back to one value in one service and another elsewhere is
-# a difference nobody chose. MONGODB_HOST read `mongodb` for the App Builder and
-# the empty string for the seven services in compose.yaml, so an .env without
-# that line started them against a database host of "".
-check_healthcheck_asks_for_a_certified_name() {
-    local url host names
-    url=$(grep -h 'step", "ca", "health"' "${COMPOSE_FILES[@]}" 2>/dev/null \
-        | grep -oE 'https://[^"]+' | head -1) || return 0
-    [[ -n "$url" ]] || return 0
-    host=${url#https://}; host=${host%%:*}
-    names=$(grep -h 'DOCKER_STEPCA_INIT_DNS_NAMES' "${COMPOSE_FILES[@]}" 2>/dev/null) || return 0
-    grep -q "[ ,:]${host}\(,\|$\)" <<< "$names" && return 0
-    report "healthcheck-name-not-certified:${host}" \
-        "the authority's healthcheck asks for ${host}, which DOCKER_STEPCA_INIT_DNS_NAMES does not list — it can never pass, and everything waiting on it stops"
-}
-
 seconds_in_duration() {
     local duration=$1 number=${1%[a-z]}
     case "$duration" in
@@ -303,34 +287,32 @@ judge_one_gateway() {
 # gateway trusts may name the person behind a call, which is what gives each of
 # them a rate limit of their own.
 check_the_gateway_trusts_the_app_builder_key() {
-    local line entry in_services=false service="" hosts=false trusts=false
+    local line entry in_services=false block="" hosts=false trusts=false
     while IFS= read -r line; do
         entry=${line%"${line##*[![:space:]]}"}
         case "$entry" in
-            "services:")
-                in_services=true
-                continue
-                ;;
-            [a-z]*:*)
-                if $in_services; then
-                    judge_one_gateway "$service" "$hosts" "$trusts"
-                fi
-                in_services=false
-                service=""
+            "services:"|x-*:*|[a-z]*:*)
+                judge_one_gateway "$block" "$hosts" "$trusts"
                 hosts=false
                 trusts=false
+                block=""
+                in_services=false
+                case "$entry" in
+                    "services:") in_services=true ;;
+                    x-*) block=${entry%%:*} ;;
+                esac
                 continue
                 ;;
         esac
-        $in_services || continue
+        if $in_services && [[ "$entry" == "  "[a-z]*":" ]]; then
+            judge_one_gateway "$block" "$hosts" "$trusts"
+            block=${entry#  }
+            block=${block%:}
+            hosts=false
+            trusts=false
+            continue
+        fi
         case "$entry" in
-            "  "[a-z]*":")
-                judge_one_gateway "$service" "$hosts" "$trusts"
-                service=${entry#  }
-                service=${service%:}
-                hosts=false
-                trusts=false
-                ;;
             *"GATEWAY_RPM_PER_KEY:"*)
                 hosts=true
                 ;;
@@ -339,9 +321,7 @@ check_the_gateway_trusts_the_app_builder_key() {
                 ;;
         esac
     done < "$REPO_ROOT/compose.yaml"
-    if $in_services; then
-        judge_one_gateway "$service" "$hosts" "$trusts"
-    fi
+    judge_one_gateway "$block" "$hosts" "$trusts"
 }
 
 # A backup deferred to a clock time cannot answer a health check that asks for a
@@ -391,6 +371,20 @@ check_every_setting_reaches_something() {
     done <<< "$(env_keys)"
 }
 
+check_every_volume_is_mounted() {
+    local volume
+    while read -r volume; do
+        [[ -n "$volume" ]] || continue
+        grep -qE "^[[:space:]]+- ${volume}:" "$REPO_ROOT"/compose*.yaml \
+            || report "volume-mounted-nowhere:${volume}" \
+                "compose.yaml declares the volume ${volume} and no service mounts it: every box keeps it, nothing fills it"
+    done <<< "$(awk '/^volumes:/ { inside = 1; next } /^[^[:space:]#]/ { inside = 0 } inside && /^  [a-z][a-z0-9-]*:/ { sub(/^  /, ""); sub(/:.*/, ""); print }' "$REPO_ROOT/compose.yaml")"
+}
+
+# A variable falling back to one value in one service and another elsewhere is
+# a difference nobody chose. MONGODB_HOST read `mongodb` for the App Builder and
+# the empty string for the seven services in compose.yaml, so an .env without
+# that line started them against a database host of "".
 check_defaults_do_not_diverge() {
     local key defaults count
     while read -r key; do
@@ -699,9 +693,9 @@ check_production_defaults() {
             "LOG_LEVEL=${log_level} in release.env — verbose logs on a customer's appliance"
     fi
 
-    if grep -q 'maxmemory-policy allkeys-lru' "$REPO_ROOT/compose.yaml"; then
+    if ! grep -q 'maxmemory-policy noeviction' "$REPO_ROOT/compose.yaml"; then
         report "queue-eviction:redis" \
-            "redis runs allkeys-lru while holding the RQ queues — tasks can be evicted under memory pressure"
+            "redis may evict keys, and it holds the RQ queues and ut-api's session revocations and sign-in counters — any policy but noeviction drops them silently under memory pressure"
     fi
 }
 
@@ -828,12 +822,12 @@ main() {
     check_ut_setup_reads_what_ut_get_hands_it
     check_release_env_ships_no_secret
     check_compose_declares_no_secret_default
-    check_healthcheck_asks_for_a_certified_name
     check_no_service_starts_slower_than_the_installer_waits
     check_every_service_declares_its_role
     check_every_service_declares_a_healthcheck
     check_the_first_backup_is_not_deferred_to_a_clock_time
     check_every_setting_reaches_something
+    check_every_volume_is_mounted
     check_the_gateway_trusts_the_app_builder_key
     check_defaults_do_not_diverge
     check_required_variables_appear_in_the_template

@@ -20,8 +20,7 @@ follows `COMPOSE_PROJECT_NAME`.
 
 | Service | Container | Host port | Description |
 |---|---|---|---|
-| `caddy` | `ut-caddy` | 80, 443, 127.0.0.1:8443 | Reverse proxy; public TLS per `UT_INGRESS_MODE`, machine-facing TLS always from the local authority |
-| `step-ca` | `ut-step-ca` | — | Local certificate authority. Root under `${DATA_ROOT}/ca`, so the file backup carries it |
+| `caddy` | `ut-caddy` | 80, 443 | Reverse proxy; public TLS per `UT_INGRESS_MODE` |
 | `frontend` | `ut-frontend` | — | React web application |
 | `api` | `ut-api` | — | Main backend API (FastAPI), `:8501` internal |
 | `api-customer` | `ut-api-customer` | — | Partner (REST v3) API and model gateway, `:8501` internal |
@@ -49,7 +48,7 @@ The worker services scale with `WORKER_REPLICAS` and `WORKER_CUSTOMER_REPLICAS`.
 
 ## Networks
 
-The stack declares five bridge networks. **Four of them are `internal: true`**,
+The stack declares four bridge networks. **Three of them are `internal: true`**,
 which means the containers attached only to those have no route off the box.
 
 | Network | Internal | Who is on it |
@@ -57,7 +56,6 @@ which means the containers attached only to those have no route off the box.
 | `ut-frontend-network` | no | `caddy`, `frontend`, `api`, `api-customer`, the workers, `app-llms`, `app-assistants`, `admin-portal`, `llm` |
 | `ut-backend-network` | **yes** | `api`, `api-customer`, the workers, `app-assistants`, `admin-portal`, `llm`, `nim-llm`, `metrics`, `redis`, `files-backup` |
 | `ut-data-network` | **yes** | `mongodb`, `mongodb-backup`, `api`, `api-customer`, the workers, `app-llms`, `app-assistants`, `llm` |
-| `ut-ca-network` | **yes** | `caddy`, `step-ca` |
 | `ut-metrics-network` | **yes** | `caddy`, `metrics` — the recorder reads Caddy's counters on `:2020`, which no compose file publishes |
 
 One more, for the add-on only:
@@ -81,10 +79,8 @@ internet is kept off it.
 | `ut-mongodb-data` | MongoDB database files |
 | `ut-mongodb-backup` | Compressed backup archives |
 | `ut-uploads-data` | Shared upload scratch space (API + workers) |
-| `ut-llm-ollama` | Ollama configuration |
 | `ut-llm-models` | LLM model files |
 | `ut-vllm-models` | Hugging Face cache for the LLM service |
-| `ut-vllm-llm-cache` | vLLM compilation cache |
 | `ut-nim-llm-cache` | NIM chat-model weights (survives updates — do not prune casually) |
 | `ut-metrics-data` | Usage history: engine load, gateway and front door. Not backed up: losing it loses that history and nothing else |
 

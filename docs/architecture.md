@@ -63,18 +63,16 @@ flowchart LR
     FRONT["ut-frontend-network - bridge"]
     BACK["ut-backend-network - internal"]
     DATA["ut-data-network - internal"]
-    CA["ut-ca-network - internal"]
     METRICS["ut-metrics-network - internal"]
     OUTSIDE -->|"ports 80 and 443, caddy only"| FRONT
     FRONT --- BACK
     FRONT --- DATA
-    FRONT --- CA
     FRONT --- METRICS
 ```
 
-**Description** — The stack declares five bridge networks. **Only
+**Description** — The stack declares four bridge networks. **Only
 `ut-frontend-network` is reachable from outside**, and only through the two
-ports `caddy` publishes. The other four are declared `internal: true`, which
+ports `caddy` publishes. The other three are declared `internal: true`, which
 means a container attached only to one of them has no route off the box — it
 cannot call an external API, download anything, or be reached from the network.
 The plain lines are not traffic: they mark that some containers sit on two
@@ -90,13 +88,12 @@ Builder's generated apps is not shown. Not verified: not seen rendered.
 | `ut-frontend-network` | no | `caddy`, `frontend`, `api`, `api-customer`, the workers, `app-llms`, `app-assistants`, `admin-portal`, `llm` |
 | `ut-backend-network` | **yes** | `api`, `api-customer`, the workers, `app-assistants`, `admin-portal`, `llm`, `nim-llm`, `metrics`, `redis`, `files-backup` |
 | `ut-data-network` | **yes** | `mongodb`, `mongodb-backup`, `api`, `api-customer`, the workers, `app-llms`, `app-assistants`, `llm` |
-| `ut-ca-network` | **yes** | `caddy`, `step-ca` |
 | `ut-metrics-network` | **yes** | `caddy`, `metrics` |
 
 Read that table the other way round and it says what matters: `mongodb` is on
 `ut-data-network` alone, `redis` and `nim-llm` on `ut-backend-network` alone,
-`metrics` on `ut-backend-network` and `ut-metrics-network`, both internal,
-`step-ca` on `ut-ca-network` alone. **None of them can reach the internet, and
+`metrics` on `ut-backend-network` and `ut-metrics-network`, both internal.
+**None of them can reach the internet, and
 none of them publishes a host port.** The only containers that straddle the
 boundary are the ones that have to answer a browser.
 
@@ -112,7 +109,7 @@ boundary are the ones that have to answer a browser.
 | The databases | `ut-mongodb-data` volume | through `mongodb-backup`, which dumps them |
 | Uploaded documents and generated artefacts | `/var/lib/understandtech/app-data` | yes, directly |
 | The App Builder's projects | `/var/lib/understandtech/appbuilder` | yes, directly |
-| The certificate authority's root | `/var/lib/understandtech/ca` | yes, directly |
+| The certificate authority's root | `ut-caddy-data` volume | yes, directly |
 | Every install run and every `ut-status` verdict | `/var/lib/understandtech/install-history.jsonl` | yes, directly |
 | The engines' load history | `ut-metrics-data` volume | no — losing it loses that history and nothing else |
 | Model weights and caches | `ut-llm-*`, `ut-vllm-*`, `ut-nim-*-cache` volumes | no — re-downloaded |

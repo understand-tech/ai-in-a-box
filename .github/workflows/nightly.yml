@@ -2,7 +2,7 @@ name: nightly
 
 # Scheduled rather than triggered by a push, because these are the checks that
 # can break without anyone changing this repository: they exercise upstream
-# images — mongo, db-backup, step-ca — which move on their own.
+# images — mongo, db-backup — which move on their own.
 #
 # Everything else is better served by a path filter — bound to the commit that
 # caused it, instead of found the next morning among a day's worth of changes.
@@ -20,25 +20,6 @@ permissions:
   packages: read
 
 jobs:
-  # Both architectures, because one of these checks fails here and passes on an
-  # arm64 laptop, and a single runner cannot tell which half of that difference
-  # matters — the architecture, or the runner.
-  machine-identity:
-    name: machine identity holds offline${{ matrix.suffix }}
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-24.04
-            suffix: ""
-          - runner: ubuntu-24.04-arm
-            suffix: " on arm64"
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: ./test/machine-identity.sh
-
   # arm64, because the backup image is. It was republished for the appliance,
   # which is a DGX Spark, and only for that architecture — an x86 runner pulls
   # it happily and then dies on "exec /init: exec format error".
@@ -53,8 +34,8 @@ jobs:
           | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
       - run: ./test/database-restore.sh
 
-  # Belongs here for the reason above: it brings mongo, redis, step-ca and caddy
-  # up for real, and those four move without this repository changing. The price
+  # Belongs here for the reason above: it brings mongo, redis and caddy up for
+  # real, and those three move without this repository changing. The price
   # of the schedule is that a compose.yaml change which breaks the stack is found
   # the next morning rather than on its own pull request.
   stub-stack:

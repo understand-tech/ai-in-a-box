@@ -276,58 +276,13 @@ the OIDC round trip.
 the network your balancer speaks from.** The `private_ranges` default lets any
 machine on the LAN claim any source address.
 
-## The machine-facing surface
-
-Separate from all of the above, and not affected by it.
-
-`node.<UT_DOMAIN>:8443` always serves a certificate from the appliance's own
-authority, in every ingress mode. Two reasons.
-
-It keeps the authority working. An authority that issues nothing rots until the
-day something needs enrolling — and in `custom` or `edge` the public certificate
-comes from you, so it would issue nothing at all.
-
-And it gives you something to verify. Bound to `127.0.0.1` by default. If your
-load balancer would rather verify the appliance than trust it blindly:
-
-```bash
-UT_INTERNAL_BIND_ADDRESS="10.42.0.7"
-```
-
-Then add the authority's root to the balancer's trust store:
-
-```bash
-cat /var/lib/understandtech/ca/certs/root_ca.crt
-```
-
-Optional. `edge` works without it.
-
 ## The local authority
 
-It runs as `ut-step-ca`, issues certificates lasting **seven days**, and renews
-them on its own. You do not operate it day to day.
-
-Three facts worth knowing.
-
-**Its root is at `${DATA_ROOT}/ca`**, which is what the file backup covers.
-Losing it means re-enrolling everything it ever issued, so it is deliberately
-inside the backed-up path rather than in a Docker volume, which nothing backs
-up.
-
-**A machine switched off longer than seven days recovers by itself.** The
-authority accepts renewing an expired certificate, so a box that spent a
-holiday unplugged comes back without a visit.
-
-**That is only safe because revocation still works.** Revoking a certificate
-refuses its renewal immediately, expired or not. Nothing revokes anything today
-— nothing is enrolled — but the revocation command has to exist before the
-first machine is enrolled.
-
-To inspect what it is serving:
-
-```bash
-docker exec ut-step-ca step certificate inspect /home/step/certs/root_ca.crt --short
-```
+Caddy keeps its own, in the `ut-caddy-data` volume. Its root lasts ten years;
+Caddy renews its intermediate itself, every few days, with no network. It signs
+the public names in `internal` mode and a compute node's inference surface on
+port 8444. Exporting and trusting it is the same command as
+[`internal` mode](#internal--the-default) above.
 
 ## Adding a second machine
 
@@ -346,9 +301,8 @@ sudo ut-install --compute <IP or DNS name the control plane reaches it by>
 ```
 
 The address cannot be a `.local` name: the control plane's containers do not
-resolve mDNS. The install starts no authority and no platform, asks for no
-domain, and ends by printing the commands the control plane needs. Later runs
-keep the role.
+resolve mDNS. The install starts no platform, asks for no domain, and ends by
+printing the commands the control plane needs. Later runs keep the role.
 
 The engine publishes no port of its own. Caddy serves it at
 `https://<UT_INFERENCE_ADDRESS>:8444/v1`, with a certificate from its own
@@ -381,34 +335,11 @@ time goes, while indexing stays on the machine with the data.
 
 ### What does not work yet
 
-**Enrolling that machine against the authority.** There is no `ut-enrol`, and
-no `ut-revoke`. The mechanism is proven — `test/machine-identity.sh` checks ten
-properties offline, including that a single-use token issues a certificate,
-that replaying it is refused, that renewal needs no token, and that a revoked
-node cannot renew even after expiry — but nothing in the product performs it.
-
-Until then, a compute node answers only the bearer of its key, over TLS, with a
-certificate from its own authority, which the control plane is told to trust by
-hand. On a network you control, between two machines you own, that is a
-deliberate and bounded choice. It is not mutual authentication.
-
-### The order these have to be built in
-
-**Revocation comes before the first enrolment**, and this is not a preference.
-
-The authority issues certificates lasting seven days with
-`allowRenewalAfterExpiry` on, so a machine switched off longer than that
-recovers by itself — which is what an appliance in a rack needs. That setting
-also removes the only revocation mechanism available without a distribution
-list: letting the certificate lapse.
-
-With nothing enrolled, there is nothing to revoke and no risk. The day a second
-machine holds a certificate, the absence of `ut-revoke` means **any machine that
-ever held one can reactivate itself indefinitely** — worse than either
-alternative. Measured, not assumed: explicit revocation refuses renewal
-immediately, expired or not.
-
-So: `ut-revoke` and its procedure, then enrolment. Not the reverse.
+**Mutual authentication.** A compute node answers only the bearer of its key,
+over TLS, with a certificate from its own authority, which the control plane is
+told to trust by hand. On a network you control, between two machines you own,
+that is a deliberate and bounded choice. Nothing changes a compute node's key:
+a control plane that received it keeps access.
 
 ## Changing the address later
 

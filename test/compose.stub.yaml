@@ -1,6 +1,6 @@
 # Public stand-ins for the ten private images, so the stack can be brought up to
 # healthy without a registry token. Everything that is already public stays
-# real: mongodb, redis, caddy, step-ca and restic are the ones whose behaviour
+# real: mongodb, redis, caddy and restic are the ones whose behaviour
 # the lifecycle depends on.
 #
 # The healthchecks are NOT overridden here. caddy:2-alpine carries curl, so

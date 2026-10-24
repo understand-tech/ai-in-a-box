@@ -2,9 +2,15 @@ package main
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
+	"math/big"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -26,6 +32,25 @@ mongodb-backup running healthy 0 false hhhh
 const baseReportJSON = `{"schema": 1, "generated_at": "2026-10-14T12:00:00Z", "install_id": "1ac8db8c48d58ae62639a40a843c0ec6",
 "window_days": 30, "release": "2026.10.0", "images": [], "capacity": [], "users_by_hour": [],
 "memory": {"host": {"total_bytes": 1, "available_bytes": 1}, "services": []}, "history": [], "warnings": ["recorder-unreachable"]}`
+
+var authorityRoot = func() string {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "Caddy Local Authority - 2026 ECC Root"},
+		NotBefore:    time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
+		NotAfter:     time.Date(2036, 8, 9, 0, 0, 0, 0, time.UTC),
+		IsCA:         true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		panic(err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+}()
 
 // A stand-in for the machine's commands, answered by the start of the command line.
 func fakeRunner(t *testing.T, answers map[string]string) Runner {
@@ -72,11 +97,12 @@ var everyAnswer = map[string]string{
 	"docker exec ffff curl -sf --max-time 5 http://127.0.0.1:8000/v1/models": `{"data": [{"id": "qwen"}]}`,
 	"docker exec ffff printenv NIM_SERVED_MODEL_NAME":                        "qwen\n",
 	"docker exec ffff curl -sf --max-time 5 http://127.0.0.1:8000/metrics":   "vllm:request_success_total{finished_reason=\"stop\"} 10.0\nvllm:request_success_total{finished_reason=\"length\"} 2.0\n",
-	"docker exec ffff sh -c":              "model: Qwen3.8-27B-NVFP4\n/models/Qwen3.8-27B-NVFP4\n",
-	"docker exec hhhh sh -c":              "1760436000\n",
-	"docker exec gggg printenv UT_DOMAIN": "box.example.test\n",
-	"timedatectl":                         "yes\n",
-	"docker exec dddd mongosh":            "Using MongoDB\n" + `{"requests_by_hour": [{"hour": 7200, "source": "chat", "app": "app", "requests": 2}, {"hour": 3600, "source": "gateway", "app": "llms", "requests": 5}], "users_7d": [{"source": "any", "app": "any", "users": 3}]}`,
+	"docker exec ffff sh -c":                                          "model: Qwen3.8-27B-NVFP4\n/models/Qwen3.8-27B-NVFP4\n",
+	"docker exec hhhh sh -c":                                          "1760436000\n",
+	"docker exec gggg printenv UT_DOMAIN":                             "box.example.test\n",
+	"docker exec gggg cat /data/caddy/pki/authorities/local/root.crt": authorityRoot,
+	"timedatectl":              "yes\n",
+	"docker exec dddd mongosh": "Using MongoDB\n" + `{"requests_by_hour": [{"hour": 7200, "source": "chat", "app": "app", "requests": 2}, {"hour": 3600, "source": "gateway", "app": "llms", "requests": 5}], "users_7d": [{"source": "any", "app": "any", "users": 3}]}`,
 }
 
 func TestTheHealthOfTheStackIsReadTheWayThePrototypeReadIt(t *testing.T) {
@@ -114,6 +140,10 @@ func TestTheHealthOfTheStackIsReadTheWayThePrototypeReadIt(t *testing.T) {
 	}
 	if !reflect.DeepEqual(warnings, []string{"health-unreadable:certificate:ingress"}) {
 		t.Fatalf("warnings %v", warnings)
+	}
+	root := health.Certificates[len(health.Certificates)-1]
+	if root.Name != "ca-root" || root.NotAfter == nil || *root.NotAfter != "2036-08-09T00:00:00Z" {
+		t.Fatalf("the authority's root was not read from Caddy: %+v", health.Certificates)
 	}
 }
 
@@ -205,15 +235,16 @@ func TestNothingIsCollectedWithoutAYes(t *testing.T) {
 	}
 }
 
-func TestAComputeNodeHasNoFrontDoorCertificateToMiss(t *testing.T) {
+func TestAComputeNodeReportsItsAuthorityAndNoFrontDoorCertificate(t *testing.T) {
 	answers := map[string]string{
 		"docker ps -aq --filter label=com.docker.compose.project=understandtech": "ffff\ngggg\n",
 		"docker inspect":                      "nim-llm running healthy 0 false ffff\ncaddy running healthy 0 false gggg\n",
 		"docker exec gggg printenv UT_DOMAIN": "compute-56.example.test\n",
+		"docker exec gggg cat /data/caddy/pki/authorities/local/root.crt":        authorityRoot,
 		"docker exec ffff curl -sf --max-time 5 http://127.0.0.1:8000/v1/models": `{"data": [{"id": "nemotron"}]}`,
 	}
 	health, warnings := machineAnswering(t, answers).health()
-	if len(health.Certificates) != 0 || !reflect.DeepEqual(warnings, []string{}) {
+	if len(health.Certificates) != 1 || health.Certificates[0].Name != "ca-root" || !reflect.DeepEqual(warnings, []string{}) {
 		t.Fatalf("certificates %+v warnings %v", health.Certificates, warnings)
 	}
 }

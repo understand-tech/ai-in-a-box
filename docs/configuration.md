@@ -33,15 +33,15 @@ Knowing which kind you are editing matters more than knowing the variable.
 
 **Generated at install, never edited.** `JWT_SECRET`, `STATE_SECRET`,
 `OPENID_SECRET_KEY`, `ADMIN_SETUP_PASSWORD`, `BACKUP_FILES_PASSWORD`,
-`CA_PASSWORD`, `GPU_VM_API_TOKEN`, `GATEWAY_METRICS_TOKEN`,
+`GPU_VM_API_TOKEN`, `GATEWAY_METRICS_TOKEN`,
 `APP_BUILDER_TOKEN_ENCRYPTION_KEY`, and the MongoDB credentials. Changing one
 after the fact breaks something: rotating `MONGODB_PASSWORD` on a database that
 already exists locks every service out, because the image only reads it when it
 creates the data directory.
 
-**Required.** Seven of them make the stack refuse to start when absent **or
+**Required.** Six of them make the stack refuse to start when absent **or
 empty** — rather than start misconfigured: `MONGODB_USERNAME`,
-`MONGODB_PASSWORD`, `JWT_SECRET`, `STATE_SECRET`, `CA_PASSWORD`,
+`MONGODB_PASSWORD`, `JWT_SECRET`, `STATE_SECRET`,
 `GPU_VM_API_TOKEN` and `BACKUP_FILES_PASSWORD`.
 
 That refusal is the point for `MONGODB_PASSWORD` above all. An empty value
@@ -65,7 +65,7 @@ once:
 ```bash
 for k in MONGODB_USERNAME MONGODB_PASSWORD JWT_SECRET \
          STATE_SECRET OPENID_SECRET_KEY ADMIN_SETUP_PASSWORD \
-         GPU_VM_API_TOKEN BACKUP_FILES_PASSWORD CA_PASSWORD GATEWAY_METRICS_TOKEN; do
+         GPU_VM_API_TOKEN BACKUP_FILES_PASSWORD GATEWAY_METRICS_TOKEN; do
     sed -i "s|^${k}=.*|${k}=\"$(openssl rand -hex 24)\"|" /etc/understandtech/local.env
 done
 ```
@@ -269,8 +269,8 @@ Same document. In `edge` mode, three other variables go with it.
 DATA_ROOT="/var/lib/understandtech"
 ```
 
-Documents, and the certificate authority's root. This is what the file backup
-covers. Moving it means moving the contents too — nothing does it for you.
+Documents. This is what the file backup covers. Moving it means moving the
+contents too — nothing does it for you.
 
 ### Backups
 

@@ -26,7 +26,7 @@ walked the installer from a known starting point.
 | 24 GB of RAM | below that, workers are starved | `--check`, warning |
 | `openssl` 3.0 or newer, `jq`, `curl` | certificate inspection in `ut-certificate`; activating and checking the license in `ut-license` | the package depends on them |
 | A license key, and `api.keygen.sh` on the first install or the license file UnderstandTech sends back | the license binds to this machine and carries the registry access — anonymous pulls answer `403` | `ut-install` asks, then activates it, or writes the request to send |
-| Docker address space for four networks | each network takes a block from a small pool | `--check`, blocking |
+| Docker address space for three networks | each network takes a block from a small pool | `--check`, blocking |
 | `git` | **only** when the release is cloned rather than packaged | `--check`, conditional |
 
 That last line was a defect: `git` was required unconditionally, so an install
@@ -65,9 +65,9 @@ worth checking rather than assuming.
 
 ### Docker address pools, which run out quietly
 
-Docker hands each network a block from a small pool. **The stack takes four** —
-backend, frontend, data, and the certificate authority — and every generated
-application takes one more. Those survive the application being stopped: a
+Docker hands each network a block from a small pool. **The stack takes
+three** — backend, frontend, and data — and every generated application takes
+one more. Those survive the application being stopped: a
 machine that has hosted a few of them has no room left, and `docker network ls`
 gives no hint, because nothing reports how many blocks remain.
 

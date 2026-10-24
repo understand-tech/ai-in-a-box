@@ -7,7 +7,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$SCRIPT_DIR/images.sh"
 WORK_DIR="$(mktemp -d)"
 
-# The restic and step-ca containers run as root and write into WORK_DIR, so the
+# The restic containers run as root and write into WORK_DIR, so the
 # shell that created it cannot remove what they left.
 cleanup() {
     [[ -s "$WORK_DIR/license/image" ]] && docker image rm "$(cat "$WORK_DIR/license/image")" >/dev/null 2>&1
@@ -1854,7 +1854,7 @@ both_tools_name_every_image_alike() {
     [[ -z "$differ" ]] || { echo "the two tools name images differently:${differ}"; return 1; }
     [[ "$(REGISTRY=reg.example.test installer_names 'caddy:2-alpine@sha256:ab')" == "reg.example.test/library/caddy:2-alpine@sha256:ab" ]] \
         && [[ "$(REGISTRY=reg.example.test installer_names 'ghcr.io/understand-tech/ut-api-customer:2.1@sha256:ab')" == "reg.example.test/understand-tech/ut-api-customer:2.1@sha256:ab" ]] \
-        && [[ "$(REGISTRY=reg.example.test installer_names 'smallstep/step-ca:0.30.2@sha256:ab')" == "reg.example.test/smallstep/step-ca:0.30.2@sha256:ab" ]] \
+        && [[ "$(REGISTRY=reg.example.test installer_names 'restic/restic:0.18.1@sha256:ab')" == "reg.example.test/restic/restic:0.18.1@sha256:ab" ]] \
         && return 0
     echo "the mapping does not keep each image under its own path"
     return 1
@@ -2422,16 +2422,6 @@ overrides_isolate_every_resource() {
     ! grep -q '/var/lib/understandtech' <<< "$rendered"
 }
 
-the_authority_root_is_where_the_backup_looks() {
-    command -v jq >/dev/null || { echo "jq absent"; return 1; }
-    local config root backed_up
-    config=$( cd "$WORK_DIR" && docker compose -f compose.yaml config --format json 2>/dev/null )
-    root=$(jq -r '.services["step-ca"].volumes[]? | select(.target == "/home/step") | .source' <<< "$config")
-    backed_up=$(jq -r '.services["files-backup"].volumes[]? | select(.target == "/data") | .source' <<< "$config")
-    [[ -n "$root" && -n "$backed_up" ]] || { echo "no root or no backup source"; return 1; }
-    [[ "$root" == "$backed_up"/* ]] || { echo "the root at ${root} is outside ${backed_up}"; return 1; }
-}
-
 the_https_authority_is_where_the_backup_looks() {
     command -v jq >/dev/null || { echo "jq absent"; return 1; }
     local config mounted
@@ -2460,81 +2450,6 @@ the_https_authority_is_backed_up_and_restores_identically() {
     docker run --rm -v "$caddy":/before:ro -v "$out":/after:ro "$ALPINE_IMAGE" \
         diff -r /before/caddy/pki/authorities/local /after/caddy/caddy/pki/authorities/local >/dev/null 2>&1 \
         || { echo "the authority did not come back as it was"; return 1; }
-}
-
-the_machine_surface_uses_the_local_authority() {
-    grep -q 'step-ca:9000/acme' "$REPO_ROOT/caddy/internal-surface.caddy" \
-        && ! grep -qE 'UT_CERT_FILE|acme-v02\.api\.letsencrypt' "$REPO_ROOT/caddy/internal-surface.caddy"
-}
-
-# The public certificate follows UT_INGRESS_MODE, the machine-facing one never
-# does: an appliance behind a customer's load balancer would otherwise leave the
-# authority issuing nothing at all.
-the_machine_surface_survives_every_ingress_mode() {
-    local mode missing=()
-    for mode in internal custom edge; do
-        [[ -f "$REPO_ROOT/caddy/ingress-$mode.caddy" ]] || continue
-        grep -qE 'surface|step-ca' "$REPO_ROOT/caddy/ingress-$mode.caddy" && missing+=("$mode")
-    done
-    (( ${#missing[@]} == 0 )) || { echo "ingress modes that touch the machine surface: ${missing[*]}"; return 1; }
-    grep -q 'import /etc/caddy/surface.caddy' "$REPO_ROOT/Caddyfile"
-}
-
-# The three checks above read the configuration. This one runs it: the
-# authority and the proxy as compose.yaml declares them, with the Caddyfile and
-# the surface fragment from this repository, and asks who signed what the proxy
-# serves.
-the_machine_surface_is_really_served_by_the_authority() {
-    local run=cap-surface-$$ net ca proxy domain=understand.local work issuer
-    net=$run-net; ca=$run-ca; proxy=$run-caddy
-    work="$WORK_DIR/surface"
-    mkdir -p "$work/ca" && chmod 777 "$work/ca"
-
-    docker network create "$net" >/dev/null 2>&1
-    docker run -d --name "$ca" --network "$net" --network-alias step-ca \
-        -v "$work/ca":/home/step \
-        -e DOCKER_STEPCA_INIT_NAME="$domain" \
-        -e DOCKER_STEPCA_INIT_DNS_NAMES="step-ca,$domain" \
-        -e DOCKER_STEPCA_INIT_PASSWORD=capability-test \
-        -e DOCKER_STEPCA_INIT_ACME=true \
-        "$STEP_CA_IMAGE" >/dev/null 2>&1
-
-    # Asked inside the container: the root directory is mode 700 for uid 1000,
-    # and the user running this script is not it on every machine.
-    local attempt
-    for attempt in $(seq 1 20); do
-        docker exec "$ca" test -f /home/step/certs/root_ca.crt >/dev/null 2>&1 && break
-        sleep 3
-    done
-
-    local verdict=1
-    if docker exec "$ca" test -f /home/step/certs/root_ca.crt >/dev/null 2>&1; then
-        docker run -d --name "$proxy" --network "$net" --network-alias "node.$domain" \
-            -e UT_DOMAIN="$domain" \
-            -v "$REPO_ROOT/Caddyfile":/etc/caddy/Caddyfile:ro \
-            -v "$REPO_ROOT/caddy/ingress-internal.caddy":/etc/caddy/ingress.caddy:ro \
-            -v "$REPO_ROOT/caddy/internal-surface.caddy":/etc/caddy/surface.caddy:ro \
-            -v "$REPO_ROOT/caddy/no-inference-surface.caddy":/etc/caddy/inference.caddy:ro \
-            -v "$work/ca/certs":/etc/caddy/ca/certs:ro \
-            "$CADDY_IMAGE" >/dev/null 2>&1
-
-        for attempt in $(seq 1 20); do
-            issuer=$(docker run --rm --network "$net" -v "$work/ca/certs":/certs:ro --user root \
-                --entrypoint sh "$STEP_CA_IMAGE" -c \
-                "step certificate inspect https://node.$domain:8443 --roots /certs/root_ca.crt --short" 2>&1)
-            grep -q 'Provisioner: acme' <<< "$issuer" && { verdict=0; break; }
-            sleep 3
-        done
-        (( verdict )) && docker logs "$proxy" 2>&1 | grep -iE 'error' | tail -4
-    else
-        echo "the authority wrote no root"
-        docker logs "$ca" 2>&1 | tail -4
-    fi
-
-    docker rm -f "$ca" "$proxy" >/dev/null 2>&1
-    docker network rm "$net" >/dev/null 2>&1
-    docker run --rm -v "$work":/w "$ALPINE_IMAGE" sh -c 'rm -rf /w/ca' >/dev/null 2>&1
-    return "$verdict"
 }
 
 # Both directions of the same guard. A run that reaches the authority with an
@@ -2596,11 +2511,10 @@ the_backup_round_trips_through_an_s3_endpoint() {
     local key=capability-key secret=capability-secret-value
     local work="$WORK_DIR/offsite" source="$WORK_DIR/offsite/data" restored="$WORK_DIR/offsite/out"
     net=$run-net; store=$run-store
-    mkdir -p "$source/app-data" "$source/ca/certs" "$restored"
+    mkdir -p "$source/app-data" "$restored"
 
     head -c 200000 /dev/urandom > "$source/app-data/document.bin"
     echo "customer notes" > "$source/app-data/notes.txt"
-    head -c 2000 /dev/urandom > "$source/ca/certs/root_ca.crt"
 
     docker network create "$net" >/dev/null 2>&1
     docker run -d --name "$store" --network "$net" --tmpfs /data \
@@ -2646,7 +2560,7 @@ the_backup_round_trips_through_an_s3_endpoint() {
         && offsite "restic restore latest --target /out" >/dev/null 2>&1; then
         after=$( cd "$restored/data" && find . -type f | sort | while read -r f; do
             printf '%s %s\n' "$f" "$(cksum < "$f" | cut -d' ' -f1)"; done | cksum | cut -d' ' -f1 )
-        [[ "$before" == "$after" && -f "$restored/data/ca/certs/root_ca.crt" ]] && verdict=0
+        [[ "$before" == "$after" ]] && verdict=0
     fi
 
     docker rm -f "$store" >/dev/null 2>&1
@@ -3096,16 +3010,6 @@ capability "a machine that runs an engine records its load" \
 capability "a machine without a GPU still records what its gateway and front door served" \
     lists_service metrics -f compose.yaml -f compose.no-gpu.yaml
 
-group "Machine identity"
-capability "the appliance runs its own certificate authority" \
-    lists_service step-ca -f compose.yaml
-capability "its root sits where the file backup looks" \
-    the_authority_root_is_where_the_backup_looks
-capability "the machine-facing surface takes its certificate from that authority" \
-    the_machine_surface_uses_the_local_authority
-capability "it does so whatever the customer chose for the public one" \
-    the_machine_surface_survives_every_ingress_mode
-
 if [[ -x "$REPO_ROOT/bin/ut-certificate" ]]; then
     group "Public certificate"
     capability "a name no authority can certify is refused before anything is asked" \
@@ -3113,8 +3017,6 @@ if [[ -x "$REPO_ROOT/bin/ut-certificate" ]]; then
     capability "an incomplete configuration is named, with every hostname it would request" \
         public_certificates_need_their_configuration
 fi
-capability "and it is really served by it, not just configured to be" \
-    the_machine_surface_is_really_served_by_the_authority
 
 if [[ -f "$REPO_ROOT/setup-autostart.sh" ]]; then
     group "Name resolution"

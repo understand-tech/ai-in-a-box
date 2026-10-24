@@ -30,10 +30,7 @@ const (
 
 var worstFirst = []string{"unhealthy", "starting", "none", "healthy"}
 
-var caCertificates = []struct{ name, path string }{
-	{"ca-root", "/home/step/certs/root_ca.crt"},
-	{"ca-intermediate", "/home/step/certs/intermediate_ca.crt"},
-}
+const caddyAuthorityRoot = "/data/caddy/pki/authorities/local/root.crt"
 
 // Runner runs a command in a directory and returns what it printed, or an
 // error when it failed or ran out of time.
@@ -470,19 +467,19 @@ func servesThePlatform(rows []container) bool {
 
 func certificates(run Runner, rows []container, ingress func(domain string) *x509.Certificate, warnings *[]string) []Certificate {
 	found := []Certificate{}
-	if caddy := runningContainer(rows, "caddy"); caddy != "" && servesThePlatform(rows) {
+	caddy := runningContainer(rows, "caddy")
+	if caddy == "" {
+		return found
+	}
+	if servesThePlatform(rows) {
 		var certificate *x509.Certificate
 		if domain, err := run("", "docker", "exec", caddy, "printenv", "UT_DOMAIN"); err == nil && strings.TrimSpace(domain) != "" {
 			certificate = ingress(strings.TrimSpace(domain))
 		}
 		found = append(found, validity("ingress", certificate))
 	}
-	if stepCA := runningContainer(rows, "step-ca"); stepCA != "" {
-		for _, ca := range caCertificates {
-			content, _ := run("", "docker", "exec", stepCA, "cat", ca.path)
-			found = append(found, validity(ca.name, parsePEM(content)))
-		}
-	}
+	root, _ := run("", "docker", "exec", caddy, "cat", caddyAuthorityRoot)
+	found = append(found, validity("ca-root", parsePEM(root)))
 	for _, certificate := range found {
 		if certificate.NotAfter == nil {
 			*warnings = append(*warnings, "health-unreadable:certificate:"+certificate.Name)

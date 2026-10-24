@@ -1,7 +1,7 @@
 # Restoring
 
 Three things can be restored independently: the database, the customer's files,
-and the certificate authorities. Each has its own archive and its own command.
+and the certificate authority. Each has its own archive and its own command.
 
 Every procedure below has been run end to end. Where a step says what to expect,
 that is what it actually printed.
@@ -19,7 +19,7 @@ flowchart LR
     MONGO["mongodb"]
     DBBACKUP["mongodb-backup - full-server dump, gzip"]
     DUMPS["ut-mongodb-backup volume"]
-    DATAROOT["DATA_ROOT - documents, App Builder projects, the authority root"]
+    DATAROOT["DATA_ROOT - documents, App Builder projects"]
     HTTPSCA["ut-caddy-data - the authority browsers trust"]
     FILESBACKUP["files-backup - restic, encrypted"]
     REPO["restic repository - in that volume by default"]
@@ -37,8 +37,8 @@ flowchart LR
 **Description** — Two services, in a chain. `mongodb-backup` takes a full-server
 dump of every database, compressed with gzip, and writes it into the
 `ut-mongodb-backup` volume. `files-backup` then reads three things — that
-volume; `DATA_ROOT` on the host, which holds uploaded documents, the App
-Builder's projects and step-ca's root; and, in `ut-caddy-data`, the authority
+volume; `DATA_ROOT` on the host, which holds uploaded documents and the App
+Builder's projects; and, in `ut-caddy-data`, the authority
 that signs the HTTPS certificate browsers see — and writes them into a `restic`
 repository, encrypted with `BACKUP_FILES_PASSWORD`. By default the repository
 sits in the same volume as the archives. The two dotted lines are the ways off
@@ -193,34 +193,26 @@ checksum — the authority's root included.
 snapshots cannot be read at all** — no support path, no recovery. It is printed
 once at install time and stored nowhere else.
 
-## 3 · The certificate authorities
+## 3 · The certificate authority
 
-The appliance runs two, and the file backup carries both.
-
-**The one browsers trust** signs the HTTPS certificate of every name the
-appliance serves, when it issues its own (`UT_INGRESS_MODE="internal"`). Caddy
-keeps it in the `ut-caddy-data` volume, under `caddy/pki/authorities/local`; the
-backup reads it from there. It is the root your users' machines imported. With a
-certificate of your own, or behind your load balancer, browsers trust your
-authority instead, and this one signs nothing they see.
-
-**The one machines trust**, step-ca, lives at `${DATA_ROOT}/ca`. Restoring the
-files restores it.
+Caddy keeps it in the `ut-caddy-data` volume, under
+`caddy/pki/authorities/local`; the file backup reads it from there. It signs
+the HTTPS certificate of every name the appliance serves, when it issues its
+own (`UT_INGRESS_MODE="internal"`), and a compute node's inference surface. It
+is the root your users' machines imported. With a certificate of your own, or
+behind your load balancer, browsers trust your authority instead, and this one
+signs nothing they see.
 
 **After a restore, check the root is the one you had:**
 
 ```bash
-docker exec ut-step-ca step certificate inspect /home/step/certs/root_ca.crt --short
+docker exec ut-caddy cat /data/caddy/pki/authorities/local/root.crt | openssl x509 -noout -fingerprint -sha256
 ```
 
 If the fingerprint matches what the appliance used before, every certificate it
-ever issued is still valid and every machine renews as usual. If it does not,
-the authority is a new one and anything enrolled against the old one has to be
-enrolled again.
-
-`test/machine-identity.sh` proves this cycle: back up the root, erase it,
-restart the authority on the restore, and renew a certificate issued before the
-failure.
+ever issued is still valid. If it does not, the authority is a new one:
+browsers warn again until they import it, and a compute node's control plane
+has to be given the new root again, with `--inference-ca-file`.
 
 ## 4 · Start again
 
@@ -267,12 +259,11 @@ shell history. `--no-lock` is what lets `restic` read a disk mounted read-only.
 
 ```bash
 cd /usr/share/understandtech
-docker compose stop api api-customer workers workers-customer llm step-ca files-backup
+docker compose stop api api-customer workers workers-customer llm files-backup
 sudo cp -a /var/lib/understandtech-restored/data/. /var/lib/understandtech/
 ```
 
-That brings back the documents, the App Builder's projects and step-ca's root,
-which replaces the one the fresh install had just created.
+That brings back the documents and the App Builder's projects.
 
 **Then the authority browsers trust**, into the volume where Caddy keeps it.
 The certificates the fresh install already issued with its own authority go, so
@@ -309,12 +300,11 @@ comes back.
 ```bash
 docker compose up -d
 docker exec ut-caddy cat /data/caddy/pki/authorities/local/root.crt | openssl x509 -noout -fingerprint -sha256
-docker exec ut-step-ca step certificate inspect /home/step/certs/root_ca.crt --short
 ```
 
-Both fingerprints are the old machine's: the browsers that imported the first
-root, and the machines enrolled against the second, see nothing change. Then
-open the platform and check one document you know the content of.
+The fingerprint is the old machine's: the browsers that imported it, and a
+compute node's control plane that was told to trust it, see nothing change.
+Then open the platform and check one document you know the content of.
 
 **What you set again by hand.** `/etc/understandtech/local.env` is not in the
 backup: the TLS mode and a customer certificate, the backup destination, and
@@ -342,7 +332,8 @@ matters more than the machine does; see
 [configuration](configuration.md#sending-backups-off-the-machine).
 
 **The archive left behind on the machine.** `restic` carries the `mongodump`
-archives along with `DATA_ROOT`, so an offsite destination protects the database
-as well as the documents and the authority's root. It does not remove what it
+archives along with `DATA_ROOT` and the authority in `ut-caddy-data`, so an
+offsite destination protects the database as well as the documents and the
+authority's root. It does not remove what it
 copied: **the archive stays readable, without a password**, in its volume for as
 long as `BACKUP_CLEANUP_TIME` keeps it — 30 days by default.

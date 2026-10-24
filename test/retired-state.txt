@@ -10,3 +10,11 @@
 # Vision runs on nim-llm; the weights stay on disk until the operator removes
 # them (docs/update.md).
 ut-nim-vlm-cache
+
+# Ollama never ran on the appliance: ut-llm only touches the volume when
+# LLM_BACKEND is "ollama". It stays on disk until the operator removes it
+# (docs/update.md).
+ut-llm-ollama
+
+# step-ca is gone; its network held nothing (docs/update.md).
+ut-ca-network

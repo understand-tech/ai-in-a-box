@@ -35,12 +35,6 @@ import /etc/caddy/ingress.caddy
 
 }
 
-# The surface machines use, as opposed to the one browsers use. Its certificate
-# always comes from the local authority, whatever UT_INGRESS_MODE decides for
-# the public one — which is what keeps the authority issuing on an appliance
-# whose front door holds a customer certificate or sits behind their proxy.
-import /etc/caddy/surface.caddy
-
 # The engine, for the machines a compute node serves; empty on every other role.
 import /etc/caddy/inference.caddy
 

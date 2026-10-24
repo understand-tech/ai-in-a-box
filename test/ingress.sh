@@ -147,7 +147,6 @@ start_the_front_door() {
         -e UT_DOMAIN="$DOMAIN" ${extra[@]+"${extra[@]}"} \
         -v "$REPO_ROOT/Caddyfile":/etc/caddy/Caddyfile:ro \
         -v "$REPO_ROOT/caddy/ingress-${ingress}.caddy":/etc/caddy/ingress.caddy:ro \
-        -v "$REPO_ROOT/caddy/no-internal-surface.caddy":/etc/caddy/surface.caddy:ro \
         -v "$REPO_ROOT/caddy/${inference}.caddy":/etc/caddy/inference.caddy:ro \
         "$CADDY_IMAGE" >/dev/null
 }
