@@ -10,7 +10,7 @@ name: nightly
 #
 # Scheduled rather than triggered by a push, because these are the checks that
 # can break without anyone changing this repository: they exercise upstream
-# images — mongo, db-backup — which move on their own.
+# images — mongo, db-backup, redis, caddy — which move on their own.
 on:
   schedule:
     - cron: '0 3 * * *'
@@ -43,3 +43,15 @@ jobs:
         run: echo "${{ secrets.GITHUB_TOKEN }}" \
           | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
       - run: ./test/database-restore.sh
+
+  # The only check that brings the stack up for real: mongo, redis and caddy as
+  # the release pins them, public stand-ins for the private images.
+  stub-stack:
+    name: the stack comes up on public stand-ins
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TESTED_BRANCH }}
+      - run: ./test/stub-stack.sh
