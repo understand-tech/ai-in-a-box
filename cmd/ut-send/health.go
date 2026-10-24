@@ -96,6 +96,12 @@ type Health struct {
 	Backups         []Backup      `json:"backups"`
 	Certificates    []Certificate `json:"certificates"`
 	NTPSynchronized *bool         `json:"ntp_synchronized"`
+	Redis           *RedisMemory  `json:"redis,omitempty"`
+}
+
+type RedisMemory struct {
+	UsedBytes *int64 `json:"used_bytes"`
+	MaxBytes  *int64 `json:"max_bytes"`
 }
 
 type container struct {
@@ -192,6 +198,26 @@ func redis(run Runner, id string, args ...string) (string, bool) {
 		return "", false
 	}
 	return strings.TrimSpace(output), true
+}
+
+func redisMemory(run Runner, id string, warnings *[]string) *RedisMemory {
+	info, _ := redis(run, id, "INFO", "memory")
+	memory := RedisMemory{infoBytes(info, "used_memory"), infoBytes(info, "maxmemory")}
+	if memory.UsedBytes == nil || memory.MaxBytes == nil {
+		*warnings = append(*warnings, "health-unreadable:redis-memory")
+	}
+	return &memory
+}
+
+func infoBytes(info, field string) *int64 {
+	for _, line := range strings.Split(info, "\n") {
+		if value, found := strings.CutPrefix(strings.TrimSpace(line), field+":"); found {
+			if n, err := strconv.ParseInt(value, 10, 64); err == nil {
+				return &n
+			}
+		}
+	}
+	return nil
 }
 
 func queues(run Runner, id string) []Queue {
@@ -533,6 +559,7 @@ func (m machine) health() (Health, []string) {
 				section.Workers = optional(n)
 			}
 		}
+		section.Redis = redisMemory(m.run, id, &warnings)
 	}
 	dockerRoot, _ := m.run("", "docker", "info", "-f", "{{.DockerRootDir}}")
 	section.Disks = disks([]string{"/", strings.TrimSpace(dockerRoot), dataRoot}, m.space)
