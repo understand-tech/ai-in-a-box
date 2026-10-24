@@ -92,8 +92,9 @@ var everyAnswer = map[string]string{
 	"docker exec eeee redis-cli LLEN rq:queue:default":   "3\n",
 	"docker exec eeee redis-cli ZCARD rq:failed:default": "1\n",
 	"docker exec eeee redis-cli SCARD rq:workers":        "4\n",
-	"docker info": "/var/lib/docker\n",
-	"nvidia-smi":  "41, 87844\n99, 10\n",
+	"docker exec eeee redis-cli INFO memory":             "# Memory\r\nused_memory:1562352\r\nused_memory_human:1.49M\r\nmaxmemory:536870912\r\nmaxmemory_human:512.00M\r\n",
+	"docker info":                                        "/var/lib/docker\n",
+	"nvidia-smi":                                         "41, 87844\n99, 10\n",
 	"docker exec ffff curl -sf --max-time 5 http://127.0.0.1:8000/v1/models": `{"data": [{"id": "qwen"}]}`,
 	"docker exec ffff printenv NIM_SERVED_MODEL_NAME":                        "qwen\n",
 	"docker exec ffff curl -sf --max-time 5 http://127.0.0.1:8000/metrics":   "vllm:request_success_total{finished_reason=\"stop\"} 10.0\nvllm:request_success_total{finished_reason=\"length\"} 2.0\n",
@@ -140,6 +141,9 @@ func TestTheHealthOfTheStackIsReadTheWayThePrototypeReadIt(t *testing.T) {
 	}
 	if !reflect.DeepEqual(warnings, []string{"health-unreadable:certificate:ingress"}) {
 		t.Fatalf("warnings %v", warnings)
+	}
+	if health.Redis == nil || *health.Redis.UsedBytes != 1562352 || *health.Redis.MaxBytes != 536870912 {
+		t.Fatalf("redis memory %+v", health.Redis)
 	}
 	root := health.Certificates[len(health.Certificates)-1]
 	if root.Name != "ca-root" || root.NotAfter == nil || *root.NotAfter != "2036-08-09T00:00:00Z" {
@@ -244,7 +248,25 @@ func TestAComputeNodeReportsItsAuthorityAndNoFrontDoorCertificate(t *testing.T) 
 		"docker exec ffff curl -sf --max-time 5 http://127.0.0.1:8000/v1/models": `{"data": [{"id": "nemotron"}]}`,
 	}
 	health, warnings := machineAnswering(t, answers).health()
+	if health.Redis != nil {
+		t.Fatalf("a node that runs no Redis reported %+v", health.Redis)
+	}
 	if len(health.Certificates) != 1 || health.Certificates[0].Name != "ca-root" || !reflect.DeepEqual(warnings, []string{}) {
 		t.Fatalf("certificates %+v warnings %v", health.Certificates, warnings)
+	}
+}
+
+func TestARedisThatDoesNotSayItsMemoryIsNamedNotGuessed(t *testing.T) {
+	answers := map[string]string{
+		"docker ps -aq --filter label=com.docker.compose.project=understandtech": "eeee\n",
+		"docker inspect":                         "redis running healthy 0 false eeee\n",
+		"docker exec eeee redis-cli INFO memory": "# Memory\r\nused_memory_human:1.49M\r\n",
+	}
+	health, warnings := machineAnswering(t, answers).health()
+	if health.Redis == nil || health.Redis.UsedBytes != nil || health.Redis.MaxBytes != nil {
+		t.Fatalf("redis memory %+v", health.Redis)
+	}
+	if !reflect.DeepEqual(warnings, []string{"health-unreadable:redis-memory"}) {
+		t.Fatalf("warnings %v", warnings)
 	}
 }
