@@ -197,7 +197,7 @@ services:
     volumes:
       - redis-data:/data
     networks:
-      - ut-backend-network
+      - ut-redis-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       <<: *healthcheck-defaults
@@ -353,6 +353,7 @@ services:
       - uploads-data:/tmp/uploads
       - ${DATA_ROOT:-/var/lib/understandtech}/app-data:/app/storage
     networks:
+      - ut-redis-network
       - ut-backend-network
       - ut-frontend-network
       - ut-data-network
@@ -392,6 +393,7 @@ services:
       - uploads-data:/tmp/uploads
       - ${DATA_ROOT:-/var/lib/understandtech}/app-data:/app/storage
     networks:
+      - ut-redis-network
       - ut-backend-network
       - ut-frontend-network
       - ut-data-network
@@ -461,6 +463,7 @@ services:
       - uploads-data:/tmp/uploads
       - ${DATA_ROOT:-/var/lib/understandtech}/app-data:/app/storage
     networks:
+      - ut-redis-network
       - ut-backend-network
       - ut-frontend-network
       - ut-data-network
@@ -497,6 +500,7 @@ services:
       - uploads-data:/tmp/uploads
       - ${DATA_ROOT:-/var/lib/understandtech}/app-data:/app/storage
     networks:
+      - ut-redis-network
       - ut-backend-network
       - ut-frontend-network
       - ut-data-network
@@ -754,6 +758,10 @@ services:
 networks:
   ut-backend-network:
     name: ${RESOURCE_PREFIX:-ut}-backend-network
+    driver: bridge
+    internal: true
+  ut-redis-network:
+    name: ${RESOURCE_PREFIX:-ut}-redis-network
     driver: bridge
     internal: true
   ut-frontend-network:

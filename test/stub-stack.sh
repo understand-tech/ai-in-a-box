@@ -63,6 +63,7 @@ JWT_SECRET="$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9')"
 STATE_SECRET="$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9')"
 GPU_VM_API_TOKEN="unused-by-the-stubs"
 BACKUP_FILES_PASSWORD="unused-by-the-stubs"
+GATEWAY_METRICS_TOKEN="unused-by-the-stubs"
 WORKER_REPLICAS="1"
 WORKER_CUSTOMER_REPLICAS="1"
 SETTINGS
@@ -87,6 +88,14 @@ a_real_service_answers() {
     compose_here exec -T "$service" "$@"
 }
 
+reaches_redis() {
+    compose_here exec -T "$1" sh -c 'nc -z -w 3 redis 6379' >/dev/null 2>&1
+}
+
+cannot_reach_redis() {
+    ! reaches_redis "$1"
+}
+
 printf '%sThe stack, brought up on public stand-ins%s %s(mongodb, redis and caddy are real)%s\n\n' \
     "$BOLD" "$NC" "$BOLD" "$NC"
 
@@ -105,6 +114,10 @@ check "the database answers its own healthcheck, not a stub's" \
     a_real_service_answers mongodb mongosh --quiet --eval 'db.adminCommand("ping").ok'
 check "redis answers" \
     a_real_service_answers redis redis-cli ping
+check "the workers reach Redis on its own network" \
+    reaches_redis workers
+check "a service that does not use Redis cannot reach it" \
+    cannot_reach_redis admin-portal
 check "the front door validates the real Caddyfile" \
     a_real_service_answers caddy caddy validate --config /etc/caddy/Caddyfile
 check "a stubbed upstream answers the route its healthcheck asks for" \

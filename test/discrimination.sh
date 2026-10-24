@@ -95,6 +95,14 @@ discriminates "a Redis that evicts the keys it holds with a lifetime" \
     "queue-eviction:redis" \
     "sed -i.bak 's/maxmemory-policy noeviction/maxmemory-policy volatile-lru/' compose.yaml"
 
+discriminates "the inference engine let into Redis's network" \
+    "redis-reachable-by:nim-llm" \
+    "sed -i.bak '/^  nim-llm:\$/,/^  [a-z]/ s|^      - ut-backend-network\$|      - ut-backend-network\\n      - ut-redis-network|' compose.yaml"
+
+discriminates "Redis put back on the network the engines share" \
+    "redis-on-a-shared-network:ut-backend-network" \
+    "sed -i.bak '/^  redis:\$/,/^  [a-z]/ s|^      - ut-redis-network\$|      - ut-backend-network|' compose.yaml"
+
 discriminates "a secret given a value by the release" \
     "plaintext-secret:OA_KEY" \
     "printf 'OA_KEY=\"a3f9c1d2e4b8\"\n' >> release.env"
