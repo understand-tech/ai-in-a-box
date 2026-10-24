@@ -371,6 +371,34 @@ check_every_setting_reaches_something() {
     done <<< "$(env_keys)"
 }
 
+service_networks() {
+    awk '/^services:/ { inside = 1; next }
+         inside && /^[^[:space:]#]/ { inside = 0 }
+         inside && /^  [a-z][a-z0-9-]*:$/ { service = $1; sub(/:$/, "", service); listing = 0; next }
+         inside && /^    networks:/ { listing = 1; next }
+         listing && /^    [^ ]/ { listing = 0 }
+         listing && /^      - / { network = $2; print service, network; next }
+         listing && /^      [a-z][a-z0-9-]*:/ { network = $1; sub(/:.*/, "", network); print service, network }' \
+        "$REPO_ROOT"/compose*.yaml
+}
+
+check_only_its_clients_reach_redis() {
+    local service network
+    while read -r service network; do
+        [[ -n "$service" ]] || continue
+        if [[ "$service" == redis && "$network" != ut-redis-network ]]; then
+            report "redis-on-a-shared-network:${network}" \
+                "redis joins ${network}: every service there can read and erase its queues and session revocations, with no password asked"
+        elif [[ "$service" != redis && "$network" == ut-redis-network ]]; then
+            case "$service" in
+                api|workers|api-customer|workers-customer) ;;
+                *) report "redis-reachable-by:${service}" \
+                       "${service} joins ut-redis-network: it reaches a Redis that asks for no password and that it does not use" ;;
+            esac
+        fi
+    done <<< "$(service_networks)"
+}
+
 check_every_volume_is_mounted() {
     local volume
     while read -r volume; do
@@ -828,6 +856,7 @@ main() {
     check_the_first_backup_is_not_deferred_to_a_clock_time
     check_every_setting_reaches_something
     check_every_volume_is_mounted
+    check_only_its_clients_reach_redis
     check_the_gateway_trusts_the_app_builder_key
     check_defaults_do_not_diverge
     check_required_variables_appear_in_the_template

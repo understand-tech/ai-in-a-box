@@ -48,13 +48,14 @@ The worker services scale with `WORKER_REPLICAS` and `WORKER_CUSTOMER_REPLICAS`.
 
 ## Networks
 
-The stack declares four bridge networks. **Three of them are `internal: true`**,
+The stack declares five bridge networks. **Four of them are `internal: true`**,
 which means the containers attached only to those have no route off the box.
 
 | Network | Internal | Who is on it |
 |---|---|---|
 | `ut-frontend-network` | no | `caddy`, `frontend`, `api`, `api-customer`, the workers, `app-llms`, `app-assistants`, `admin-portal`, `llm` |
-| `ut-backend-network` | **yes** | `api`, `api-customer`, the workers, `app-assistants`, `admin-portal`, `llm`, `nim-llm`, `metrics`, `redis`, `files-backup` |
+| `ut-backend-network` | **yes** | `api`, `api-customer`, the workers, `app-assistants`, `admin-portal`, `llm`, `nim-llm`, `metrics`, `files-backup` |
+| `ut-redis-network` | **yes** | `redis`, and the four services that use it: `api`, `api-customer` and their workers |
 | `ut-data-network` | **yes** | `mongodb`, `mongodb-backup`, `api`, `api-customer`, the workers, `app-llms`, `app-assistants`, `llm` |
 | `ut-metrics-network` | **yes** | `caddy`, `metrics` — the recorder reads Caddy's counters on `:2020`, which no compose file publishes |
 

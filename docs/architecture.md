@@ -64,15 +64,17 @@ flowchart LR
     BACK["ut-backend-network - internal"]
     DATA["ut-data-network - internal"]
     METRICS["ut-metrics-network - internal"]
+    REDIS["ut-redis-network - internal"]
     OUTSIDE -->|"ports 80 and 443, caddy only"| FRONT
     FRONT --- BACK
     FRONT --- DATA
     FRONT --- METRICS
+    FRONT --- REDIS
 ```
 
-**Description** — The stack declares four bridge networks. **Only
+**Description** — The stack declares five bridge networks. **Only
 `ut-frontend-network` is reachable from outside**, and only through the two
-ports `caddy` publishes. The other three are declared `internal: true`, which
+ports `caddy` publishes. The other four are declared `internal: true`, which
 means a container attached only to one of them has no route off the box — it
 cannot call an external API, download anything, or be reached from the network.
 The plain lines are not traffic: they mark that some containers sit on two
@@ -86,12 +88,15 @@ Builder's generated apps is not shown. Not verified: not seen rendered.
 | Network | `internal` | Who is on it |
 |---|---|---|
 | `ut-frontend-network` | no | `caddy`, `frontend`, `api`, `api-customer`, the workers, `app-llms`, `app-assistants`, `admin-portal`, `llm` |
-| `ut-backend-network` | **yes** | `api`, `api-customer`, the workers, `app-assistants`, `admin-portal`, `llm`, `nim-llm`, `metrics`, `redis`, `files-backup` |
+| `ut-backend-network` | **yes** | `api`, `api-customer`, the workers, `app-assistants`, `admin-portal`, `llm`, `nim-llm`, `metrics`, `files-backup` |
+| `ut-redis-network` | **yes** | `redis`, and the four services that use it: `api`, `api-customer` and their workers |
 | `ut-data-network` | **yes** | `mongodb`, `mongodb-backup`, `api`, `api-customer`, the workers, `app-llms`, `app-assistants`, `llm` |
 | `ut-metrics-network` | **yes** | `caddy`, `metrics` |
 
 Read that table the other way round and it says what matters: `mongodb` is on
-`ut-data-network` alone, `redis` and `nim-llm` on `ut-backend-network` alone,
+`ut-data-network` alone, `redis` on `ut-redis-network` alone — Redis asks for no
+password, so only the services that use it can reach it —, `nim-llm` on
+`ut-backend-network` alone,
 `metrics` on `ut-backend-network` and `ut-metrics-network`, both internal.
 **None of them can reach the internet, and
 none of them publishes a host port.** The only containers that straddle the
