@@ -247,8 +247,12 @@ fi
 
 if grep -q 'check_the_gateway_trusts_the_app_builder_key' "$REPO_ROOT/test/invariants.sh"; then
     discriminates "a gateway that stopped trusting the app builder's key" \
+        "gateway-does-not-trust-the-app-builder:x-api-shared-env" \
+        "sed -i.bak '/^x-api-shared-env:/,/^[a-z]/ s|^  GATEWAY_TRUSTED_PROXY_KEYS:.*\$||' compose.yaml"
+
+    discriminates "a service that serves the gateway and trusts no key of its own" \
         "gateway-does-not-trust-the-app-builder:api-customer" \
-        "sed -i.bak '/^  api-customer:\$/,/^  [a-z]/ s|^      GATEWAY_TRUSTED_PROXY_KEYS:.*\$||' compose.yaml"
+        "sed -i.bak 's|^      <<: \\*api-shared-env\$|      GATEWAY_RPM_PER_KEY: \"60\"|' compose.yaml"
 fi
 
 discriminates "a documented path that does not exist" \
