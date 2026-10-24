@@ -91,6 +91,10 @@ discriminates "a volume declared and mounted by no service" \
     "volume-mounted-nowhere:metrics-data" \
     "sed -i.bak '/- metrics-data:/d' compose.yaml"
 
+discriminates "a Redis that evicts the keys it holds with a lifetime" \
+    "queue-eviction:redis" \
+    "sed -i.bak 's/maxmemory-policy noeviction/maxmemory-policy volatile-lru/' compose.yaml"
+
 discriminates "a secret given a value by the release" \
     "plaintext-secret:OA_KEY" \
     "printf 'OA_KEY=\"a3f9c1d2e4b8\"\n' >> release.env"

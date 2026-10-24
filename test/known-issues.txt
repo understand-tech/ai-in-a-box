@@ -6,7 +6,3 @@
 #
 # One identifier per line. Keep the reason next to it.
 
-# --- Production defaults ---------------------------------------------------
-# Redis holds the RQ queues while running allkeys-lru, so tasks can be evicted
-# under memory pressure. 'noeviction' fixes it in one line.
-queue-eviction:redis

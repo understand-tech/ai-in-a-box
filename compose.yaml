@@ -237,7 +237,7 @@ services:
       redis-server
       --appendonly yes
       --maxmemory 512mb
-      --maxmemory-policy allkeys-lru
+      --maxmemory-policy noeviction
       --tcp-keepalive 300
       --timeout 0
     expose:
