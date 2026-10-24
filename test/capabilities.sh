@@ -231,7 +231,7 @@ folder_load_report() {
         printf '%s\n' "${BUSYBOX_IMAGE%%:*}@${BUSYBOX_IMAGE#*@}" "${ALPINE_INDEX_IMAGE%%:*}@${ALPINE_INDEX_IMAGE#*@}" \
             | copy_the_images_into "$probe/folder" "$probe/auth"
         copy_the_tools_into "$probe/folder" "$probe/auth"
-    ) >/dev/null 2>&1 || { echo "PREPARE FAILED"; return 0; }
+    ) > "$probe/prepared.log" 2>&1 || { echo "PREPARE FAILED"; tail -5 "$probe/prepared.log"; return 0; }
     [[ -n "$tamper" ]] && eval "$tamper"
     docker rmi -f "$BUSYBOX_IMAGE" "$ALPINE_INDEX_IMAGE" >/dev/null 2>&1
     docker image ls --digests --format '{{.Repository}}@{{.Digest}}' \
