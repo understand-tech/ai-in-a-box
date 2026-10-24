@@ -303,34 +303,32 @@ judge_one_gateway() {
 # gateway trusts may name the person behind a call, which is what gives each of
 # them a rate limit of their own.
 check_the_gateway_trusts_the_app_builder_key() {
-    local line entry in_services=false service="" hosts=false trusts=false
+    local line entry in_services=false block="" hosts=false trusts=false
     while IFS= read -r line; do
         entry=${line%"${line##*[![:space:]]}"}
         case "$entry" in
-            "services:")
-                in_services=true
-                continue
-                ;;
-            [a-z]*:*)
-                if $in_services; then
-                    judge_one_gateway "$service" "$hosts" "$trusts"
-                fi
-                in_services=false
-                service=""
+            "services:"|x-*:*|[a-z]*:*)
+                judge_one_gateway "$block" "$hosts" "$trusts"
                 hosts=false
                 trusts=false
+                block=""
+                in_services=false
+                case "$entry" in
+                    "services:") in_services=true ;;
+                    x-*) block=${entry%%:*} ;;
+                esac
                 continue
                 ;;
         esac
-        $in_services || continue
+        if $in_services && [[ "$entry" == "  "[a-z]*":" ]]; then
+            judge_one_gateway "$block" "$hosts" "$trusts"
+            block=${entry#  }
+            block=${block%:}
+            hosts=false
+            trusts=false
+            continue
+        fi
         case "$entry" in
-            "  "[a-z]*":")
-                judge_one_gateway "$service" "$hosts" "$trusts"
-                service=${entry#  }
-                service=${service%:}
-                hosts=false
-                trusts=false
-                ;;
             *"GATEWAY_RPM_PER_KEY:"*)
                 hosts=true
                 ;;
@@ -339,9 +337,7 @@ check_the_gateway_trusts_the_app_builder_key() {
                 ;;
         esac
     done < "$REPO_ROOT/compose.yaml"
-    if $in_services; then
-        judge_one_gateway "$service" "$hosts" "$trusts"
-    fi
+    judge_one_gateway "$block" "$hosts" "$trusts"
 }
 
 # A backup deferred to a clock time cannot answer a health check that asks for a
