@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUT_DIR="${OUT_DIR:-$REPO_ROOT/dist}"
 ARCHITECTURES="arm64 amd64"
-TOOLS="ut-send ut-setup"
+TOOLS="ut-send ut-setup ut-arbiter"
 
 usage() {
     cat <<EOF
