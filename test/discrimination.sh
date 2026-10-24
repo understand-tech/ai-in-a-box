@@ -434,8 +434,12 @@ capability_discriminates "a compute node that starts without an engine key" \
     "sed -i.bak 's|VLLM_API_KEY: \${VLLM_API_KEY:?ut-install generates it}|VLLM_API_KEY: \${VLLM_API_KEY:-}|' compose.compute.yaml"
 
 capability_discriminates "an arbiter that also starts the control plane's API" \
-    "the arbiter role keeps only Caddy, no control plane and no GPU" \
+    "the arbiter role keeps only the arbiter and Caddy, no control plane and no GPU" \
     "sed -i.bak '/^  api:\$/,+1d' compose.arbiter.yaml"
+
+capability_discriminates "an arbiter whose ports merge with the platform's instead of replacing them" \
+    "the arbiter role publishes only its own port, never the platform's" \
+    "sed -i.bak 's|ports: !override|ports:|' compose.arbiter.yaml"
 
 capability_discriminates "the arguments of a vLLM model passed as one" \
     "each argument of the model reaches vLLM whole, JSON included" \
