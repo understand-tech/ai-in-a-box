@@ -28,33 +28,45 @@ ut-import-app — wires an app that was not built by the App Builder into the
 same stack: its own route on *.apps.<domain>, a path back to the platform's
 gateway, started and checked.
 
-  ut-import-app <source> <project-id> --service NAME --port PORT
+  ut-import-app <source> <project-id> --service NAME --port PORT \
+      [--env-map APP_VAR=PLATFORM_KEY ...]
 
   <source>      a directory with a docker-compose.yml, or a .tar.gz of one
                 (the App Builder's "Download codebase" produces exactly this)
   <project-id>  DNS label; the app answers on https://<project-id>.apps.<UT_DOMAIN>
 
 Options
-  --service NAME   the compose service Traefik should reach (its port is
-                    published to nothing else — only this one joins the
-                    shared `proxy` network, by design: see the note below)
-  --port PORT      the container port that service listens on
-  -h, --help       this message
+  --service NAME       the compose service Traefik should reach (its port is
+                        published to nothing else — only this one joins the
+                        shared `proxy` network, by design: see the note below)
+  --port PORT          the container port that service listens on
+  --env-map APP_VAR=PLATFORM_KEY
+                        write APP_VAR into the app's .env, set to the named
+                        platform value. Repeatable. There is no fixed set of
+                        names an imported app expects — the App Builder's own
+                        template wants UNDERSTAND_API_URL, an app deployed in
+                        AWS wants UT_CUSTOMER_URL for the exact same value
+                        (`terraform/App/envs/staging.tfvars`,
+                        tce_manual_env_variables). This is that same mapping,
+                        app-side name first, same as there. PLATFORM_KEY is
+                        one of:
+                          PUBLIC_URL   https://<UT_DOMAIN>
+                          API_URL      PUBLIC_URL, with /api
+                          LLM_URL      PUBLIC_URL, with /api/llm
+                          API_KEY      UT_API_KEY from the environment
+  -h, --help            this message
 
 Environment
-  UT_API_KEY   written into the app's .env; a command-line flag would put it
-               in the shell history and the process table, so it is read
-               from here instead, the same reasoning ut-certificate already
-               applies to the credentials it hands lego. Left unset, the
-               app's own calls to the gateway will 401 until one is set by
-               hand (minting a key is an admin-portal action this tool does
-               not perform).
+  UT_API_KEY   the value --env-map X=API_KEY writes. A command-line flag
+               would put it in the shell history and the process table, so
+               it is read from here instead, the same reasoning
+               ut-certificate already applies to the credentials it hands
+               lego.
 
 What it does
   1. Copies <source> under $DATA_ROOT/imported-apps/<project-id>.
   2. Refuses it if a service mounts the Docker socket or runs privileged.
-  3. Writes UNDERSTAND_API_URL, UT_LLM_BASE_URL, PROJECT_ID (and UT_API_KEY,
-     if given) into its .env.
+  3. Writes PROJECT_ID, and whatever --env-map asked for, into its .env.
   4. Writes a docker-compose.override.yml: every service gets a route back
      to the platform (extra_hosts, and the box's root CA if it has one);
      only --service joins `proxy`, with an alias of <project-id> — the
@@ -166,17 +178,32 @@ env_set() {
     mv "$tmp" "$file"
 }
 
+platform_value() {
+    local key=$1 public_url=$2 api_key=$3
+    case "$key" in
+        PUBLIC_URL) printf '%s' "$public_url" ;;
+        API_URL)    printf '%s/api' "$public_url" ;;
+        LLM_URL)    printf '%s/api/llm' "$public_url" ;;
+        API_KEY)    printf '%s' "$api_key" ;;
+        *)          return 1 ;;
+    esac
+}
+
 write_env_additions() {
-    local app_dir=$1 project_id=$2 public_url=$3 api_key=$4 env_file
+    local app_dir=$1 project_id=$2 public_url=$3 api_key=$4 env_file mapping name key value
+    shift 4
     env_file="$app_dir/.env"
     env_set "$env_file" PROJECT_ID "$project_id"
-    env_set "$env_file" UNDERSTAND_API_URL "$public_url"
-    env_set "$env_file" UT_LLM_BASE_URL "$public_url/api/llm"
-    if [[ -n "$api_key" ]]; then
-        env_set "$env_file" UT_API_KEY "$api_key"
-    else
-        log_warn "No --api-key given — UT_API_KEY left out of $env_file; the app's calls to the gateway will 401 until one is set"
-    fi
+    for mapping in "$@"; do
+        name=${mapping%%=*}
+        key=${mapping#*=}
+        value=$(platform_value "$key" "$public_url" "$api_key") \
+            || die "--env-map $mapping: '$key' is not PUBLIC_URL, API_URL, LLM_URL or API_KEY"
+        if [[ "$key" == API_KEY && -z "$value" ]]; then
+            log_warn "--env-map $mapping: UT_API_KEY is not set — $name written empty in $env_file"
+        fi
+        env_set "$env_file" "$name" "$value"
+    done
 }
 
 # Best-effort: present when Caddy issues its own internal certificates
@@ -285,10 +312,16 @@ smoke_test_inbound() {
 
 main() {
     local source="" project_id="" service="" port="" api_key="${UT_API_KEY:-}"
+    local env_maps=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --service) service=$2; shift 2 ;;
             --port) port=$2; shift 2 ;;
+            --env-map)
+                [[ "$2" == *=* ]] || die "--env-map wants APP_VAR=PLATFORM_KEY, got: $2"
+                env_maps+=("$2")
+                shift 2
+                ;;
             -h|--help) usage; exit 0 ;;
             -*) die "Unknown option: $1" ;;
             *)
@@ -324,7 +357,8 @@ main() {
     mounts_the_docker_socket_or_runs_privileged "$compose_file" \
         && die "$compose_file mounts the Docker socket or runs privileged — refusing to import"
 
-    write_env_additions "$app_dir" "$project_id" "$public_url" "$api_key"
+    write_env_additions "$app_dir" "$project_id" "$public_url" "$api_key" \
+        "${env_maps[@]+"${env_maps[@]}"}"
 
     local has_ca=false
     install -d -m 755 "$app_dir/.ut-import"
