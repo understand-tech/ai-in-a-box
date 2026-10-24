@@ -17,7 +17,7 @@ two or three of them, never all six.
 | It | Run | What it still needs |
 |---|---|---|
 | Does | `ut-get --version <version>`: it downloads the release and checks its signature | nothing |
-| Does not | copy the package and its `.sig` to a USB stick, then `ut-get --from <directory>` | **the images already on the box.** This release brings the package, not the images: an install with `--skip-pull` expects them there. Ask UnderstandTech for them |
+| Does not | on a connected machine, `ut-get --prepare <folder> --version <version> --license-file license.key`; carry the folder to the box, then `ut-get --from <folder>` | [the folder carries the package, the images and the weights](install.md#in-one-command); the box checks each against the signed release and downloads nothing |
 
 ## 3 · How will people reach it?
 

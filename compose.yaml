@@ -31,7 +31,6 @@ x-public-urls:
   frontend-auth:       &url-frontend-auth       ${FRONTEND_URL_AUTH:-${UT_PUBLIC_SCHEME:-https}://${UT_DOMAIN:-understand.local}/en/chat}
   allowed-origins:     &url-allowed-origins     ${EXTRA_ALLOWED_ORIGINS:-${UT_PUBLIC_SCHEME:-https}://admin.${UT_DOMAIN:-understand.local},${UT_PUBLIC_SCHEME:-https}://llms.${UT_DOMAIN:-understand.local},${UT_PUBLIC_SCHEME:-https}://assistants.${UT_DOMAIN:-understand.local},${UT_PUBLIC_SCHEME:-https}://builder.${UT_DOMAIN:-understand.local}}
   gateway-public:      &url-gateway-public      ${GATEWAY_PUBLIC_URL:-${UT_PUBLIC_SCHEME:-https}://${UT_DOMAIN:-understand.local}}
-  vite-api-rest:       &url-vite-api-rest       ${VITE_URL_API_REST:-${UT_PUBLIC_SCHEME:-https}://${UT_DOMAIN:-understand.local}}
   vite-api-base:       &url-vite-api-base       ${VITE_API_BASE_URL:-${UT_PUBLIC_SCHEME:-https}://${UT_DOMAIN:-understand.local}/api}
   vite-ut-app:         &url-vite-ut-app         ${VITE_UT_APP_URL:-${UT_PUBLIC_SCHEME:-https}://${UT_DOMAIN:-understand.local}}
   app-llms:            &url-app-llms            ${APP_LLMS_BASE_URL:-${UT_PUBLIC_SCHEME:-https}://llms.${UT_DOMAIN:-understand.local}}
@@ -477,12 +476,6 @@ services:
     restart: unless-stopped
     expose:
       - "80"
-    environment:
-      BACKEND_URL: *url-backend
-      VITE_URL_API_REST: *url-vite-api-rest
-      VITE_AUTH_TYPE: ${VITE_AUTH_TYPE:-}
-      VITE_DEPLOYMENT_TYPE: ${VITE_DEPLOYMENT_TYPE:-}
-      VITE_DB_PROVIDER: ${DB_PROVIDER:-mongodb}
     networks:
       - ut-frontend-network
     depends_on:
@@ -756,10 +749,6 @@ services:
       GPU_VM_API_TOKEN: ${GPU_VM_API_TOKEN:?ut-install generates it}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       SENDGRID_API_KEY: ${SENDGRID_API_KEY:-}
-      OLLAMA_MODEL_LLM: ${OLLAMA_MODEL_LLM:-}
-      OLLAMA_MODEL_CONDENSE_LLM: ${OLLAMA_MODEL_CONDENSE_LLM:-}
-      OLLAMA_MODEL_VLM: ${OLLAMA_MODEL_VLM:-}
-      OLLAMA_HOST_PORT: ${OLLAMA_HOST_PORT:-}
       MODELS_DIR: ${MODELS_DIR:-}
       EMBED_URL: ${EMBED_URL:-}
       EMBED_MODEL_NAME: ${EMBED_MODEL_NAME:-}
@@ -790,7 +779,6 @@ services:
       HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-1}
     volumes:
       - vllm-models:/root/.cache/huggingface
-      - llm-ollama:/root/.ollama
       - llm-models:/root/models
       - ${DATA_ROOT:-/var/lib/understandtech}/app-data:/app/storage
     networks:
@@ -852,15 +840,11 @@ volumes:
     name: ${RESOURCE_PREFIX:-ut}-mongodb-data
   mongodb-backups:
     name: ${RESOURCE_PREFIX:-ut}-mongodb-backup
-  llm-ollama:
-    name: ${RESOURCE_PREFIX:-ut}-llm-ollama
   llm-models:
     name: ${RESOURCE_PREFIX:-ut}-llm-models
   vllm-models:
     name: ${RESOURCE_PREFIX:-ut}-vllm-models
   nim-llm-cache:
     name: ${RESOURCE_PREFIX:-ut}-nim-llm-cache
-  vllm-llm-cache:
-    name: ${RESOURCE_PREFIX:-ut}-vllm-llm-cache
   metrics-data:
     name: ${RESOURCE_PREFIX:-ut}-metrics-data

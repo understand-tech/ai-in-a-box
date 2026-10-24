@@ -81,10 +81,8 @@ internet is kept off it.
 | `ut-mongodb-data` | MongoDB database files |
 | `ut-mongodb-backup` | Compressed backup archives |
 | `ut-uploads-data` | Shared upload scratch space (API + workers) |
-| `ut-llm-ollama` | Ollama configuration |
 | `ut-llm-models` | LLM model files |
 | `ut-vllm-models` | Hugging Face cache for the LLM service |
-| `ut-vllm-llm-cache` | vLLM compilation cache |
 | `ut-nim-llm-cache` | NIM chat-model weights (survives updates — do not prune casually) |
 | `ut-metrics-data` | Usage history: engine load, gateway and front door. Not backed up: losing it loses that history and nothing else |
 
