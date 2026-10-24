@@ -455,6 +455,8 @@ reinstallable in a minute.
 |---|---|
 | `--check` | Before anything. Changes nothing. |
 | `--domain NAME` | The address the platform answers on. Asked for when omitted. |
+| `--certificate-dir DIR` | Serve your own certificate, `fullchain.pem` and `privkey.pem` in `DIR`, checked before anything is written. See [certificates and DNS](certificates-and-dns.md). |
+| `--behind-proxy RANGE` | Your load balancer terminates TLS from `RANGE`. See [certificates and DNS](certificates-and-dns.md). |
 | `--license-file PATH` | Read the license key from a file instead of a prompt. |
 | `--token-file PATH` | A registry token instead of a license key. This version only. |
 | `--machine-file PATH` | The license file UnderstandTech sent for a machine that cannot reach Keygen. Checked with no network, then kept. |

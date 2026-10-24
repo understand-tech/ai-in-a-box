@@ -370,7 +370,7 @@ main() {
     domain=$(platform_setting UT_DOMAIN understand.local)
     data_root=$(platform_setting DATA_ROOT "$DATA_ROOT_DEFAULT")
     container_prefix=$(platform_setting CONTAINER_PREFIX "$CONTAINER_PREFIX_DEFAULT")
-    public_url="$(platform_setting UT_PUBLIC_SCHEME https)://$domain"
+    public_url="https://$domain"
     traefik_dir="$data_root/appbuilder/traefik-dynamic"
 
     local app_dir compose_file

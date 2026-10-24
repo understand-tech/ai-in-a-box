@@ -719,6 +719,26 @@ the_node_s_key_stays_out_of_the_output() {
     return 1
 }
 
+tls_ends_with_the_given_certificate() {
+    local settings
+    settings=$(of_state certificate_given local-env)
+    grep -qx 'UT_INGRESS_MODE="custom"' <<< "$settings" && grep -qx 'UT_CADDY_SCHEME="https"' <<< "$settings" \
+        && grep -qx 'UT_CERT_DIR="/w/certs/good"' <<< "$settings" && return 0
+    echo "$settings"
+    output_of certificate_given | tail -5
+    return 1
+}
+
+tls_ends_at_the_given_proxy() {
+    local settings
+    settings=$(of_state behind_a_proxy local-env)
+    grep -qx 'UT_INGRESS_MODE="edge"' <<< "$settings" && grep -qx 'UT_CADDY_SCHEME="http"' <<< "$settings" \
+        && grep -qx 'UT_TRUSTED_PROXIES="10.42.0.0/16"' <<< "$settings" && return 0
+    echo "$settings"
+    output_of behind_a_proxy | tail -5
+    return 1
+}
+
 refused_before_anything_is_written() {
     local state=$1 reason=$2 output
     output=$(output_of "$state")
@@ -1068,6 +1088,21 @@ prepare_a_compute_node() {
     chmod -R a+r "$work"
 }
 
+prepare_certificates() {
+    local work="$WORK_DIR/certs" case
+    for case in good short with_another_key without_its_key; do mkdir -p "$work/$case"; done
+    certificate_for() {
+        openssl req -x509 -newkey rsa:2048 -sha256 -days 30 -noenc -subj "/CN=box.example.test" \
+            -addext "subjectAltName=$2" -keyout "$1/privkey.pem" -out "$1/fullchain.pem" 2>/dev/null
+    }
+    certificate_for "$work/good" "DNS:box.example.test,DNS:*.box.example.test,DNS:*.apps.box.example.test"
+    certificate_for "$work/short" "DNS:box.example.test"
+    certificate_for "$work/with_another_key" "DNS:box.example.test,DNS:*.box.example.test"
+    openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$work/with_another_key/privkey.pem" 2>/dev/null
+    cp "$work/good/fullchain.pem" "$work/without_its_key/fullchain.pem"
+    chmod -R a+r "$work"
+}
+
 prepare_licenses() {
     local work="$WORK_DIR/licenses"
     mkdir -p "$work"
@@ -1267,6 +1302,7 @@ build_the_package
 write_machine_stubs
 prepare_licenses
 prepare_a_compute_node
+prepare_certificates
 prepare_a_vllm_entry
 
 run_install_from_state bare
@@ -1301,6 +1337,13 @@ WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --inference-from http
 PULL_EXIT=0 INSTALL_COMMAND="ut-install --compute 192.0.2.10" \
     run_install_from_state compute_by_flag -
 INSTALL_COMMAND="ut-install --compute node.local" run_install_from_state compute_named_by_mdns
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --certificate-dir /w/certs/good" run_install_from_state certificate_given
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --certificate-dir /w/certs/short" run_install_from_state certificate_short
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --certificate-dir /w/certs/with_another_key" run_install_from_state certificate_with_another_key
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --certificate-dir /w/certs/without_its_key" run_install_from_state certificate_without_its_key
+INSTALL_COMMAND="ut-install --behind-proxy 10.42.0.0/16" run_install_from_state behind_a_proxy
+INSTALL_COMMAND="ut-install --behind-proxy 0.0.0.0/0" run_install_from_state behind_any_proxy
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --certificate-dir /w/certs/good --behind-proxy 10.42.0.0/16" run_install_from_state certificate_and_proxy
 INSTALL_COMMAND="ut-install --compute 192.0.2.10 --no-gpu" run_install_from_state compute_without_its_gpu
 INSTALL_COMMAND="ut-install --images-from /w/folder_without_its_images/folder" run_install_from_state folder_without_its_images
 INSTALL_COMMAND="ut-install --images-from /w/folder_for_another_processor/folder" run_install_from_state folder_for_another_processor
@@ -1424,6 +1467,20 @@ property "a node reached over plain http is refused before anything is written" 
     a_compute_node_over_http_is_refused
 property "a node named by mDNS is refused before anything is written" \
     refused_before_anything_is_written pointed_at_an_mdns_node "names a .local host"
+property "a certificate given to the installer is the one the front door serves" \
+    tls_ends_with_the_given_certificate
+property "a certificate that misses a name is refused before anything is written" \
+    refused_before_anything_is_written certificate_short "does not cover llms.box.example.test assistants.box.example.test"
+property "a certificate given with another key is refused before anything is written" \
+    refused_before_anything_is_written certificate_with_another_key "is not the key of"
+property "a certificate given without its key is refused before anything is written" \
+    refused_before_anything_is_written certificate_without_its_key "holds no readable privkey.pem"
+property "a load balancer given to the installer ends TLS, and is the only one believed" \
+    tls_ends_at_the_given_proxy
+property "a load balancer range that believes anyone is refused before anything is written" \
+    refused_before_anything_is_written behind_any_proxy "would believe a forwarded address from anyone"
+property "a certificate and a load balancer together are refused before anything is written" \
+    refused_before_anything_is_written certificate_and_proxy "exclude each other"
 property "a folder that lacks an image is refused before anything is written" \
     refused_before_anything_is_written folder_without_its_images "missing or not the one the release names"
 property "a folder prepared for another role is refused, with both roles named" \

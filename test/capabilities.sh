@@ -2478,6 +2478,25 @@ EOF
     grep -q 'no public authority issues' <<< "$output"
 }
 
+the_first_certificate_switches_the_front_door_to_it() {
+    local probe="$WORK_DIR/acme-switch" file
+    mkdir -p "$probe/install" "$probe/settings"
+    printf 'UT_DOMAIN="box.example.com"\nUT_INGRESS_MODE="internal"\nUT_CADDY_SCHEME="https"\n' > "$probe/settings/.env"
+    printf 'UT_DOMAIN="box.example.com"\n' > "$probe/settings/local.env"
+    ln -s "$probe/settings/.env" "$probe/install/.env"
+    ( UT_INSTALL_DIR="$probe/install" source "$REPO_ROOT/bin/ut-certificate"
+      CERT_DIR=/etc/understandtech/certs serve_the_certificate_from_now_on ) \
+        || { echo "it did not switch"; return 1; }
+    [[ -L "$probe/install/.env" ]] || { echo "the settings link was replaced by a file"; return 1; }
+    for file in .env local.env; do
+        grep -qx 'UT_INGRESS_MODE="custom"' "$probe/settings/$file" \
+            && grep -qx 'UT_CERT_DIR="/etc/understandtech/certs"' "$probe/settings/$file" \
+            || { echo "${file}: $(tr '\n' ' ' < "$probe/settings/$file")"; return 1; }
+    done
+    ! ( UT_INSTALL_DIR="$probe/install" source "$REPO_ROOT/bin/ut-certificate"; serve_the_certificate_from_now_on ) \
+        || { echo "it switched again a front door already serving its certificate"; return 1; }
+}
+
 public_certificates_need_their_configuration() {
     local probe="$WORK_DIR/acme-real" output
     mkdir -p "$probe"
@@ -3029,6 +3048,8 @@ if [[ -x "$REPO_ROOT/bin/ut-certificate" ]]; then
         public_certificates_are_refused_where_impossible
     capability "an incomplete configuration is named, with every hostname it would request" \
         public_certificates_need_their_configuration
+    capability "the first certificate it obtains is the one the front door serves, with nothing else to set" \
+        the_first_certificate_switches_the_front_door_to_it
 fi
 
 if [[ -f "$REPO_ROOT/setup-autostart.sh" ]]; then
