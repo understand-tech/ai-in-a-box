@@ -76,6 +76,8 @@ roles_running() {
 
 # An engine a model of models/ runs instead of the release's, such as vLLM for a
 # model NIM cannot serve: carried in a folder prepared for that model only.
+# One line per image, with every model that runs on it: two models on one engine
+# are one component of the bill, not two.
 model_image_lines() {
     local entry id key reference
     for entry in "$REPO_ROOT"/models/*.env; do
@@ -85,9 +87,9 @@ model_image_lines() {
             reference=$(sed -n "s/^${key}=\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" "$entry")
             [[ "$reference" == *@sha256:* ]] || continue
             grep -qF "\"${reference}\"" "$RELEASE_ENV" && continue
-            printf '%s %s\n' "$id" "$reference"
+            printf '%s %s\n' "$reference" "$id"
         done
-    done
+    done | LC_ALL=C sort | awk '$1 != image { if (image) print models, image; image = $1; models = $2; next } { models = models "+" $2 } END { if (image) print models, image }'
 }
 
 component_for_image() {
