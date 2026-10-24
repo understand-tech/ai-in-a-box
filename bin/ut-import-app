@@ -31,8 +31,10 @@ gateway, started and checked.
   ut-import-app <source> <project-id> --service NAME --port PORT \
       [--env-map APP_VAR=PLATFORM_KEY ...]
 
-  <source>      a directory with a docker-compose.yml, or a .tar.gz of one
-                (the App Builder's "Download codebase" produces exactly this)
+  <source>      a directory with a compose file (compose.yaml, compose.yml,
+                docker-compose.yaml or docker-compose.yml), or a .tar.gz of
+                one (the App Builder's "Download codebase" produces exactly
+                this)
   <project-id>  DNS label; the app answers on https://<project-id>.apps.<UT_DOMAIN>
 
 Options
@@ -41,7 +43,8 @@ Options
                         shared `proxy` network, by design: see the note below)
   --port PORT          the container port that service listens on
   --env-map APP_VAR=PLATFORM_KEY
-                        write APP_VAR into the app's .env, set to the named
+                        write APP_VAR into --service's env_file if it names
+                        one, its own .env otherwise, set to the named
                         platform value. Repeatable. There is no fixed set of
                         names an imported app expects — the App Builder's own
                         template wants UNDERSTAND_API_URL, an app deployed in
@@ -145,7 +148,7 @@ stage_source() {
             install -d -m 755 "$dest"
             tar -xzf "$source" -C "$dest"
             # "Download codebase" wraps everything in one top-level directory;
-            # flatten it so docker-compose.yml ends up directly under $dest.
+            # flatten it so the compose file ends up directly under $dest.
             local entries inner
             entries=$(find "$dest" -mindepth 1 -maxdepth 1)
             if [[ $(printf '%s\n' "$entries" | wc -l) -eq 1 && -d "$entries" ]]; then
@@ -159,14 +162,18 @@ stage_source() {
             cp -R "$source" "$dest"
             ;;
     esac
-    [[ -f "$dest/docker-compose.yml" || -f "$dest/docker-compose.yaml" ]] \
-        || die "$dest has no docker-compose.yml — not something this tool can start"
+    [[ -n "$(compose_file_in "$dest")" ]] \
+        || die "$dest has no compose.yaml, compose.yml, docker-compose.yaml or docker-compose.yml — not something this tool can start"
     printf '%s' "$dest"
 }
 
+# Same order Docker Compose itself tries them in.
 compose_file_in() {
-    [[ -f "$1/docker-compose.yml" ]] && { printf '%s/docker-compose.yml' "$1"; return; }
-    printf '%s/docker-compose.yaml' "$1"
+    local dir=$1 name
+    for name in compose.yaml compose.yml docker-compose.yaml docker-compose.yml; do
+        [[ -f "$dir/$name" ]] && { printf '%s/%s' "$dir" "$name"; return 0; }
+    done
+    return 1
 }
 
 env_set() {
@@ -176,6 +183,26 @@ env_set() {
     grep -vE "^${key}=" "$file" > "$tmp" || true
     printf '%s=%s\n' "$key" "$value" >> "$tmp"
     mv "$tmp" "$file"
+}
+
+# A service that names its own env_file reads that one, never the top-level
+# .env compose itself interpolates from — TCE does exactly this (env_file:
+# app.env), so --env-map writing to .env there would have no effect on the
+# running container at all.
+service_env_file() {
+    local file=$1 service=$2 value
+    value=$(awk -v svc="$service" '
+        $0 ~ "^  "svc":[[:space:]]*$" { in_svc=1; next }
+        in_svc && /^  [A-Za-z0-9._-]+:/ { in_svc=0 }
+        in_svc && /^    env_file:/ {
+            line = $0
+            sub(/^    env_file:[[:space:]]*/, "", line)
+            gsub(/^["'"'"']|["'"'"']$/, "", line)
+            print line
+            exit
+        }
+    ' "$file")
+    printf '%s' "${value:-.env}"
 }
 
 platform_value() {
@@ -190,9 +217,8 @@ platform_value() {
 }
 
 write_env_additions() {
-    local app_dir=$1 project_id=$2 public_url=$3 api_key=$4 env_file mapping name key value
-    shift 4
-    env_file="$app_dir/.env"
+    local app_dir=$1 project_id=$2 public_url=$3 api_key=$4 env_file=$5 mapping name key value
+    shift 5
     env_set "$env_file" PROJECT_ID "$project_id"
     for mapping in "$@"; do
         name=${mapping%%=*}
@@ -357,8 +383,11 @@ main() {
     mounts_the_docker_socket_or_runs_privileged "$compose_file" \
         && die "$compose_file mounts the Docker socket or runs privileged — refusing to import"
 
-    write_env_additions "$app_dir" "$project_id" "$public_url" "$api_key" \
+    local env_target
+    env_target="$app_dir/$(service_env_file "$compose_file" "$service")"
+    write_env_additions "$app_dir" "$project_id" "$public_url" "$api_key" "$env_target" \
         "${env_maps[@]+"${env_maps[@]}"}"
+    log_info "Wrote PROJECT_ID and ${#env_maps[@]} --env-map value(s) to $env_target"
 
     local has_ca=false
     install -d -m 755 "$app_dir/.ut-import"
