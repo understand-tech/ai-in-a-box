@@ -192,19 +192,17 @@ check_prerequisites() {
 # rather than from a restart loop. Returns non-zero when something is wrong.
 check_ingress() {
     local errors=0
-    local domain mode caddy_scheme public_scheme cert_dir
+    local domain mode caddy_scheme cert_dir
 
     domain="$(env_value UT_DOMAIN)";               domain="${domain:-understand.local}"
     mode="$(env_value UT_INGRESS_MODE)";           mode="${mode:-internal}"
     caddy_scheme="$(env_value UT_CADDY_SCHEME)";   caddy_scheme="${caddy_scheme:-https}"
-    public_scheme="$(env_value UT_PUBLIC_SCHEME)"; public_scheme="${public_scheme:-https}"
     cert_dir="$(env_value UT_CERT_DIR)";           cert_dir="${cert_dir:-$INSTALL_DIR/caddy/certs}"
 
     log_step "Checking ingress configuration..."
     echo "  UT_DOMAIN          $domain"
     echo "  UT_INGRESS_MODE    $mode"
     echo "  UT_CADDY_SCHEME    $caddy_scheme  (the scheme Caddy listens on)"
-    echo "  UT_PUBLIC_SCHEME   $public_scheme  (the scheme the apps advertise)"
     echo ""
 
     local fragment="$INSTALL_DIR/caddy/ingress-${mode}.caddy"
@@ -700,7 +698,7 @@ SYSTEMD_EOF
 
     local domain scheme
     domain="$(env_value UT_DOMAIN)"; domain="${domain:-understand.local}"
-    scheme="$(env_value UT_PUBLIC_SCHEME)"; scheme="${scheme:-https}"
+    scheme=https
 
     echo ""
     echo -e "${GREEN}Published names:${NC}"

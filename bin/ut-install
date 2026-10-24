@@ -53,6 +53,8 @@ REPORTING_TOKEN_FILE=""
 REPORTING_RECEIVER_CERT=""
 REPORTING_EVERY=""
 INFERENCE_FROM=""
+CERTIFICATE_DIR=""
+BEHIND_PROXY=""
 IMAGES_FROM=""
 COMPUTE_ADDRESS=""
 INFERENCE_KEY_FILE=""
@@ -161,6 +163,17 @@ Options
   --domain NAME        Address the platform is served at. Asked for when it is
                        not given, offering the address this machine already
                        answers on, or understand.local on a first install.
+  --certificate-dir DIR
+                       Serve the certificate in DIR — fullchain.pem and
+                       privkey.pem, from your own authority or a public one —
+                       instead of one this machine signs. Checked before
+                       anything is written: both files, that they belong
+                       together, and every name the platform answers on.
+                       Kept by later runs.
+  --behind-proxy RANGE Your load balancer terminates TLS and reaches this
+                       machine from RANGE, a CIDR or several separated by
+                       commas: Caddy serves plain HTTP and believes the client
+                       addresses forwarded from there only. Kept by later runs.
   --no-autostart       Skip the boot service and the mDNS publisher, which is
                        installed on a .local domain only.
   --skip-pull          Do not pull images. Useful when they are already local.
@@ -1202,6 +1215,81 @@ die_on_a_compute_node_given_wrong() {
     exit 1
 }
 
+certificate_covers() {
+    local names=$1 name=$2
+    [[ "$names" == *",DNS:${name},"* || "$names" == *",DNS:*.${name#*.},"* ]]
+}
+
+problem_with_the_given_certificate() {
+    local dir=$CERTIFICATE_DIR file names name missing=()
+    [[ "$dir" == /* ]] || { echo "--certificate-dir takes an absolute path, not ${dir}: Compose mounts it from there"; return 0; }
+    for file in fullchain.pem privkey.pem; do
+        [[ -r "$dir/$file" ]] || { echo "${dir} holds no readable ${file}"; return 0; }
+    done
+    command -v openssl >/dev/null 2>&1 || { echo "openssl is needed to check the certificate in ${dir}, and this machine has none"; return 0; }
+    openssl x509 -in "$dir/fullchain.pem" -noout 2>/dev/null || { echo "${dir}/fullchain.pem is not a certificate"; return 0; }
+    openssl x509 -in "$dir/fullchain.pem" -noout -checkend 0 >/dev/null 2>&1 \
+        || { echo "the certificate in ${dir} has expired"; return 0; }
+    [[ "$(openssl x509 -in "$dir/fullchain.pem" -noout -pubkey 2>/dev/null)" == "$(openssl pkey -in "$dir/privkey.pem" -pubout 2>/dev/null)" ]] \
+        || { echo "${dir}/privkey.pem is not the key of ${dir}/fullchain.pem"; return 0; }
+    names=",$(openssl x509 -in "$dir/fullchain.pem" -noout -ext subjectAltName 2>/dev/null | tr -d ' \n' | sed 's/^[^:]*://'),"
+    for name in "$DOMAIN" "llms.$DOMAIN" "assistants.$DOMAIN" "admin.$DOMAIN" "builder.$DOMAIN"; do
+        certificate_covers "$names" "$name" || missing+=("$name")
+    done
+    (( ${#missing[@]} == 0 )) && return 1
+    echo "the certificate in ${dir} does not cover ${missing[*]}"
+}
+
+problem_with_the_given_proxy() {
+    local range
+    for range in ${BEHIND_PROXY//,/ }; do
+        case "$range" in
+            0.0.0.0/0|::/0) echo "--behind-proxy ${range} would believe a forwarded address from anyone"; return 0 ;;
+        esac
+        [[ "$range" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$ || "$range" =~ ^[0-9a-fA-F:]+:[0-9a-fA-F:]*(/[0-9]{1,3})?$ ]] \
+            || { echo "--behind-proxy takes address ranges such as 10.42.0.0/16, not ${range}"; return 0; }
+    done
+    return 1
+}
+
+die_on_a_way_for_tls_to_end_given_wrong() {
+    local problem=""
+    if [[ -n "$CERTIFICATE_DIR" && -n "$BEHIND_PROXY" ]]; then
+        problem="--certificate-dir and --behind-proxy exclude each other: either this machine serves the certificate, or your load balancer does"
+    elif [[ -n "$CERTIFICATE_DIR" ]]; then
+        problem=$(problem_with_the_given_certificate) || return 0
+    elif [[ -n "$BEHIND_PROXY" ]]; then
+        problem=$(problem_with_the_given_proxy) || return 0
+    else
+        return 0
+    fi
+    die "$problem"
+}
+
+warn_on_generated_apps_the_certificate_leaves_out() {
+    local names
+    [[ -n "$CERTIFICATE_DIR" ]] || return 0
+    names=",$(openssl x509 -in "$CERTIFICATE_DIR/fullchain.pem" -noout -ext subjectAltName 2>/dev/null | tr -d ' \n' | sed 's/^[^:]*://'),"
+    [[ "$names" == *",DNS:*.apps.${DOMAIN},"* ]] && return 0
+    log_warn "The certificate does not cover *.apps.${DOMAIN}: the App Builder's generated apps will fail TLS."
+    log_warn "  A second wildcard goes in UT_APPS_CERT_FILE and UT_APPS_KEY_FILE (docs/certificates-and-dns.md)."
+}
+
+write_how_tls_ends() {
+    local local_file=$1
+    if [[ -n "$CERTIFICATE_DIR" ]]; then
+        env_set "$local_file" UT_INGRESS_MODE custom
+        env_set "$local_file" UT_CADDY_SCHEME https
+        env_set "$local_file" UT_CERT_DIR "$CERTIFICATE_DIR"
+        log_info "TLS ends here, with the certificate in ${CERTIFICATE_DIR}"
+    elif [[ -n "$BEHIND_PROXY" ]]; then
+        env_set "$local_file" UT_INGRESS_MODE edge
+        env_set "$local_file" UT_CADDY_SCHEME http
+        env_set "$local_file" UT_TRUSTED_PROXIES "$BEHIND_PROXY"
+        log_info "TLS ends at your load balancer; forwarded addresses are believed from ${BEHIND_PROXY} only"
+    fi
+}
+
 write_the_settings_a_compute_node_needs() {
     local local_file=$1 bundle compose_files
     [[ -n "$INFERENCE_FROM" ]] || return 0
@@ -1666,6 +1754,7 @@ step_configure() {
     write_the_settings_an_arbiter_role_needs "$local_file"
     write_the_settings_the_model_needs "$local_file"
     write_the_settings_a_compute_node_needs "$local_file"
+    write_how_tls_ends "$local_file"
     if this_machine_goes_without_its_accelerator; then
         write_the_settings_a_machine_without_an_accelerator_needs "$local_file"
     elif [[ -n "$INFERENCE_FROM" ]]; then
@@ -2547,6 +2636,8 @@ parse_arguments() {
             --dir)            INSTALL_DIR="${2:?--dir needs a path}"; shift ;;
             --from-checkout)  FROM_CHECKOUT="${2:?--from-checkout needs a path}"; shift ;;
             --domain)         DOMAIN="${2:?--domain needs a name}"; shift ;;
+            --certificate-dir) CERTIFICATE_DIR="${2:?--certificate-dir needs the directory holding fullchain.pem and privkey.pem}"; shift ;;
+            --behind-proxy)   BEHIND_PROXY="${2:?--behind-proxy needs the range your load balancer connects from}"; shift ;;
             --health-timeout) HEALTH_TIMEOUT="${2:?--health-timeout needs seconds}"; shift ;;
             --reporting)      REPORTING="${2:?--reporting needs yes or no}"; shift ;;
             --reporting-receiver)      REPORTING_RECEIVER="${2:?--reporting-receiver needs an address}"; shift ;;
@@ -2594,6 +2685,8 @@ main() {
     trap record_this_install EXIT
     preflight
     read_domain
+    die_on_a_way_for_tls_to_end_given_wrong
+    warn_on_generated_apps_the_certificate_leaves_out
     read_credentials
     step_registry_login
     step_fetch_repo

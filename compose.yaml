@@ -13,31 +13,30 @@ x-healthcheck-defaults: &healthcheck-defaults
 
 # Public URLs.
 #
-# Every one of them derives from UT_DOMAIN and UT_PUBLIC_SCHEME (.env), and
-# every one stays individually overridable: a value written explicitly in .env
-# wins over the derived default, so a .env from before this change produces
-# exactly the values it did before.
+# Every one of them derives from UT_DOMAIN (.env), and every one stays
+# individually overridable: a value written explicitly in .env wins over the
+# derived default, so a .env from before this change produces exactly the
+# values it did before.
 #
-# UT_PUBLIC_SCHEME is the scheme the applications advertise to the browser. It
-# does not follow UT_CADDY_SCHEME, which is the one Caddy listens on: behind a
-# load balancer that terminates TLS, Caddy speaks http while these public URLs
-# must stay on https.
+# They are always https, which is what the browser is on. They do not follow
+# UT_CADDY_SCHEME, the scheme Caddy listens on: behind a load balancer that
+# terminates TLS, Caddy speaks http while the browser stays on https.
 x-public-urls:
-  public-base:         &url-public-base         ${PUBLIC_BASE_URL:-${UT_PUBLIC_SCHEME:-https}://${UT_DOMAIN:-understand.local}}
-  domain:              &url-domain              ${DOMAIN_URL:-${UT_PUBLIC_SCHEME:-https}://${UT_DOMAIN:-understand.local}/}
-  backend:             &url-backend             ${BACKEND_URL:-${UT_PUBLIC_SCHEME:-https}://${UT_DOMAIN:-understand.local}/api}
+  public-base:         &url-public-base         ${PUBLIC_BASE_URL:-https://${UT_DOMAIN:-understand.local}}
+  domain:              &url-domain              ${DOMAIN_URL:-https://${UT_DOMAIN:-understand.local}/}
+  backend:             &url-backend             ${BACKEND_URL:-https://${UT_DOMAIN:-understand.local}/api}
   redirect-path:       &url-redirect-path       ${REDIRECT_PATH:-/api/auth/callback}
-  redirect-uri:        &url-redirect-uri        ${REDIRECT_URI:-${UT_PUBLIC_SCHEME:-https}://${UT_DOMAIN:-understand.local}${REDIRECT_PATH:-/api/auth/callback}}
-  frontend-auth:       &url-frontend-auth       ${FRONTEND_URL_AUTH:-${UT_PUBLIC_SCHEME:-https}://${UT_DOMAIN:-understand.local}/en/chat}
-  allowed-origins:     &url-allowed-origins     ${EXTRA_ALLOWED_ORIGINS:-${UT_PUBLIC_SCHEME:-https}://admin.${UT_DOMAIN:-understand.local},${UT_PUBLIC_SCHEME:-https}://llms.${UT_DOMAIN:-understand.local},${UT_PUBLIC_SCHEME:-https}://assistants.${UT_DOMAIN:-understand.local},${UT_PUBLIC_SCHEME:-https}://builder.${UT_DOMAIN:-understand.local}}
-  gateway-public:      &url-gateway-public      ${GATEWAY_PUBLIC_URL:-${UT_PUBLIC_SCHEME:-https}://${UT_DOMAIN:-understand.local}}
-  vite-api-base:       &url-vite-api-base       ${VITE_API_BASE_URL:-${UT_PUBLIC_SCHEME:-https}://${UT_DOMAIN:-understand.local}/api}
-  vite-ut-app:         &url-vite-ut-app         ${VITE_UT_APP_URL:-${UT_PUBLIC_SCHEME:-https}://${UT_DOMAIN:-understand.local}}
-  app-llms:            &url-app-llms            ${APP_LLMS_BASE_URL:-${UT_PUBLIC_SCHEME:-https}://llms.${UT_DOMAIN:-understand.local}}
-  app-llms-cors:       &url-app-llms-cors       ${APP_LLMS_CORS_ORIGINS:-${UT_PUBLIC_SCHEME:-https}://llms.${UT_DOMAIN:-understand.local}}
-  app-assistants:      &url-app-assistants      ${APP_ASSISTANTS_BASE_URL:-${UT_PUBLIC_SCHEME:-https}://assistants.${UT_DOMAIN:-understand.local}}
-  app-assistants-cors: &url-app-assistants-cors ${APP_ASSISTANTS_CORS_ORIGINS:-${UT_PUBLIC_SCHEME:-https}://assistants.${UT_DOMAIN:-understand.local}}
-  app-builder:         &url-app-builder         ${APP_BUILDER_BASE_URL:-${UT_PUBLIC_SCHEME:-https}://builder.${UT_DOMAIN:-understand.local}}
+  redirect-uri:        &url-redirect-uri        ${REDIRECT_URI:-https://${UT_DOMAIN:-understand.local}${REDIRECT_PATH:-/api/auth/callback}}
+  frontend-auth:       &url-frontend-auth       ${FRONTEND_URL_AUTH:-https://${UT_DOMAIN:-understand.local}/en/chat}
+  allowed-origins:     &url-allowed-origins     ${EXTRA_ALLOWED_ORIGINS:-https://admin.${UT_DOMAIN:-understand.local},https://llms.${UT_DOMAIN:-understand.local},https://assistants.${UT_DOMAIN:-understand.local},https://builder.${UT_DOMAIN:-understand.local}}
+  gateway-public:      &url-gateway-public      ${GATEWAY_PUBLIC_URL:-https://${UT_DOMAIN:-understand.local}}
+  vite-api-base:       &url-vite-api-base       ${VITE_API_BASE_URL:-https://${UT_DOMAIN:-understand.local}/api}
+  vite-ut-app:         &url-vite-ut-app         ${VITE_UT_APP_URL:-https://${UT_DOMAIN:-understand.local}}
+  app-llms:            &url-app-llms            ${APP_LLMS_BASE_URL:-https://llms.${UT_DOMAIN:-understand.local}}
+  app-llms-cors:       &url-app-llms-cors       ${APP_LLMS_CORS_ORIGINS:-https://llms.${UT_DOMAIN:-understand.local}}
+  app-assistants:      &url-app-assistants      ${APP_ASSISTANTS_BASE_URL:-https://assistants.${UT_DOMAIN:-understand.local}}
+  app-assistants-cors: &url-app-assistants-cors ${APP_ASSISTANTS_CORS_ORIGINS:-https://assistants.${UT_DOMAIN:-understand.local}}
+  app-builder:         &url-app-builder         ${APP_BUILDER_BASE_URL:-https://builder.${UT_DOMAIN:-understand.local}}
 
 # Env vars that api and api-customer, workers and workers-customer, app-llms
 # and app-assistants agree on byte for byte. Each pair's own service keeps

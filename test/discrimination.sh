@@ -405,6 +405,10 @@ if grep -q 'say_message' "$REPO_ROOT/bin/ut-install"; then
         "sed -i.bak 's|secrets \",\\\\\"file\\\\\":|secrets \",\\\\\"password\\\\\":\\\\\"admin-pw-7c1e\\\\\",\\\\\"file\\\\\":|' bin/ut-install"
 fi
 
+capability_discriminates "a first certificate obtained and never served" \
+    "the first certificate it obtains is the one the front door serves" \
+    "sed -i.bak 's|^        setting_set \"\$file\" UT_INGRESS_MODE custom\$|        :|' bin/ut-certificate"
+
 capability_discriminates "a builder that waits for an llm a panel does not run" \
     "the App Builder renders on a machine without a GPU" \
     "sed -i.bak '/^        required: false\$/d' compose.appbuilder.yaml"
@@ -1360,6 +1364,14 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
     install_walk_discriminates "a role read from the overlay rather than from where generation comes from" \
         "the summary says where generation comes from" \
         "sed -i.bak 's|printf .control plane — generation comes from %s.|printf \"appliance — inference runs on this machine\"|' bin/ut-install"
+
+    install_walk_discriminates "a certificate taken without looking at the names it covers" \
+        "a certificate that misses a name is refused before anything is written" \
+        "sed -i.bak 's|^certificate_covers() {\$|certificate_covers() { return 0|' bin/ut-install"
+
+    install_walk_discriminates "a load balancer that leaves Caddy on https" \
+        "a load balancer given to the installer ends TLS, and is the only one believed" \
+        "sed -i.bak 's|^        env_set \"\$local_file\" UT_CADDY_SCHEME http\$|        :|' bin/ut-install"
 
     install_walk_discriminates "a compute node handed the summary of a platform it does not run" \
         "a compute node's summary hands the control plane what it needs" \

@@ -45,6 +45,9 @@ Configuration, in .env:
   UT_ACME_DNS_ENV         credentials it needs, as NAME=value, comma separated
   UT_CERT_DIR             where the certificate is written (mounted by Caddy)
 
+The first certificate it installs switches the front door to it
+(UT_INGRESS_MODE=custom): nothing else to set.
+
   UT_ACME_SERVER          override the directory URL, for staging
 
 Example:
@@ -157,6 +160,43 @@ install_into_cert_dir() {
     install -m 600 "$(issued_key)" "$CERT_DIR/privkey.pem"
 }
 
+operator_settings() {
+    local dir
+    if [[ -L "$ENV_FILE" ]]; then dir=$(dirname "$(readlink "$ENV_FILE")"); else dir=$(dirname "$ENV_FILE"); fi
+    printf '%s/local.env' "$dir"
+}
+
+# Written back through a redirection rather than with sed -i: .env is a symlink on
+# a packaged install, which sed -i refuses (BSD) or replaces with a file (GNU).
+setting_set() {
+    local file=$1 key=$2 value=$3 tmp line found=0
+    [[ -f "$file" ]] || return 0
+    tmp=$(mktemp)
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" =~ ^[[:space:]]*${key}= ]]; then
+            printf '%s="%s"\n' "$key" "$value"
+            found=1
+        else
+            printf '%s\n' "$line"
+        fi
+    done < "$file" > "$tmp"
+    (( found )) || printf '%s="%s"\n' "$key" "$value" >> "$tmp"
+    cat "$tmp" > "$file"
+    rm -f "$tmp"
+}
+
+# ut-install rebuilds .env from local.env on every run: both are written, so the
+# front door serves the certificate now and still does after the next install.
+serve_the_certificate_from_now_on() {
+    [[ "$(env_get UT_INGRESS_MODE || true)" == custom ]] && return 1
+    local file
+    for file in "$(operator_settings)" "$ENV_FILE"; do
+        setting_set "$file" UT_INGRESS_MODE custom
+        setting_set "$file" UT_CADDY_SCHEME https
+        setting_set "$file" UT_CERT_DIR "$CERT_DIR"
+    done
+}
+
 # A reload is not enough: Caddy keeps the certificate it loaded in memory and
 # re-reads the configuration without re-reading a file whose path has not
 # changed. A renewal that ends in a reload serves the expired one.
@@ -229,6 +269,13 @@ do_renew() {
 
     [[ -f "$(issued_certificate)" ]] || die "lego reported success but wrote no certificate"
     install_into_cert_dir
+
+    if serve_the_certificate_from_now_on; then
+        log_info "The front door now serves this certificate (UT_INGRESS_MODE=custom)"
+        ( cd "$INSTALL_DIR" && docker compose up -d caddy >/dev/null 2>&1 ) \
+            || log_warn "Could not recreate Caddy — run ut-install to serve the new certificate"
+        return 0
+    fi
 
     local after
     after=$(openssl x509 -in "$CERT_DIR/fullchain.pem" -noout -fingerprint 2>/dev/null || true)

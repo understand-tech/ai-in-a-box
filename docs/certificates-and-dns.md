@@ -124,8 +124,8 @@ actions, and the appliance's own authority is still the fallback.
 
 ## Choosing how TLS is terminated
 
-`UT_INGRESS_MODE` has three values. Pick by what you have, not by what sounds
-safest.
+Three ways, chosen when you install. Pick by what you have, not by what sounds
+safest. Each is kept by later runs of `ut-install`.
 
 ### `internal` — the default
 
@@ -147,13 +147,14 @@ Use it for a pilot, an isolated network, or a `.local` address.
 ### `custom` — you supply the certificate
 
 ```bash
-UT_INGRESS_MODE="custom"
-UT_CERT_DIR="/etc/understandtech/certs"
+sudo ut-install --certificate-dir /etc/understandtech/certs
 ```
 
-The directory is mounted read-only and must hold `fullchain.pem` and
-`privkey.pem`. The certificate has to cover the apex and the four satellite
-names.
+The directory must hold `fullchain.pem` and `privkey.pem`; it is mounted
+read-only. Before anything is written, the installer refuses a missing file, a
+key that is not the certificate's, a certificate that has expired, and one
+that does not cover the apex and the four satellite names — naming what is
+wrong.
 
 For the generated applications, supply their wildcard separately — a
 single-level wildcard does not reach `*.apps.<domain>`:
@@ -233,11 +234,13 @@ That is also the only method that can cover `*.apps.<domain>`: a wildcard two
 levels below the apex, which HTTP validation cannot prove.
 
 ```bash
-UT_INGRESS_MODE="custom"
 UT_ACME_EMAIL="ops@example.com"
 UT_ACME_DNS_PROVIDER="cloudflare"
 UT_ACME_DNS_ENV="CF_DNS_API_TOKEN=xxxxx"
 ```
+
+The first certificate it installs is the one the front door serves from then
+on: `ut-certificate` switches the appliance to `custom` itself.
 
 `lego dnshelp -c <provider>` lists what a given provider expects; about two
 hundred are supported. Credentials reach the tool through the environment, so
@@ -256,25 +259,16 @@ certificate. That is a few seconds of downtime every sixty days, at 03:17.
 ### `edge` — your load balancer terminates TLS
 
 ```bash
-UT_INGRESS_MODE="edge"
-UT_CADDY_SCHEME="http"
-UT_PUBLIC_SCHEME="https"
-UT_TRUSTED_PROXIES="10.42.0.0/16"
+sudo ut-install --behind-proxy 10.42.0.0/16
 ```
 
-Four settings, and each one matters.
+The range is the network your balancer connects from — a CIDR, or several
+separated by commas. Caddy then serves plain HTTP, and believes the client
+address in `X-Forwarded-*` from that range only. A range that would believe
+anyone, `0.0.0.0/0`, is refused.
 
-`UT_CADDY_SCHEME="http"` is what makes Caddy serve plain HTTP. `auto_https off`
-does not replace it: with a bare site address Caddy still listens on 443 only,
-and your balancer knocking on 80 finds nobody home.
-
-`UT_PUBLIC_SCHEME` stays `https` — it is the scheme the applications advertise
-to the browser, and the browser really is on HTTPS. Setting it to `http` breaks
-the OIDC round trip.
-
-`UT_TRUSTED_PROXIES` is what makes Caddy honour `X-Forwarded-*`. **Narrow it to
-the network your balancer speaks from.** The `private_ranges` default lets any
-machine on the LAN claim any source address.
+The addresses the applications give the browser stay on `https`, which is what
+the browser is on.
 
 ## The local authority
 
