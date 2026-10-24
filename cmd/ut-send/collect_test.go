@@ -7,8 +7,8 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/pem"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"math/big"
 	"os"
@@ -97,12 +97,12 @@ var everyAnswer = map[string]string{
 	"docker exec ffff curl -sf --max-time 5 http://127.0.0.1:8000/v1/models": `{"data": [{"id": "qwen"}]}`,
 	"docker exec ffff printenv NIM_SERVED_MODEL_NAME":                        "qwen\n",
 	"docker exec ffff curl -sf --max-time 5 http://127.0.0.1:8000/metrics":   "vllm:request_success_total{finished_reason=\"stop\"} 10.0\nvllm:request_success_total{finished_reason=\"length\"} 2.0\n",
-	"docker exec ffff sh -c":              "model: Qwen3.8-27B-NVFP4\n/models/Qwen3.8-27B-NVFP4\n",
-	"docker exec hhhh sh -c":              "1760436000\n",
-	"docker exec gggg printenv UT_DOMAIN": "box.example.test\n",
+	"docker exec ffff sh -c":                                          "model: Qwen3.8-27B-NVFP4\n/models/Qwen3.8-27B-NVFP4\n",
+	"docker exec hhhh sh -c":                                          "1760436000\n",
+	"docker exec gggg printenv UT_DOMAIN":                             "box.example.test\n",
 	"docker exec gggg cat /data/caddy/pki/authorities/local/root.crt": authorityRoot,
-	"timedatectl":                         "yes\n",
-	"docker exec dddd mongosh":            "Using MongoDB\n" + `{"requests_by_hour": [{"hour": 7200, "source": "chat", "app": "app", "requests": 2}, {"hour": 3600, "source": "gateway", "app": "llms", "requests": 5}], "users_7d": [{"source": "any", "app": "any", "users": 3}]}`,
+	"timedatectl":              "yes\n",
+	"docker exec dddd mongosh": "Using MongoDB\n" + `{"requests_by_hour": [{"hour": 7200, "source": "chat", "app": "app", "requests": 2}, {"hour": 3600, "source": "gateway", "app": "llms", "requests": 5}], "users_7d": [{"source": "any", "app": "any", "users": 3}]}`,
 }
 
 func TestTheHealthOfTheStackIsReadTheWayThePrototypeReadIt(t *testing.T) {

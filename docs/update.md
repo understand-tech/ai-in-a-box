@@ -170,6 +170,18 @@ machine relied on reaching them, it stops working — deliberately, since the
 engines check no key themselves. A compute node serves other machines through
 Caddy, which does.
 
+**`step-ca` is gone, and with it the surface on port 8443.** Each box keeps one
+certificate authority, Caddy's, which already signed what browsers see. The
+update removes the `ut-step-ca` container and its network; its root stays in
+`/var/lib/understandtech/ca`, which nothing reads any more. Once the update is
+verified, `sudo rm -rf /var/lib/understandtech/ca` frees it. A load balancer
+that verified the box through port 8443 has to trust the box's Caddy root
+instead.
+
+**Two volumes are no longer used.** `ut-llm-ollama` and `ut-vllm-llm-cache` stay
+on disk, empty or unused: `docker volume rm ut-llm-ollama ut-vllm-llm-cache`
+frees them.
+
 **The browser warning may change.** If you switch the public certificate over to
 the local authority, every already-paired browser sees a new fingerprint and
 warns again. That switch is a deliberate act, never part of an update.
