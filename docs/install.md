@@ -119,7 +119,13 @@ and prints that address too. It listens on the box only. The code works once,
 for one browser, and five wrong codes stop it. The page runs `ut-install` with
 your answers, shows each step and each image as it lands, then the two
 passwords, once. Then `ut-setup` stops. Give it no `ut-install` option: the page
-asks for them. On a box already installed, `sudo ut-setup` does the same.
+asks for them.
+
+On a box already installed, the page updates it instead of asking again. It
+shows the role, the address, the model and the release it moves to, and one
+button: `ut-install` runs with no option, so every setting stays as it is. To
+change one, run `ut-install` in a terminal. `sudo apt-get install` the new
+package first, then `sudo ut-setup`.
 
 A box with no network goes through the page too, from its prepared folder:
 

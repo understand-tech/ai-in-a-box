@@ -1369,6 +1369,10 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
         "the summary says where generation comes from" \
         "sed -i.bak 's|printf .control plane — generation comes from %s.|printf \"appliance — inference runs on this machine\"|' bin/ut-install"
 
+    install_walk_discriminates "a check that no longer says what the box runs" \
+        "the check says what an installed box runs, and none of its secrets" \
+        "sed -i.bak 's|^        say_what_is_installed\$|        :|' bin/ut-install"
+
     install_walk_discriminates "a certificate taken without looking at the names it covers" \
         "a certificate that misses a name is refused before anything is written" \
         "sed -i.bak 's|^certificate_covers() {\$|certificate_covers() { return 0|' bin/ut-install"
