@@ -3,8 +3,11 @@
 const $ = (id) => document.getElementById(id);
 const show = (id, visible = true) => { $(id).hidden = !visible; };
 
-const screens = ["check", "domain", "license", "model", "reporting", "running", "done"];
-let questions = ["domain", "license", "model", "reporting"];
+const screens = ["check", "update", "domain", "license", "model", "reporting", "running", "done"];
+const askable = ["domain", "license", "model", "reporting"];
+let questions = [...askable];
+let updating = false;
+const roles = { appliance: "Complete box: the platform and its inference", compute: "Inference only, served to another box" };
 const marks = { ok: ["✓", ""], done: ["✓", ""], current: ["…", ""], warn: ["⚠", "Warning: "], fail: ["✕", "Problem: "] };
 const unmarked = ["", ""];
 
@@ -13,7 +16,7 @@ function go(screen) {
   const reached = screens.indexOf(screen);
   document.querySelectorAll(".dots li").forEach((dot) => {
     const index = screens.indexOf(dot.dataset.for);
-    dot.hidden = questions.indexOf(dot.dataset.for) < 0 && ["license", "reporting"].includes(dot.dataset.for);
+    dot.hidden = (askable.includes(dot.dataset.for) && !questions.includes(dot.dataset.for)) || (dot.dataset.for === "update" && !updating);
     dot.classList.toggle("on", index <= reached);
     dot.toggleAttribute("aria-current", index === reached);
   });
@@ -53,7 +56,9 @@ async function readiness() {
   if (!answer.ok) return;
   const check = await answer.json();
   $("readiness").replaceChildren(...check.messages.map((m) => item(m.text, m.kind)));
-  $("check-title").textContent = check.ready ? "This box can be installed" : "This box cannot be installed as it is";
+  if (check.installed) showInstalled(check.installed);
+  const verb = updating ? "updated" : "installed";
+  $("check-title").textContent = check.ready ? `This box can be ${verb}` : `This box cannot be ${verb} as it is`;
   if (check.from_folder) {
     questions = questions.filter((name) => name !== "reporting" && (name !== "license" || !check.license_from_folder));
     $("from-folder").textContent = `The images come from the folder ut-get was given${check.license_from_folder ? ", and so does the license" : ""}. A box with no network sends no usage reports, so that question is not asked.`;
@@ -64,6 +69,18 @@ async function readiness() {
   show("not-ready", !check.ready);
   $("checked").disabled = !check.ready;
   if (current() === "check") go("check");
+}
+
+function showInstalled(installed) {
+  updating = true;
+  questions = [];
+  document.querySelector('.dots li[data-for="running"]').textContent = "Update";
+  $("installed-role").textContent = roles[installed.role] || `Platform; its inference comes from ${installed.node || "another box"}`;
+  $("installed-address").textContent = installed.address;
+  $("installed-model").textContent = installed.model || "The model its release ships";
+  const same = installed.installed === installed.release;
+  $("installed-release").textContent = same ? `${installed.release}, the one this package carries` : `${installed.installed || "unknown"} → ${installed.release}`;
+  $("update-button").textContent = same ? "Run the install again" : `Update to ${installed.release}`;
 }
 
 function modelOption(model) {
@@ -102,7 +119,8 @@ function render(p) {
   if (screen && current() !== screen) go(screen);
 
   $("step").textContent = p.running ? p.step || "Starting" : "Stopped";
-  $("running-title").textContent = failed ? "The install stopped" : "Installing";
+  $("running-title").textContent = p.update ? (failed ? "The update stopped" : "Updating") : failed ? "The install stopped" : "Installing";
+  $("keep-open").textContent = p.update ? "Keep this page open until it says the box is up to date." : "Keep this page open: the two passwords appear here, once, at the end.";
   show("working", p.running);
   $("elapsed").textContent = minutes(p.elapsed);
   show("images-block", p.total > 0 && p.running);
@@ -133,6 +151,15 @@ function render(p) {
   if (atBottom) pre.scrollTop = pre.scrollHeight;
 
   $("took").textContent = done ? `in ${Math.max(1, Math.round(p.elapsed / 60))} min` : "";
+  $("done-title").textContent = p.update ? "Up to date" : "Installed";
+  if (p.update) $("done-next").textContent = "Its accounts, documents and settings are as they were.";
+  show("passwords-warning", !p.update);
+  show("reveal", !p.update && $("secrets").hidden);
+  if (p.update) {
+    show("open-block");
+    $("open").setAttribute("aria-disabled", "false");
+    $("open").tabIndex = 0;
+  }
   $("address").textContent = `https://${p.domain}`;
   $("address").href = `https://${p.domain}`;
   $("open").href = `https://${p.domain}`;
@@ -173,7 +200,21 @@ async function install() {
   follow();
 }
 
-$("checked").addEventListener("click", () => go("domain"));
+$("checked").addEventListener("click", () => go(updating ? "update" : "domain"));
+
+$("update-back").addEventListener("click", () => go("check"));
+
+$("update-button").addEventListener("click", async () => {
+  show("update-refused", false);
+  const answer = await fetch("/update", { method: "POST" });
+  if (!answer.ok) {
+    $("update-refused").textContent = await answer.text();
+    show("update-refused");
+    return;
+  }
+  go("running");
+  follow();
+});
 
 $("answers").addEventListener("submit", (event) => {
   event.preventDefault();
@@ -195,7 +236,7 @@ $("show-license").addEventListener("click", (event) => {
   event.target.setAttribute("aria-pressed", String(visible));
 });
 
-$("again").addEventListener("click", () => go(questions[questions.length - 1]));
+$("again").addEventListener("click", () => go(updating ? "update" : questions[questions.length - 1]));
 
 $("reveal").addEventListener("click", async () => {
   const answer = await fetch("/secrets", { method: "POST" });

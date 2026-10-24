@@ -14,6 +14,7 @@
 <main class="focus">
 <ol class="dots" aria-label="Installation steps">
   <li data-for="check">Check this box</li>
+  <li data-for="update" hidden>Update</li>
   <li data-for="domain">Address</li>
   <li data-for="license">License key</li>
   <li data-for="model">Model</li>
@@ -31,6 +32,20 @@
   <ul id="readiness" class="checks" aria-live="polite"></ul>
   <p id="not-ready" class="banner failure" hidden>This box cannot be installed as it is. Fix what is marked <b>✕ Problem</b>, then reload this page.</p>
   <div class="nav"><span></span><button type="button" id="checked" class="primary" disabled>Continue</button></div>
+</section>
+
+<section id="update" class="screen" hidden>
+  <p class="count">Already installed</p>
+  <h1>Update this box</h1>
+  <p class="lead">Nothing is asked again: the address, the license, the model and the answer about usage reports stay as they are. To change one of them, run <code>ut-install</code> in a terminal.</p>
+  <dl>
+    <dt>Role</dt><dd id="installed-role"></dd>
+    <dt>Address</dt><dd id="installed-address"></dd>
+    <dt>Model</dt><dd id="installed-model"></dd>
+    <dt>Release</dt><dd id="installed-release"></dd>
+  </dl>
+  <p id="update-refused" class="banner failure" role="alert" hidden></p>
+  <div class="nav"><button type="button" id="update-back">Back</button><button type="button" id="update-button" class="primary">Update</button></div>
 </section>
 
 <form id="answers" novalidate>
@@ -100,9 +115,9 @@
 
 <section id="done" class="screen" hidden>
   <div class="done-mark" aria-hidden="true">✓</div>
-  <h1>Installed <span id="took"></span></h1>
-  <p class="lead">The platform answers at <a id="address"></a>. The initial admin password opens its first-run wizard: models, sign-on, data sources.</p>
-  <p class="banner warning">Two passwords are shown once, here, and nowhere else. Without the backup password, no backup can ever be read.</p>
+  <h1><span id="done-title">Installed</span> <span id="took"></span></h1>
+  <p class="lead">The platform answers at <a id="address"></a>. <span id="done-next">The initial admin password opens its first-run wizard: models, sign-on, data sources.</span></p>
+  <p id="passwords-warning" class="banner warning">Two passwords are shown once, here, and nowhere else. Without the backup password, no backup can ever be read.</p>
   <button type="button" id="reveal" class="primary">Show the passwords</button>
   <dl id="secrets" hidden>
     <dt>Initial admin password</dt>

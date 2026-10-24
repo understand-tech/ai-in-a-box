@@ -52,10 +52,28 @@ type Model struct {
 }
 
 type Readiness struct {
-	Ready             bool      `json:"ready"`
-	Messages          []Message `json:"messages"`
-	FromFolder        bool      `json:"from_folder"`
-	LicenseFromFolder bool      `json:"license_from_folder"`
+	Ready             bool          `json:"ready"`
+	Messages          []Message     `json:"messages"`
+	FromFolder        bool          `json:"from_folder"`
+	LicenseFromFolder bool          `json:"license_from_folder"`
+	Installed         *Installation `json:"installed"`
+}
+
+// What ut-install --check found already installed: settings and versions, no
+// key and no password.
+type Installation struct {
+	Role             string `json:"role"`
+	Address          string `json:"address"`
+	Node             string `json:"node"`
+	Model            string `json:"model"`
+	ReportingDecided bool   `json:"reporting_decided"`
+	Licensed         bool   `json:"licensed"`
+	Installed        string `json:"installed"`
+	Release          string `json:"release"`
+}
+
+func installationFrom(event Event) *Installation {
+	return &Installation{event.Role, event.Address, event.Node, event.Model, event.Reporting, event.Licensed, event.Installed, event.Release}
 }
 
 func newWizard(installer Installer, folder Folder, code, session string, hosts ...string) *Wizard {
@@ -78,6 +96,7 @@ func (w *Wizard) Handler() http.Handler {
 	mux.HandleFunc("POST /enter", w.enter)
 	mux.Handle("GET /page/", http.FileServerFS(page))
 	mux.HandleFunc("POST /install", w.withSession(w.install))
+	mux.HandleFunc("POST /update", w.withSession(w.update))
 	mux.HandleFunc("GET /progress", w.withSession(w.report))
 	mux.HandleFunc("GET /check", w.withSession(w.check))
 	mux.HandleFunc("GET /models", w.withSession(w.listModels))
@@ -177,7 +196,44 @@ func (w *Wizard) halt(reason string) {
 	w.stop <- reason
 }
 
+func (w *Wizard) update(rw http.ResponseWriter, _ *http.Request) {
+	installed := w.installed()
+	if installed == nil {
+		http.Error(rw, "nothing is installed here to update", http.StatusConflict)
+		return
+	}
+	w.mu.Lock()
+	if w.progress.Running || w.progress.Succeeded {
+		w.mu.Unlock()
+		http.Error(rw, "an install is already running", http.StatusConflict)
+		return
+	}
+	w.progress = Progress{Running: true, Update: true, Domain: installed.Address, started: time.Now()}
+	w.mu.Unlock()
+	go func() {
+		err := w.run(nil, func(line string) {
+			w.record(func(p Progress) Progress { return p.read(line) })
+		}, func(event Event) {
+			w.record(func(p Progress) Progress { return p.apply(event) })
+		})
+		w.record(func(p Progress) Progress { return p.finish(err == nil) })
+	}()
+	rw.WriteHeader(http.StatusAccepted)
+}
+
+func (w *Wizard) installed() *Installation {
+	w.checking.Lock()
+	defer w.checking.Unlock()
+	return w.readiness.Installed
+}
+
+// Answers would be passed as options and replace what the box runs with: an
+// installed box is updated as it is, and its settings change in a terminal.
 func (w *Wizard) install(rw http.ResponseWriter, r *http.Request) {
+	if w.installed() != nil {
+		http.Error(rw, "this box is already installed: update it, or change a setting with ut-install in a terminal", http.StatusConflict)
+		return
+	}
 	if err := r.ParseForm(); err != nil {
 		http.Error(rw, "unreadable form", http.StatusBadRequest)
 		return
@@ -232,8 +288,14 @@ func (w *Wizard) check(rw http.ResponseWriter, _ *http.Request) {
 	w.checking.Lock()
 	if !w.readiness.Ready {
 		messages := []Message{}
-		err := w.run([]string{"--check"}, func(string) {}, func(event Event) { messages = told(messages, event) })
-		w.readiness = Readiness{Ready: err == nil, Messages: messages, FromFolder: w.folder.Images != "", LicenseFromFolder: w.folder.License != ""}
+		var installed *Installation
+		err := w.run([]string{"--check"}, func(string) {}, func(event Event) {
+			if event.Event == "installed" {
+				installed = installationFrom(event)
+			}
+			messages = told(messages, event)
+		})
+		w.readiness = Readiness{Ready: err == nil, Messages: messages, FromFolder: w.folder.Images != "", LicenseFromFolder: w.folder.License != "", Installed: installed}
 	}
 	readiness := w.readiness
 	w.checking.Unlock()
