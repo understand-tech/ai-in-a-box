@@ -11,7 +11,6 @@
 | `discrimination.sh` | Breaks each check on purpose, on a copy, and expects it to say so. A check that survives its own mutation is decoration. |
 | `migration.sh` | Asks what an upgrade does to an install that already runs, starting from the environment file the earlier version shipped. Needs Docker and the git history. |
 | `migration-on-data.sh` | Runs that upgrade on a real database and document tree, beside whatever else the machine runs. Manual, not in CI. |
-| `machine-identity.sh` | Validates the certificate mechanism intended to replace the shared JWT_SECRET. **Not a product capability yet** — nothing here runs a CA. Nightly. |
 | `database-restore.sh` | Proves a backup archive restores, end to end. Nightly. |
 | `known-issues.txt` | Problems that already exist and are accepted for now, with the reason next to each. |
 | `allowed-ports.txt` | Ports intentionally published on every interface. |
@@ -25,7 +24,7 @@
 | Workflow | Trigger | Runs | Takes |
 |---|---|---|---|
 | `checks.yml` | every pull request, and a push to `main`, `hotfix/**` or `2026-**` | `invariants.sh`, `capabilities.sh`, `migration.sh` | under a minute |
-| `nightly.yml` | 3 a.m. and manual — **neither works yet**, see below | `machine-identity.sh`, `database-restore.sh` | about six minutes |
+| `nightly.yml` | 3 a.m. and manual — **neither works yet**, see below | `database-restore.sh` | about a minute |
 | `release.yml` | a tag matching `v*` | the checks, then a fresh install walked end to end | longer |
 
 <!-- Scope: which event starts which workflow. Not what the checks assert, and
@@ -84,12 +83,6 @@ Deployment topologies
   ✔ the App Builder overlay renders on top of it
   ✔ the control-plane role leaves out the inference engines
 
-Machine identity
-  ✔ the appliance runs its own certificate authority
-  ✔ its root sits where the file backup looks
-  ✔ the machine-facing surface takes its certificate from that authority
-  ✔ it does so whatever the customer chose for the public one
-
 Public certificate
   ✔ a name no authority can certify is refused before anything is asked
   ✔ an incomplete configuration is named, with every hostname it would request
@@ -146,7 +139,7 @@ Backup
   ✔ the authority that signs the HTTPS certificate sits where the backup looks
   ✔ that authority is backed up and restores identically
 
-49 verified
+45 verified
 ```
 
 The list grows with the branch, not with the file: each block is guarded by the
@@ -159,22 +152,20 @@ have, checked on every push — so the output doubles as the specification, and 
 capability nobody checks is a capability that does not appear. Add a line when
 you add a capability; name it after what it does, not after the mechanism.
 
-## Running the nightly checks
+## Running the nightly check
 
-The other two start containers, so they are not on the push path:
+It starts containers, so it is not on the push path:
 
 ```bash
 ./test/database-restore.sh     # about a minute
-./test/machine-identity.sh     # about five, it waits for a certificate to expire
 ```
 
-They need nothing but a Docker daemon — no secret, no registry credentials, and
-`machine-identity.sh` builds its network with `--internal`, so neither needs
-outbound access once the images are local.
+It needs nothing but a Docker daemon — no secret, no registry credentials,
+once its images are local.
 
-Every container, volume and network they create carries the shell's PID, and
-both clean up after themselves on exit. Two runs can therefore overlap, and
-either can run beside a live deployment without touching it.
+Every container, volume and network it creates carries the shell's PID, and it
+cleans up after itself on exit. It can run beside a live deployment without
+touching it.
 
 **`gh workflow run nightly.yml` does not work, and that is not a local
 problem.** GitHub only reads `schedule` and `workflow_dispatch` from the default
@@ -183,9 +174,9 @@ no *Run workflow* button and the 3 a.m. cron was never armed either. `checks.yml
 is unaffected because `push` and `pull_request` are evaluated on the branch being
 pushed.
 
-Until that is resolved, run them by hand — on the target machine rather than a
-generic runner, which is where they say the most: what they watch for is the
-upstream `mongo`, `db-backup` and `step-ca` images moving on their own.
+Until that is resolved, run it by hand — on the target machine rather than a
+generic runner, which is where it says the most: what it watches for is the
+upstream `mongo` and `db-backup` images moving on their own.
 
 ## What it is for
 
@@ -238,9 +229,8 @@ Every invariant, seen failing
   ✔ a documented path that does not exist
 
 Capabilities, seen failing
-  ✔ the authority removed from the stack
-  ✔ the authority root moved out of the backed-up path
-  ✔ the machine surface pointed at something else
+  ✔ the HTTPS authority left out of what the backup sees
+  ✔ the HTTPS authority seen but not saved
   ✔ a resource left unprefixed
   ✔ the mDNS publisher installed on a real domain
   ✔ the mDNS publisher skipped on a .local domain
@@ -264,7 +254,7 @@ Capabilities, seen failing
   ✔ a shipped key that is not the signing key
   ✔ a backup destination that does not answer
 
-33 discriminate
+32 discriminate
 ```
 
 **The harness is held to the same rule as what it checks.** Three defects in
@@ -342,22 +332,6 @@ line number is not.
 The message is read by whoever gets the failure, months from now, on a change
 that has nothing to do with the check. Say what is wrong and why it matters, not
 which rule fired.
-
-## Validations, which are not capabilities
-
-`machine-identity.sh` sits apart from `capabilities.sh` on purpose. It checks
-that a mechanism works — a local authority issuing client certificates against
-single-use tokens, with the proxy requiring them — but **the product does not
-use it yet**. Listing it among the capabilities would claim something the
-appliance cannot do, which is the one thing that list must not do.
-
-It is here because the decision to build on that mechanism rests on these
-properties holding, and it runs in an `--internal` Docker network, so a pass
-also means the mechanism needs no outbound access — the property an isolated
-deployment depends on.
-
-When the authority lands in the product, the lines move into `capabilities.sh`
-and this file loses a section.
 
 ## Coming next
 
