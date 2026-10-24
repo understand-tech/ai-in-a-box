@@ -1,0 +1,18 @@
+# The arbiter's lease server, for the two box of a high-availability pair.
+#
+# Mounted to /etc/caddy/inference.caddy, the generic slot the base Caddyfile
+# already imports for a role-specific keyed surface — the arbiter role has
+# no inference of its own, it reuses the same slot `compute` uses for a
+# different purpose.
+#
+# The certificate comes from Caddy's own authority. The two box trust it by
+# its root, the same way a control plane trusts a compute node's.
+
+https://{$UT_ARBITER_ADDRESS}:8446 {
+    tls internal
+
+    @without_the_key not header Authorization "Bearer {$UT_ARBITER_API_KEY}"
+    respond @without_the_key 401
+
+    reverse_proxy arbiter:8446
+}
