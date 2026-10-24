@@ -97,6 +97,7 @@ stage_commands() {
     install -m 755 "$REPO_ROOT/bin/ut-logs-archive" "$root/usr/bin/"
     install -m 755 "$REPO_ROOT/bin/ut-verify" "$root/usr/bin/"
     install -m 755 "$REPO_ROOT/bin/ut-get" "$root/usr/bin/"
+    install -m 755 "$REPO_ROOT/bin/ut-import-app" "$root/usr/bin/"
     install -m 755 "$REPO_ROOT/bin/ut-license" "$root/usr/bin/"
     install -m 755 "$REPO_ROOT/bin/ut-status" "$root/usr/bin/"
     install -m 755 "$REPO_ROOT/bin/ut-report" "$root/usr/bin/"

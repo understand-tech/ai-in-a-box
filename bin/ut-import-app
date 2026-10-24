@@ -1,0 +1,379 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CHECKOUT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PACKAGE_SHARE_DIR="/usr/share/understandtech"
+INSTALL_DIR="${UT_INSTALL_DIR:-}"
+DATA_ROOT_DEFAULT="/var/lib/understandtech"
+CONTAINER_PREFIX_DEFAULT="ut"
+CA_MOUNT_PATH="/etc/understandtech/ut-root-ca.crt"
+
+if [[ -t 1 ]]; then
+    RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'; BOLD=$'\033[1m'; NC=$'\033[0m'
+else
+    RED=""; GREEN=""; YELLOW=""; BOLD=""; NC=""
+fi
+
+log()       { printf '%s\n' "$*"; }
+log_info()  { printf '%s[ ok ]%s %s\n' "$GREEN" "$NC" "$*"; }
+log_warn()  { printf '%s[warn]%s %s\n' "$YELLOW" "$NC" "$*"; }
+log_error() { printf '%s[fail]%s %s\n' "$RED" "$NC" "$*" >&2; }
+die()       { log_error "$*"; exit 1; }
+
+usage() {
+    cat <<'EOF'
+ut-import-app — wires an app that was not built by the App Builder into the
+same stack: its own route on *.apps.<domain>, a path back to the platform's
+gateway, started and checked.
+
+  ut-import-app <source> <project-id> --service NAME --port PORT
+
+  <source>      a directory with a docker-compose.yml, or a .tar.gz of one
+                (the App Builder's "Download codebase" produces exactly this)
+  <project-id>  DNS label; the app answers on https://<project-id>.apps.<UT_DOMAIN>
+
+Options
+  --service NAME   the compose service Traefik should reach (its port is
+                    published to nothing else — only this one joins the
+                    shared `proxy` network, by design: see the note below)
+  --port PORT      the container port that service listens on
+  -h, --help       this message
+
+Environment
+  UT_API_KEY   written into the app's .env; a command-line flag would put it
+               in the shell history and the process table, so it is read
+               from here instead, the same reasoning ut-certificate already
+               applies to the credentials it hands lego. Left unset, the
+               app's own calls to the gateway will 401 until one is set by
+               hand (minting a key is an admin-portal action this tool does
+               not perform).
+
+What it does
+  1. Copies <source> under $DATA_ROOT/imported-apps/<project-id>.
+  2. Refuses it if a service mounts the Docker socket or runs privileged.
+  3. Writes UNDERSTAND_API_URL, UT_LLM_BASE_URL, PROJECT_ID (and UT_API_KEY,
+     if given) into its .env.
+  4. Writes a docker-compose.override.yml: every service gets a route back
+     to the platform (extra_hosts, and the box's root CA if it has one);
+     only --service joins `proxy`, with an alias of <project-id> — the
+     others stay off it. A generated app that put its database on `proxy`
+     by mistake is reachable by every other app's alias on the same
+     network; this tool will not repeat that for apps it imports.
+  5. Writes the Traefik route (no access gate — the app answers whoever
+     reaches its URL, same as a published App Builder app; it is the app's
+     job to authenticate its own users, not Traefik's).
+  6. `docker compose -p <project-id> up -d --build`.
+  7. Smoke-tests that the container is healthy, that it can reach the
+     platform, and that its public route answers. It does NOT exercise
+     whatever the app actually asks the gateway to do — a contract bug like
+     a missing field in a request body only shows up by using the app.
+EOF
+}
+
+env_get() {
+    local file=$1 key=$2 line
+    line=$(grep -m1 -E "^${key}=" "$file" 2>/dev/null) || return 1
+    line=${line#*=}; line=${line%\"}; line=${line#\"}
+    printf '%s' "$line"
+}
+
+resolve_install_dir() {
+    [[ -n "$INSTALL_DIR" ]] && return 0
+    if [[ -f "$PACKAGE_SHARE_DIR/compose.yaml" ]]; then
+        INSTALL_DIR="$PACKAGE_SHARE_DIR"
+    else
+        INSTALL_DIR="$CHECKOUT_DIR"
+    fi
+}
+
+platform_setting() {
+    local key=$1 default=$2
+    env_get "$INSTALL_DIR/.env" "$key" 2>/dev/null || printf '%s' "$default"
+}
+
+valid_project_id() {
+    [[ "$1" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]
+}
+
+compose_service_names() {
+    awk '
+        /^services:[[:space:]]*$/ { in_services=1; next }
+        in_services && /^[^[:space:]]/ { in_services=0 }
+        in_services && /^  [A-Za-z0-9._-]+:/ {
+            line = $0
+            sub(/^  /, "", line)
+            sub(/:.*/, "", line)
+            print line
+        }
+    ' "$1"
+}
+
+service_exists() {
+    local file=$1 name=$2
+    compose_service_names "$file" | grep -qxF "$name"
+}
+
+mounts_the_docker_socket_or_runs_privileged() {
+    grep -qE '/var/run/docker\.sock' "$1" && return 0
+    grep -qE '^[[:space:]]*privileged:[[:space:]]*true\b' "$1" && return 0
+    return 1
+}
+
+stage_source() {
+    local source=$1 project_id=$2 data_root=$3 dest
+    dest="$data_root/imported-apps/$project_id"
+    if [[ -d "$dest" ]]; then
+        die "$dest already exists — import under a different project-id, or remove it first"
+    fi
+    install -d -m 755 "$(dirname "$dest")"
+    case "$source" in
+        *.tar.gz|*.tgz)
+            install -d -m 755 "$dest"
+            tar -xzf "$source" -C "$dest"
+            # "Download codebase" wraps everything in one top-level directory;
+            # flatten it so docker-compose.yml ends up directly under $dest.
+            local entries inner
+            entries=$(find "$dest" -mindepth 1 -maxdepth 1)
+            if [[ $(printf '%s\n' "$entries" | wc -l) -eq 1 && -d "$entries" ]]; then
+                inner=$entries
+                ( shopt -s dotglob nullglob; mv "$inner"/* "$dest"/ )
+                rmdir "$inner"
+            fi
+            ;;
+        *)
+            [[ -d "$source" ]] || die "$source is neither a directory nor a .tar.gz"
+            cp -R "$source" "$dest"
+            ;;
+    esac
+    [[ -f "$dest/docker-compose.yml" || -f "$dest/docker-compose.yaml" ]] \
+        || die "$dest has no docker-compose.yml — not something this tool can start"
+    printf '%s' "$dest"
+}
+
+compose_file_in() {
+    [[ -f "$1/docker-compose.yml" ]] && { printf '%s/docker-compose.yml' "$1"; return; }
+    printf '%s/docker-compose.yaml' "$1"
+}
+
+env_set() {
+    local file=$1 key=$2 value=$3 tmp
+    [[ -f "$file" ]] || : > "$file"
+    tmp=$(mktemp "${file}.XXXXXX")
+    grep -vE "^${key}=" "$file" > "$tmp" || true
+    printf '%s=%s\n' "$key" "$value" >> "$tmp"
+    mv "$tmp" "$file"
+}
+
+write_env_additions() {
+    local app_dir=$1 project_id=$2 public_url=$3 api_key=$4 env_file
+    env_file="$app_dir/.env"
+    env_set "$env_file" PROJECT_ID "$project_id"
+    env_set "$env_file" UNDERSTAND_API_URL "$public_url"
+    env_set "$env_file" UT_LLM_BASE_URL "$public_url/api/llm"
+    if [[ -n "$api_key" ]]; then
+        env_set "$env_file" UT_API_KEY "$api_key"
+    else
+        log_warn "No --api-key given — UT_API_KEY left out of $env_file; the app's calls to the gateway will 401 until one is set"
+    fi
+}
+
+# Best-effort: present when Caddy issues its own internal certificates
+# (UT_DOMAIN left at understand.local or similar), absent when the box uses a
+# publicly trusted one (ut-certificate) — which every base image already
+# trusts, so there is nothing to extract.
+extract_platform_root_ca() {
+    local caddy_container=$1 dest=$2
+    docker exec "$caddy_container" cat /data/caddy/pki/authorities/local/root.crt > "$dest" 2>/dev/null \
+        && [[ -s "$dest" ]]
+}
+
+write_compose_override() {
+    local app_dir=$1 compose_file=$2 exposed_service=$3 domain=$4 has_ca=$5 project_id=$6
+    local override="$app_dir/docker-compose.override.yml"
+    local service
+
+    {
+        printf 'services:\n'
+        while IFS= read -r service; do
+            [[ -n "$service" ]] || continue
+            printf '  %s:\n' "$service"
+            printf '    extra_hosts:\n'
+            printf '      - "%s:host-gateway"\n' "$domain"
+            if [[ "$has_ca" == true ]]; then
+                printf '    volumes:\n'
+                printf '      - ./.ut-import/root-ca.crt:%s:ro\n' "$CA_MOUNT_PATH"
+                printf '    environment:\n'
+                printf '      SSL_CERT_FILE: %s\n' "$CA_MOUNT_PATH"
+                printf '      REQUESTS_CA_BUNDLE: %s\n' "$CA_MOUNT_PATH"
+                printf '      NODE_EXTRA_CA_CERTS: %s\n' "$CA_MOUNT_PATH"
+            fi
+            if [[ "$service" == "$exposed_service" ]]; then
+                printf '    networks:\n'
+                printf '      default: {}\n'
+                printf '      proxy:\n'
+                printf '        aliases:\n'
+                printf '          - %s\n' "$project_id"
+            fi
+        done < <(compose_service_names "$compose_file")
+        printf 'networks:\n'
+        printf '  proxy:\n'
+        printf '    external: true\n'
+    } > "$override"
+    printf '%s' "$override"
+}
+
+ensure_proxy_network() {
+    docker network inspect proxy >/dev/null 2>&1 && return 0
+    docker network create proxy >/dev/null
+    log_info "Created network 'proxy'"
+}
+
+write_traefik_route() {
+    local traefik_dynamic_dir=$1 project_id=$2 domain=$3 port=$4 file
+    file="$traefik_dynamic_dir/${project_id}.yml"
+    install -d -m 755 "$traefik_dynamic_dir"
+    cat > "$file" <<EOF
+http:
+  routers:
+    $project_id:
+      rule: "Host(\`$project_id.apps.$domain\`)"
+      entryPoints:
+        - web
+      service: $project_id
+
+  services:
+    $project_id:
+      loadBalancer:
+        servers:
+          - url: "http://$project_id:$port"
+EOF
+    printf '%s' "$file"
+}
+
+wait_for_service_healthy() {
+    local app_dir=$1 project_id=$2 service=$3 tries=30 state container
+    while (( tries-- > 0 )); do
+        container=$(cd "$app_dir" && docker compose -p "$project_id" ps -q "$service" 2>/dev/null)
+        if [[ -n "$container" ]]; then
+            state=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container" 2>/dev/null)
+            case "$state" in
+                healthy|running) return 0 ;;
+            esac
+        fi
+        sleep 2
+    done
+    return 1
+}
+
+smoke_test_outbound() {
+    local app_dir=$1 project_id=$2 service=$3 public_url=$4
+    local code
+    code=$(cd "$app_dir" && docker compose -p "$project_id" exec -T "$service" \
+        curl -sk -o /dev/null -w '%{http_code}' --max-time 10 "$public_url" 2>/dev/null) || true
+    [[ -n "$code" && "$code" != "000" ]]
+}
+
+smoke_test_inbound() {
+    local project_id=$1 domain=$2 address=$3 code
+    code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 \
+        --resolve "${project_id}.apps.${domain}:443:${address}" \
+        "https://${project_id}.apps.${domain}/" 2>/dev/null) || true
+    [[ -n "$code" && "$code" != "000" ]]
+}
+
+main() {
+    local source="" project_id="" service="" port="" api_key="${UT_API_KEY:-}"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --service) service=$2; shift 2 ;;
+            --port) port=$2; shift 2 ;;
+            -h|--help) usage; exit 0 ;;
+            -*) die "Unknown option: $1" ;;
+            *)
+                if [[ -z "$source" ]]; then source=$1
+                elif [[ -z "$project_id" ]]; then project_id=$1
+                else die "Unexpected argument: $1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    [[ -n "$source" && -n "$project_id" ]] || { usage; exit 1; }
+    [[ -n "$service" ]] || die "--service is required"
+    [[ -n "$port" ]] || die "--port is required"
+    valid_project_id "$project_id" || die "project-id must be a DNS label: lowercase letters, digits, hyphens"
+
+    resolve_install_dir
+    local domain data_root container_prefix traefik_dir public_url
+    domain=$(platform_setting UT_DOMAIN understand.local)
+    data_root=$(platform_setting DATA_ROOT "$DATA_ROOT_DEFAULT")
+    container_prefix=$(platform_setting CONTAINER_PREFIX "$CONTAINER_PREFIX_DEFAULT")
+    public_url="$(platform_setting UT_PUBLIC_SCHEME https)://$domain"
+    traefik_dir="$data_root/appbuilder/traefik-dynamic"
+
+    local app_dir compose_file
+    app_dir=$(stage_source "$source" "$project_id" "$data_root")
+    compose_file=$(compose_file_in "$app_dir")
+    log_info "Staged at $app_dir"
+
+    service_exists "$compose_file" "$service" \
+        || die "$compose_file has no service named '$service'"
+    mounts_the_docker_socket_or_runs_privileged "$compose_file" \
+        && die "$compose_file mounts the Docker socket or runs privileged — refusing to import"
+
+    write_env_additions "$app_dir" "$project_id" "$public_url" "$api_key"
+
+    local has_ca=false
+    install -d -m 755 "$app_dir/.ut-import"
+    if extract_platform_root_ca "${container_prefix}-caddy" "$app_dir/.ut-import/root-ca.crt"; then
+        has_ca=true
+        log_info "Platform root CA extracted — the app's own containers will trust it"
+    else
+        log_warn "No internal root CA found on ${container_prefix}-caddy — the platform likely has a publicly trusted certificate, which every base image already trusts. If outbound calls fail TLS verification, check manually."
+    fi
+
+    local override
+    override=$(write_compose_override "$app_dir" "$compose_file" "$service" "$domain" "$has_ca" "$project_id")
+    log_info "Wrote $override"
+
+    ( cd "$app_dir" && docker compose -p "$project_id" -f "$compose_file" -f "$override" config >/dev/null ) \
+        || die "docker compose rejects the merged configuration — see the error above before retrying"
+
+    ensure_proxy_network
+
+    local traefik_file
+    traefik_file=$(write_traefik_route "$traefik_dir" "$project_id" "$domain" "$port")
+    log_info "Wrote $traefik_file — no access gate: the app answers anyone who reaches its URL"
+
+    log "Starting the stack…"
+    ( cd "$app_dir" && docker compose -p "$project_id" -f "$compose_file" -f "$override" up -d --build )
+
+    if wait_for_service_healthy "$app_dir" "$project_id" "$service"; then
+        log_info "$service is up"
+    else
+        log_warn "$service did not report healthy within 60s — checking anyway"
+    fi
+
+    if smoke_test_outbound "$app_dir" "$project_id" "$service" "$public_url"; then
+        log_info "$service can reach $public_url"
+    else
+        log_warn "$service could not reach $public_url — check the extra_hosts/CA wiring in $override"
+    fi
+
+    if smoke_test_inbound "$project_id" "$domain" "127.0.0.1"; then
+        log_info "https://$project_id.apps.$domain answers"
+    else
+        log_warn "https://$project_id.apps.$domain did not answer within 10s — Traefik's file watch can take a moment, retry by hand"
+    fi
+
+    log ""
+    log_info "Imported. URL: https://$project_id.apps.$domain"
+    log_warn "Not verified: that $service actually speaks the platform's API contract correctly (required fields, response handling) — only using the app shows that."
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
