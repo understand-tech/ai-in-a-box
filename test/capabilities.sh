@@ -231,7 +231,7 @@ folder_load_report() {
         printf '%s\n' "${BUSYBOX_IMAGE%%:*}@${BUSYBOX_IMAGE#*@}" "${ALPINE_INDEX_IMAGE%%:*}@${ALPINE_INDEX_IMAGE#*@}" \
             | copy_the_images_into "$probe/folder" "$probe/auth"
         copy_the_tools_into "$probe/folder" "$probe/auth"
-    ) >/dev/null 2>&1 || { echo "PREPARE FAILED"; return 0; }
+    ) > "$probe/prepared.log" 2>&1 || { echo "PREPARE FAILED"; tail -5 "$probe/prepared.log"; return 0; }
     [[ -n "$tamper" ]] && eval "$tamper"
     docker rmi -f "$BUSYBOX_IMAGE" "$ALPINE_INDEX_IMAGE" >/dev/null 2>&1
     docker image ls --digests --format '{{.Repository}}@{{.Digest}}' \
@@ -457,6 +457,35 @@ a_model_engine_is_carried_for_that_model_only() {
         weights_of_the_bill "$bill" nemotron-3.5-bolt-74b compute | grep -c '^nemotron-3.5-bolt-74b ' )
     [[ "$(head -3 <<< "$counts" | tr '\n' ' ')" == "1 0 0 " && "$(tail -1 <<< "$counts")" -gt 100 ]] && return 0
     echo "Bolt's engine: for Bolt ×$(sed -n 1p <<< "$counts"), for the release's model ×$(sed -n 2p <<< "$counts"), on a control plane ×$(sed -n 3p <<< "$counts"); Bolt's weights: $(sed -n 4p <<< "$counts")"
+    return 1
+}
+
+a_copy_a_registry_refuses_twice_is_tried_a_third_time() {
+    local tries="$WORK_DIR/tries" outcome
+    flaky() { echo x >> "$tries"; [[ $(wc -l < "$tries") -ge "$1" ]]; }
+    outcome=$( set +u; source "$REPO_ROOT/bin/ut-get"; set +eE; export UT_GET_RETRY_SECONDS=0
+        : > "$tries"; with_retries flaky 3 && echo "third:$(wc -l < "$tries" | tr -d ' ')"
+        : > "$tries"; with_retries flaky 4 || echo "fourth:$(wc -l < "$tries" | tr -d ' ')" )
+    [[ "$outcome" == "$(printf 'third:3\nfourth:3')" ]] && return 0
+    echo "retries: ${outcome//$'\n'/, }"
+    return 1
+}
+
+two_models_on_one_engine_are_one_component_carried_for_both() {
+    local copy="$WORK_DIR/twin-models" bill engine digest components carried
+    rm -rf "$copy"; mkdir -p "$copy"
+    git -C "$REPO_ROOT" ls-files -z | (cd "$REPO_ROOT" && xargs -0 tar -cf -) | tar -xf - -C "$copy"
+    engine=$(sed -n 's/^VLLM_ENGINE_IMAGE="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$copy/models/nemotron-3.5-bolt-74b.env")
+    digest=${engine#*@}
+    printf 'MODEL_LICENSE="apache-2.0"\nVLLM_ENGINE_IMAGE="%s"\nVLLM_ENGINE_MODEL="org/twin"\n' "$engine" > "$copy/models/twin-model.env"
+    bill="$WORK_DIR/twin.cdx.json"
+    "$copy/packaging/release-bom.sh" 9999.99.9 > "$bill" 2>/dev/null
+    components=$(grep -c "@${digest}" <<< "$(jq -r '.components[] | select(.type == "container") | .purl' "$bill")")
+    carried=$( set +u; source "$copy/bin/ut-get"; set +eE
+        images_of_the_bill "$bill" appliance twin-model | grep -c "@${digest}"
+        images_of_the_bill "$bill" appliance nemotron-3.5-bolt-74b | grep -c "@${digest}" )
+    [[ "$components" == 1 && "$(tr '\n' ' ' <<< "$carried")" == "1 1 " ]] && return 0
+    echo "one engine for two models: ${components} components, carried for each ×$(tr '\n' ' ' <<< "$carried")"
     return 1
 }
 
@@ -3127,6 +3156,10 @@ if grep -q 'step_images_from_a_folder' "$REPO_ROOT/bin/ut-install"; then
         a_platform_without_its_images_is_refused
     capability "the bill of materials says which role runs each image and each weight" \
         the_bill_says_which_role_runs_each_image
+    capability "a copy a registry refuses twice is tried a third time, and no more" \
+        a_copy_a_registry_refuses_twice_is_tried_a_third_time
+    capability "two models on one engine are one component of the bill, carried for either" \
+        two_models_on_one_engine_are_one_component_carried_for_both
     capability "a model's own engine is carried for that model only, with its weights" \
         a_model_engine_is_carried_for_that_model_only
     capability "each role prepares its own part of the release" \
