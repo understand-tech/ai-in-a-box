@@ -2226,8 +2226,8 @@ copy_into_a_volume() {
         fi
     done
     [[ -n "$owner" ]] && script+="; chown -R ${owner} /dest"
-    docker run --rm --entrypoint sh -v "$volume":/dest -v "$IMAGES_FROM/weights":/weights:ro \
-        "${FOLDER_REGISTRY_TOOL%@*}" -c "$script" || die "Could not place the weights in ${volume}"
+    docker run --rm --entrypoint sh -v "$volume":/dest -v "${WEIGHTS_ROOT:-$IMAGES_FROM}/weights":/weights:ro \
+        "${WEIGHTS_TOOL:-${FOLDER_REGISTRY_TOOL%@*}}" -c "$script" || die "Could not place the weights in ${volume}"
 }
 
 # The Hugging Face cache layout: the files under snapshots/<revision>, and
@@ -2264,11 +2264,18 @@ platform_weight_copies() {
 # The engine runs as uid 1000 (nim), and the cache NIM writes itself is 1000:1000.
 step_weights_from_a_folder() {
     [[ -n "$IMAGES_FROM" && -d "$IMAGES_FROM/weights" ]] || return 0
-    local local_file dir name
-    local_file="$(settings_directory "$INSTALL_DIR/.env")/local.env"
+    local dir lists=""
     log_step "Placing the model weights from ${IMAGES_FROM}"
     for dir in "$IMAGES_FROM"/weights/*/; do
-        name=$(basename "$dir")
+        lists+="$(basename "$dir") "
+    done
+    place_the_weights $lists
+}
+
+place_the_weights() {
+    local local_file name
+    local_file="$(settings_directory "$INSTALL_DIR/.env")/local.env"
+    for name in "$@"; do
         if [[ "$name" == platform ]]; then
             this_machine_is_a_compute_node && continue
             platform_weight_copies | copy_into_a_volume "$(volume_ready llm-models)" ""
@@ -2282,6 +2289,91 @@ step_weights_from_a_folder() {
     env_set "$local_file" HF_HUB_OFFLINE "1"
     render_settings "$INSTALL_DIR/.env" "$local_file"
     log_info "No model is downloaded on its first start"
+}
+
+model_this_box_serves() {
+    local id entry shipped
+    id=$(env_get "$(settings_directory "$INSTALL_DIR/.env")/local.env" UT_MODEL 2>/dev/null || true)
+    [[ -n "$id" ]] && { printf '%s' "$id"; return 0; }
+    shipped=$(release_declares NIM_LLM_MODEL_PATH || true)
+    [[ -n "$shipped" ]] || return 1
+    for entry in "$INSTALL_DIR"/models/*.env; do
+        [[ "$(env_get "$entry" NIM_LLM_MODEL_PATH 2>/dev/null || true)" == "$shipped" ]] || continue
+        basename "$entry" .env
+        return 0
+    done
+    return 1
+}
+
+lists_of_the_weights_this_box_loads() {
+    local model
+    this_machine_is_a_compute_node || this_machine_goes_without_its_accelerator || echo platform
+    the_inference_is_served_by_another_machine && return 0
+    model=$(model_this_box_serves) || return 0
+    [[ -f "$INSTALL_DIR/models/weights/${model}.txt" ]] && echo "$model"
+}
+
+# What was placed, by checksum, next to the data: a later run downloads only what
+# the release changed, as long as the volume it went into is still there.
+weights_placed_record() {
+    local data_root
+    data_root=$(env_get "$INSTALL_DIR/.env" DATA_ROOT 2>/dev/null || true)
+    printf '%s/weights-placed.txt' "${data_root:-$DATA_DIR}"
+}
+
+list_already_placed() {
+    local list=$1 key=$2 sha
+    docker volume inspect "$(volume_named "$key")" >/dev/null 2>&1 || return 1
+    while read -r sha _; do
+        [[ -n "$sha" && "$sha" != \#* ]] || continue
+        grep -qx "$sha" "$(weights_placed_record)" 2>/dev/null || return 1
+    done < "$INSTALL_DIR/models/weights/${list}.txt"
+}
+
+download_the_listed_weights_into() {
+    local root=$1 list key sha size location repository revision path target
+    shift
+    for list in "$@"; do
+        key=nim-llm-cache; [[ "$list" == platform ]] && key=llm-models
+        list_already_placed "$list" "$key" && continue
+        while read -r sha size location; do
+            [[ -n "$sha" && "$sha" != \#* ]] || continue
+            repository=${location%%@*}; revision=${location#*@}; revision=${revision%%/*}; path=${location#*@*/}
+            target="$root/weights/$list/$(printf '%s' "$repository" | tr '/' '_')/$revision/$path"
+            [[ -f "$target" && "$(sha256_of "$target")" == "sha256:$sha" ]] && continue
+            mkdir -p "$(dirname "$target")"
+            log_info "Downloading ${repository}/${path} ($(( size / 1000000 )) MB)"
+            curl -fsSL --retry 3 --connect-timeout 20 --continue-at - --output "$target.part" \
+                "https://huggingface.co/${repository}/resolve/${revision}/${path}" \
+                || die "Could not download ${repository}/${path} from Hugging Face — run ut-install again to resume"
+            if [[ "$(sha256_of "$target.part")" != "sha256:$sha" ]]; then
+                rm -f "$target.part"
+                die "${repository}/${path} is not the file this release lists — run ut-install again"
+            fi
+            mv "$target.part" "$target"
+        done < "$INSTALL_DIR/models/weights/${list}.txt"
+    done
+}
+
+# Online, the engine and ut-llm would otherwise fetch their weights on their
+# first start, by repository name: whatever Hugging Face serves that day, never
+# checked. They are fetched here instead, as a prepared folder carries them.
+step_weights_from_the_network() {
+    [[ -z "$IMAGES_FROM" ]] && $DO_PULL || return 0
+    local lists root list
+    lists=$(lists_of_the_weights_this_box_loads | tr '\n' ' ')
+    [[ -n "${lists// /}" ]] || return 0
+    root="$(dirname "$(weights_placed_record)")/weights-download"
+    log_step "Downloading the model weights this release pins"
+    download_the_listed_weights_into "$root" $lists
+    if [[ -d "$root/weights" ]]; then
+        WEIGHTS_ROOT=$root WEIGHTS_TOOL=$(image_in_registry "$FOLDER_REGISTRY_TOOL") place_the_weights $(ls "$root/weights")
+        for list in $lists; do
+            awk '!/^#/ && NF { print $1 }' "$INSTALL_DIR/models/weights/${list}.txt"
+        done | sort -u > "$(weights_placed_record)"
+    fi
+    [[ "$root" == */weights-download ]] && rm -rf -- "$root"
+    log_info "The weights are the ones this release lists, checked by checksum"
 }
 
 step_pull() {
@@ -2721,6 +2813,7 @@ main() {
     step_images_from_a_folder
     step_weights_from_a_folder
     step_pull
+    step_weights_from_the_network
     step_start
     step_wait_healthy
     step_autostart

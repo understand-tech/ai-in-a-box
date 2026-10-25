@@ -239,10 +239,10 @@ key in front of it, see [opening inference to another machine](#opening-inferenc
 with an external `base_url` sends prompts off the appliance, which is the one
 thing this product promises not to do.
 
-`HF_HUB_OFFLINE="0"` lets containers fetch model weights on first start — which
-is why an appliance sold as offline is only offline after a connected first
-boot. Setting it to `1` requires the weights to be present already; an install
-from a folder `ut-get --prepare` wrote places them and sets it.
+`HF_HUB_OFFLINE` is set to `1` by `ut-install` once it has placed the weights
+the release pins, downloaded or from a prepared folder: no container fetches a
+model on its first start. It stays `0` only after an install with `--skip-pull`,
+which places none.
 
 ## What you will actually change
 

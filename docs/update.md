@@ -188,6 +188,13 @@ and `--behind-proxy` replace editing `UT_INGRESS_MODE`, `UT_CADDY_SCHEME` and
 `UT_PUBLIC_SCHEME` is gone: the addresses the applications advertise are always
 `https`. A `local.env` that set it to `http` sees them move to `https`.
 
+**The model weights are downloaded by `ut-install`.** It fetches the files the
+release pins, checks each checksum, and places them where the engines read them;
+nothing is fetched by a container any more. The first update of a box that
+fetched its weights itself downloads them once more, some 27 GB for the model
+the release ships. `ut-llm` no longer downloads the ONNX embedding model, which
+the release does not use.
+
 **The browser warning may change.** If you switch the public certificate over to
 the local authority, every already-paired browser sees a new fingerprint and
 warns again. That switch is a deliberate act, never part of an update.

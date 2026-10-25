@@ -1365,6 +1365,14 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
         "the summary says where generation comes from" \
         "sed -i.bak 's|printf .control plane — generation comes from %s.|printf \"appliance — inference runs on this machine\"|' bin/ut-install"
 
+    install_walk_discriminates "a downloaded weight kept without looking at its checksum" \
+        "a weight that is not the file the release lists stops the install" \
+        "sed -i.bak 's|^            if \[\[ \"\$(sha256_of \"\$target.part\")\" != \"sha256:\$sha\" \]\]; then\$|            if false; then|' bin/ut-install"
+
+    install_walk_discriminates "weights left to the containers again on an online install" \
+        "online, the weights the release pins are downloaded" \
+        "sed -i.bak 's|^    step_weights_from_the_network\$|    :|' bin/ut-install"
+
     install_walk_discriminates "a check that no longer says what the box runs" \
         "the check says what an installed box runs, and none of its secrets" \
         "sed -i.bak 's|^        say_what_is_installed\$|        :|' bin/ut-install"

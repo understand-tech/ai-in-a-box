@@ -82,7 +82,7 @@ case "$1 $2" in
     "version --format")   echo "29.0.0" ;;
     "compose version")    echo "v5.0.0" ;;
     "info --format")      case "$*" in *Architecture*) echo aarch64 ;; *) echo '{"nvidia":{}}' ;; esac ;;
-    "volume inspect")     [ "${MONGO_VOLUME_EXISTS:-no}" = yes ] ;;
+    "volume inspect")     case "$*" in *mongodb*) [ "${MONGO_VOLUME_EXISTS:-no}" = yes ] ;; *) [ "${WEIGHT_VOLUMES_EXIST:-yes}" = yes ] ;; esac ;;
     "network inspect")    exit 1 ;;
     "network create")     exit "${NETWORK_CREATE_EXIT:-0}" ;;
     "compose pull")       exit "${PULL_EXIT:-0}" ;;
@@ -133,6 +133,7 @@ run_install_from_state() {
 set -u
 . /w/stubs.sh
 dpkg -i --force-depends /out/understandtech_${VERSION}_all.deb >/dev/null 2>&1
+install -d /var/lib/understandtech && cat /usr/share/understandtech/models/weights/*.txt | awk '!/^#/ && NF { print \$1 }' > /var/lib/understandtech/weights-placed.txt
 
 $(state_setup "$state")
 
@@ -142,6 +143,8 @@ printf 'EXIT=%s\n' "\$?" >> /w/$state/output.txt
 
 cp /etc/understandtech/.env /w/$state/env 2>/dev/null || : > /w/$state/env
 cp /etc/understandtech/local.env /w/$state/local-env 2>/dev/null || : > /w/$state/local-env
+cp /var/lib/understandtech/weights-placed.txt /w/$state/weights-placed 2>/dev/null || : > /w/$state/weights-placed
+ls -d /var/lib/understandtech/weights-download > /w/$state/staging-left 2>/dev/null || : > /w/$state/staging-left
 cp /opt/understandtech/.env /w/$state/checkout-env 2>/dev/null || : > /w/$state/checkout-env
 cp /stub/docker-calls /w/$state/docker-calls 2>/dev/null || : > /w/$state/docker-calls
 cp /stub/docker-login-stdin /w/$state/login-stdin 2>/dev/null || : > /w/$state/login-stdin
@@ -262,6 +265,12 @@ state_setup() {
         # by the check the page runs first.
         installed_and_checked)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'UT_DOMAIN="carried.example"\nUT_RELEASE_VERSION="2026.10.0-rc16"\nUT_MODEL="qwen3.8-27b-nvfp4"\nJWT_SECRET="neverinanevent0123456789abcdef0123456789abcd"\n'"'"' > /etc/understandtech/.env && printf '"'"'UT1-license-never-in-an-event\n'"'"' > /etc/understandtech/license' ;;
+        # A first install online: nothing placed yet, and a stand-in for Hugging
+        # Face that serves the files of two small pinned lists, one of them altered.
+        weights_from_the_network)
+            echo 'rm -f /var/lib/understandtech/weights-placed.txt && cp /w/weights/lists/*.txt /usr/share/understandtech/models/weights/ && cp /w/weights/curl /stub/curl' ;;
+        weights_altered_on_the_way)
+            echo 'rm -f /var/lib/understandtech/weights-placed.txt && cp /w/weights/lists/*.txt /usr/share/understandtech/models/weights/ && cp /w/weights/curl /stub/curl && sed -i "s/^[0-9a-f]* /0000000000000000000000000000000000000000000000000000000000000000 /" /usr/share/understandtech/models/weights/platform.txt' ;;
         orphan_volume) echo ': # the volume is asserted through the stub' ;;
         volume_with_shipped_password)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'MONGODB_USERNAME="mongoadmin"\nMONGODB_PASSWORD="12345678"\n'"'"' > /etc/understandtech/local.env' ;;
@@ -754,6 +763,32 @@ the_check_says_what_is_installed_and_no_secret() {
     return 1
 }
 
+the_pinned_weights_are_downloaded_checked_and_placed() {
+    local output settings
+    output=$(output_of weights_from_the_network)
+    settings=$(of_state weights_from_the_network local-env)
+    grep -q 'Downloading nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f32.gguf' <<< "$output" \
+        && grep -q 'Downloading Inferact/Qwen3.8-27B-NVFP4/config.json' <<< "$output" \
+        && grep -qx 'HF_HUB_OFFLINE="1"' <<< "$settings" && grep -qx 'DOWNLOAD_ONNX_EMBED="false"' <<< "$settings" \
+        && [[ "$(grep -c . <<< "$(of_state weights_from_the_network weights-placed)")" == 2 ]] \
+        && [[ ! -s "$WORK_DIR/weights_from_the_network/staging-left" ]] && return 0
+    grep -E '^\[fail\]|Downloading|^EXIT=' <<< "$output" | tail -5
+    return 1
+}
+
+a_weight_that_is_not_the_listed_file_stops_the_install() {
+    local output
+    output=$(output_of weights_altered_on_the_way)
+    grep -q 'is not the file this release lists' <<< "$output" && ! grep -q '^EXIT=0$' <<< "$output" \
+        && ! grep -q 'HF_HUB_OFFLINE="1"' <<< "$(of_state weights_altered_on_the_way local-env)" && return 0
+    tail -5 <<< "$output"
+    return 1
+}
+
+weights_already_placed_are_not_downloaded_again() {
+    ! grep -qE 'Downloading [^ ]+/[^ ]+ \(' <<< "$(output_of install_runs_through)"
+}
+
 refused_before_anything_is_written() {
     local state=$1 reason=$2 output
     output=$(output_of "$state")
@@ -1103,6 +1138,34 @@ prepare_a_compute_node() {
     chmod -R a+r "$work"
 }
 
+prepare_weights() {
+    local work="$WORK_DIR/weights" repository revision path sha
+    mkdir -p "$work/lists"
+    : > "$work/lists/platform.txt"
+    : > "$work/lists/qwen3.8-27b-nvfp4.txt"
+    for line in "platform nomic-ai/nomic-embed-text-v1.5-GGUF 0188c9bf409793f810680a5a431e7b899c46104c nomic-embed-text-v1.5.f32.gguf" \
+                "qwen3.8-27b-nvfp4 Inferact/Qwen3.8-27B-NVFP4 1111111111111111111111111111111111111111 config.json"; do
+        set -- $line
+        mkdir -p "$work/source/$2/resolve/$3"
+        printf 'weights of %s, for the walk\n' "$4" > "$work/source/$2/resolve/$3/$4"
+        sha=$(openssl dgst -sha256 -r "$work/source/$2/resolve/$3/$4" | cut -d' ' -f1)
+        printf '%s %s %s@%s/%s\n' "$sha" "$(wc -c < "$work/source/$2/resolve/$3/$4" | tr -d ' ')" "$2" "$3" "$4" >> "$work/lists/$1.txt"
+    done
+    cat > "$work/curl" <<'CURL'
+#!/bin/sh
+target="" url="" previous=""
+for argument; do
+    [ "$previous" = --output ] && target=$argument
+    case "$argument" in https://huggingface.co/*) url=$argument ;; esac
+    previous=$argument
+done
+source="/w/weights/source/${url#https://huggingface.co/}"
+[ -f "$source" ] || exit 22
+cp "$source" "$target"
+CURL
+    chmod -R a+rx "$work"
+}
+
 prepare_certificates() {
     local work="$WORK_DIR/certs" case
     for case in good short with_another_key without_its_key; do mkdir -p "$work/$case"; done
@@ -1318,6 +1381,7 @@ write_machine_stubs
 prepare_licenses
 prepare_a_compute_node
 prepare_certificates
+prepare_weights
 prepare_a_vllm_entry
 
 run_install_from_state bare
@@ -1352,6 +1416,8 @@ WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --inference-from http
 PULL_EXIT=0 INSTALL_COMMAND="ut-install --compute 192.0.2.10" \
     run_install_from_state compute_by_flag -
 INSTALL_COMMAND="ut-install --compute node.local" run_install_from_state compute_named_by_mdns
+PULL_EXIT=0 WALK_IMAGE=$WITH_OPENSSL_IMAGE run_install_from_state weights_from_the_network
+PULL_EXIT=0 WALK_IMAGE=$WITH_OPENSSL_IMAGE run_install_from_state weights_altered_on_the_way
 INSTALL_COMMAND="ut-install --check --events /w/installed_and_checked/events.jsonl" run_install_from_state installed_and_checked -
 WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --certificate-dir /w/certs/good" run_install_from_state certificate_given
 WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --certificate-dir /w/certs/short" run_install_from_state certificate_short
@@ -1483,6 +1549,12 @@ property "a node reached over plain http is refused before anything is written" 
     a_compute_node_over_http_is_refused
 property "a node named by mDNS is refused before anything is written" \
     refused_before_anything_is_written pointed_at_an_mdns_node "names a .local host"
+property "online, the weights the release pins are downloaded, checked and placed, and nothing is fetched on first start" \
+    the_pinned_weights_are_downloaded_checked_and_placed
+property "a weight that is not the file the release lists stops the install" \
+    a_weight_that_is_not_the_listed_file_stops_the_install
+property "weights already placed are not downloaded again" \
+    weights_already_placed_are_not_downloaded_again
 property "the check says what an installed box runs, and none of its secrets" \
     the_check_says_what_is_installed_and_no_secret
 property "a certificate given to the installer is the one the front door serves" \
