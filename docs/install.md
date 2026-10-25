@@ -19,7 +19,7 @@ flowchart LR
     CONFIGURE["write .env and generate every secret"]
     RESOLVE["check the address resolves, and the docker group"]
     CA["create the networks"]
-    PULL["pull the images"]
+    PULL["pull the images, download the pinned weights"]
     START["start, then wait for every service to be healthy"]
     PERSIST["boot service, usage reports"]
     PREFLIGHT --> ASK --> FETCH --> CONFIGURE --> RESOLVE
@@ -36,7 +36,8 @@ registry with the access the license carries — skipped with `--skip-pull` — 
 fetches the release, writes
 `/etc/understandtech/.env` and generates every secret, checks that the address
 resolves and that Docker is usable, creates the networks, pulls the images,
-starts the stack and waits for every service to report healthy. It ends by
+downloads the model weights the release pins and checks each against its
+checksum, starts the stack and waits for every service to report healthy. It ends by
 installing the boot service and asking whether usage reports go out.
 Nothing is left running if an earlier stage failed.
 
@@ -376,10 +377,12 @@ began:
 ```
 
 **It hands back as soon as the platform answers**, usually within a minute of
-the images being on the machine. The inference engines keep loading their model
-weights in the background — up to 45 minutes on a first install — and the
-installer says so, with the command to follow them. Sign in and configure while
-they load.
+the images and the weights being on the machine. The weights are the files the
+release lists in `models/weights/`, at the revision and checksum it pins — the
+same ones a prepared folder carries — and a later run downloads only what a new
+release changed. The inference engines then load them from the disk, in the
+background, and the installer says so, with the command to follow them. Sign in
+and configure while they load.
 
 Follow them with `sudo docker compose ps` in `/usr/share/understandtech`. It
 needs `sudo`: the settings file it reads is `0600`.
