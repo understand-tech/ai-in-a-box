@@ -104,13 +104,24 @@ requests_no_gpu() {
     ! compose_config "$@" | grep -q 'driver: nvidia'
 }
 
-# The arbiter judges a pair of box of calcul from the outside: it must run
-# nothing of its own that a control plane or an inference engine runs, or its
-# own failure stops meaning anything about theirs.
-arbiter_role_keeps_only_caddy() {
+# The arbiter judges a pair of boxes from the outside: it must run nothing
+# of its own that a control plane or an inference engine runs, or its own
+# failure stops meaning anything about theirs.
+arbiter_role_keeps_only_arbiter_and_caddy() {
     local got
     got=$(compose_services -f compose.yaml -f compose.arbiter.yaml)
-    [[ "$got" == "caddy" ]]
+    [[ "$got" == $'arbiter\ncaddy' ]]
+}
+
+# The default Caddyfile's platform routes proxy to api and frontend, both off
+# on this role; serving them would 502 on every request instead of refusing
+# cleanly, so this role publishes nothing on 80/443, only its own surface.
+arbiter_role_publishes_only_its_own_port() {
+    local published
+    published=$(compose_config -f compose.yaml -f compose.arbiter.yaml \
+        | awk '/^  caddy:/{f=1;next} f && /^  [a-z-]+:$/{exit} f{print}' \
+        | grep -E '^\s+target: [0-9]+$' | awk '{print $2}' | sort -u)
+    [[ "$published" == "8446" ]]
 }
 
 renders_valid_configuration() {
@@ -3039,8 +3050,10 @@ capability "a machine without a GPU still records what its gateway and front doo
     lists_service metrics -f compose.yaml -f compose.no-gpu.yaml
 capability "the arbiter role renders a valid stack" \
     renders_valid_configuration -f compose.yaml -f compose.arbiter.yaml
-capability "the arbiter role keeps only Caddy, no control plane and no GPU" \
-    arbiter_role_keeps_only_caddy
+capability "the arbiter role keeps only the arbiter and Caddy, no control plane and no GPU" \
+    arbiter_role_keeps_only_arbiter_and_caddy
+capability "the arbiter role publishes only its own port, never the platform's" \
+    arbiter_role_publishes_only_its_own_port
 
 if [[ -x "$REPO_ROOT/bin/ut-certificate" ]]; then
     group "Public certificate"

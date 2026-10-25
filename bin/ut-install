@@ -37,7 +37,7 @@ DO_UPDATE=false
 DO_AUTOSTART=true
 DO_PULL=true
 NO_GPU=false
-ARBITER=false
+ARBITER_ADDRESS=""
 TOKEN_FILE=""
 REGISTRY_TOKEN="${UT_REGISTRY_TOKEN:-}"
 LICENSE_FILE=""
@@ -70,7 +70,7 @@ SHIPPED_PLACEHOLDERS=(
     "" "12345678" "password" "SECRET" "SJKFVK" "FVVE" "SJBVSJB" "ut"
     "czIzgahTJGzdG3b1XtEgGIWPvwhdfBvhVd1JjzetjWQ" "EMPTY"
 )
-GENERATED_SECRET_KEYS=(JWT_SECRET STATE_SECRET OPENID_SECRET_KEY ADMIN_SETUP_PASSWORD BACKUP_FILES_PASSWORD GPU_VM_API_TOKEN GATEWAY_METRICS_TOKEN APP_BUILDER_TOKEN_ENCRYPTION_KEY VLLM_API_KEY)
+GENERATED_SECRET_KEYS=(JWT_SECRET STATE_SECRET OPENID_SECRET_KEY ADMIN_SETUP_PASSWORD BACKUP_FILES_PASSWORD GPU_VM_API_TOKEN GATEWAY_METRICS_TOKEN APP_BUILDER_TOKEN_ENCRYPTION_KEY VLLM_API_KEY UT_ARBITER_API_KEY)
 
 if [[ -t 1 ]]; then
     RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'
@@ -201,10 +201,14 @@ Options
                        root, as its own install printed them. No engine starts
                        here; a GPU, when there is one, stays with llm, which
                        searches the documents. Without one, as --no-gpu.
-  --arbiter            This machine judges which of a paired box of calcul is
+  --arbiter ADDRESS    This machine judges which of a pair of boxes is
                        reachable, to settle a two-box failover without two
-                       primaries. No GPU, no control-plane state of its own.
-                       Starts nothing but Caddy. Kept by later runs.
+                       primaries. ADDRESS is this machine's own: a DNS name or
+                       an IP, never a .local name, which the two boxes'
+                       containers cannot resolve. No GPU, no control-plane
+                       state of its own. Starts Caddy's keyed surface on port
+                       8446 and the lease server behind it, nothing else.
+                       Kept by later runs.
   --health-timeout N   Seconds to wait for services (default: 3600).
   --reporting yes|no   Whether this machine sends its usage reports to
                        UnderstandTech (docs/usage-report.md says what they hold).
@@ -1197,13 +1201,17 @@ write_the_settings_a_compute_role_needs() {
 }
 
 problem_with_the_arbiter_role_given() {
-    $ARBITER || return 1
+    [[ -n "$ARBITER_ADDRESS" ]] || return 1
     if [[ -n "$COMPUTE_ADDRESS" ]]; then
-        echo "--arbiter judges a pair of box of calcul; it goes with neither --compute nor a model"
+        echo "--arbiter judges a pair of boxes; it goes with neither --compute nor a model"
     elif [[ -n "$INFERENCE_FROM" ]]; then
-        echo "--arbiter judges a pair of box of calcul; it goes with neither --inference-from nor a model"
+        echo "--arbiter judges a pair of boxes; it goes with neither --inference-from nor a model"
     elif [[ -n "$MODEL_ID" || -n "$ENGINE_CHOICE" ]]; then
         echo "--arbiter serves no model; it goes with neither --model nor --engine"
+    elif [[ "$ARBITER_ADDRESS" == */* || "$ARBITER_ADDRESS" == *:* ]]; then
+        echo "--arbiter takes a name or an IP, such as 10.42.0.9, not ${ARBITER_ADDRESS}"
+    elif names_an_mdns_host "$ARBITER_ADDRESS"; then
+        echo "--arbiter ${ARBITER_ADDRESS}: the two boxes' containers cannot resolve a .local name; give this machine's IP or a DNS name"
     else
         return 1
     fi
@@ -1218,14 +1226,15 @@ die_on_an_arbiter_role_given_wrong() {
 
 write_the_settings_an_arbiter_role_needs() {
     local local_file=$1 compose_files
-    $ARBITER || return 0
+    [[ -n "$ARBITER_ADDRESS" ]] || return 0
+    env_set "$local_file" UT_ARBITER_ADDRESS "$ARBITER_ADDRESS"
     compose_files=$(env_get "$local_file" COMPOSE_FILE 2>/dev/null || true)
     [[ -n "$compose_files" ]] || compose_files=$(release_declares COMPOSE_FILE || echo "compose.yaml")
     case "$compose_files" in
         *compose.arbiter.yaml*) ;;
         *) env_set "$local_file" COMPOSE_FILE "${compose_files}:compose.arbiter.yaml" ;;
     esac
-    log_info "Arbiter: no GPU, no control-plane state, judges which box of calcul is reachable"
+    log_info "Arbiter, reached at https://${ARBITER_ADDRESS}:8446 by the two boxes it judges: no GPU, no control-plane state"
 }
 
 die_on_a_compute_node_given_wrong() {
@@ -1955,7 +1964,7 @@ name_in_the_folder_registry() {
 role_this_install_takes() {
     local compose_files
     compose_files=$(env_get "$INSTALL_DIR/.env" COMPOSE_FILE 2>/dev/null || true)
-    if $ARBITER || [[ "$compose_files" == *compose.arbiter.yaml* ]]; then
+    if [[ -n "$ARBITER_ADDRESS" || "$compose_files" == *compose.arbiter.yaml* ]]; then
         echo arbiter
     elif [[ -n "$COMPUTE_ADDRESS" || "$compose_files" == *compose.compute.yaml* ]]; then
         echo compute
@@ -2741,7 +2750,7 @@ parse_arguments() {
             --list-models)    ACTION="list-models" ;;
             --events)         EVENTS_FILE="${2:?--events needs a file}"; shift ;;
             --no-gpu)         NO_GPU=true ;;
-            --arbiter)        ARBITER=true ;;
+            --arbiter)        ARBITER_ADDRESS="${2:?--arbiter needs the address the two boxes reach this machine at}"; shift ;;
             --update)         DO_UPDATE=true ;;
             --no-autostart)   DO_AUTOSTART=false ;;
             --skip-pull)      DO_PULL=false ;;
