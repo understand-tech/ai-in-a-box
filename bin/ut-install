@@ -37,7 +37,6 @@ DO_UPDATE=false
 DO_AUTOSTART=true
 DO_PULL=true
 NO_GPU=false
-ARBITER_ADDRESS=""
 TOKEN_FILE=""
 REGISTRY_TOKEN="${UT_REGISTRY_TOKEN:-}"
 LICENSE_FILE=""
@@ -52,13 +51,9 @@ REPORTING_RECEIVER=""
 REPORTING_TOKEN_FILE=""
 REPORTING_RECEIVER_CERT=""
 REPORTING_EVERY=""
-INFERENCE_FROM=""
 CERTIFICATE_DIR=""
 BEHIND_PROXY=""
 IMAGES_FROM=""
-COMPUTE_ADDRESS=""
-INFERENCE_KEY_FILE=""
-INFERENCE_CA_FILE=""
 MODEL_ID=""
 ENGINE_CHOICE=""
 HOST_CA_BUNDLE="${UT_HOST_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}"
@@ -71,6 +66,14 @@ SHIPPED_PLACEHOLDERS=(
     "czIzgahTJGzdG3b1XtEgGIWPvwhdfBvhVd1JjzetjWQ" "EMPTY"
 )
 GENERATED_SECRET_KEYS=(JWT_SECRET STATE_SECRET OPENID_SECRET_KEY ADMIN_SETUP_PASSWORD BACKUP_FILES_PASSWORD GPU_VM_API_TOKEN GATEWAY_METRICS_TOKEN APP_BUILDER_TOKEN_ENCRYPTION_KEY VLLM_API_KEY UT_ARBITER_API_KEY)
+
+# One file per role a machine can be given at install, sibling of this script
+# so it is found the same way whether run from a checkout or from the package
+# — resolve_install_dir has not run yet here, nothing else is.
+for role_file in "$(dirname "${BASH_SOURCE[0]}")"/ut-install.d/*.sh; do
+    source "$role_file"
+done
+unset role_file
 
 if [[ -t 1 ]]; then
     RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'
@@ -1136,25 +1139,6 @@ the_key_file_holds_one_key() {
     [[ -n "$key" && "$key" != *[[:space:]]* ]]
 }
 
-problem_with_the_compute_node_given() {
-    if [[ -z "$INFERENCE_FROM" ]]; then
-        [[ -z "$INFERENCE_KEY_FILE$INFERENCE_CA_FILE" ]] && return 1
-        echo "--inference-key-file and --inference-ca-file only go with --inference-from"
-    elif [[ ! "$INFERENCE_FROM" =~ ^https://[^/]+ ]]; then
-        echo "--inference-from must be an https address, got ${INFERENCE_FROM}"
-    elif names_an_mdns_host "$(host_of_url "$INFERENCE_FROM")"; then
-        echo "--inference-from names a .local host, which this machine's containers cannot resolve: give the node's IP or a DNS name"
-    elif ! the_key_file_holds_one_key "$INFERENCE_KEY_FILE"; then
-        echo "--inference-key-file must hold the node's VLLM_API_KEY, one line, nothing else"
-    elif ! openssl x509 -in "$INFERENCE_CA_FILE" -noout 2>/dev/null; then
-        echo "--inference-ca-file must be the node's root certificate, in PEM"
-    elif [[ ! -r "$HOST_CA_BUNDLE" ]]; then
-        echo "no public roots at ${HOST_CA_BUNDLE} to keep beside the node's (apt install ca-certificates)"
-    else
-        return 1
-    fi
-}
-
 host_of_url() {
     local rest=${1#*://}
     rest=${rest%%/*}
@@ -1165,86 +1149,6 @@ names_an_mdns_host() {
     local host
     host=$(printf '%s' "${1%.}" | tr '[:upper:]' '[:lower:]')
     [[ "$host" == *.local ]]
-}
-
-problem_with_the_compute_role_given() {
-    [[ -n "$COMPUTE_ADDRESS" ]] || return 1
-    if $NO_GPU || [[ -n "$INFERENCE_FROM" ]]; then
-        echo "--compute serves the inference on this machine's GPU; it goes with neither --no-gpu nor --inference-from"
-    elif [[ "$COMPUTE_ADDRESS" == */* || "$COMPUTE_ADDRESS" == *:* ]]; then
-        echo "--compute takes a name or an IP, such as 10.42.0.7, not ${COMPUTE_ADDRESS}"
-    elif names_an_mdns_host "$COMPUTE_ADDRESS"; then
-        echo "--compute ${COMPUTE_ADDRESS}: a control plane's containers cannot resolve a .local name; give this machine's IP or a DNS name"
-    else
-        return 1
-    fi
-}
-
-die_on_a_compute_role_given_wrong() {
-    local problem
-    problem=$(problem_with_the_compute_role_given) || return 0
-    log_error "$problem"
-    exit 1
-}
-
-write_the_settings_a_compute_role_needs() {
-    local local_file=$1 compose_files
-    [[ -n "$COMPUTE_ADDRESS" ]] || return 0
-    env_set "$local_file" UT_INFERENCE_ADDRESS "$COMPUTE_ADDRESS"
-    compose_files=$(env_get "$local_file" COMPOSE_FILE 2>/dev/null || true)
-    [[ -n "$compose_files" ]] || compose_files=$(release_declares COMPOSE_FILE || echo "compose.yaml")
-    case "$compose_files" in
-        *compose.compute.yaml*) ;;
-        *) env_set "$local_file" COMPOSE_FILE "${compose_files}:compose.compute.yaml" ;;
-    esac
-    log_info "Compute node, reached at https://${COMPUTE_ADDRESS}:8444 by its control plane"
-}
-
-problem_with_the_arbiter_role_given() {
-    [[ -n "$ARBITER_ADDRESS" ]] || return 1
-    if [[ -n "$COMPUTE_ADDRESS" ]]; then
-        echo "--arbiter judges a pair of boxes; it goes with neither --compute nor a model"
-    elif [[ -n "$INFERENCE_FROM" ]]; then
-        echo "--arbiter judges a pair of boxes; it goes with neither --inference-from nor a model"
-    elif [[ -n "$MODEL_ID" || -n "$ENGINE_CHOICE" ]]; then
-        echo "--arbiter serves no model; it goes with neither --model nor --engine"
-    elif [[ "$ARBITER_ADDRESS" == */* || "$ARBITER_ADDRESS" == *:* ]]; then
-        echo "--arbiter takes a name or an IP, such as 10.42.0.9, not ${ARBITER_ADDRESS}"
-    elif names_an_mdns_host "$ARBITER_ADDRESS"; then
-        echo "--arbiter ${ARBITER_ADDRESS}: the two boxes' containers cannot resolve a .local name; give this machine's IP or a DNS name"
-    else
-        return 1
-    fi
-}
-
-die_on_an_arbiter_role_given_wrong() {
-    local problem
-    problem=$(problem_with_the_arbiter_role_given) || return 0
-    log_error "$problem"
-    exit 1
-}
-
-write_the_settings_an_arbiter_role_needs() {
-    local local_file=$1 compose_files
-    [[ -n "$ARBITER_ADDRESS" ]] || return 0
-    env_set "$local_file" UT_ARBITER_ADDRESS "$ARBITER_ADDRESS"
-    compose_files=$(env_get "$local_file" COMPOSE_FILE 2>/dev/null || true)
-    [[ -n "$compose_files" ]] || compose_files=$(release_declares COMPOSE_FILE || echo "compose.yaml")
-    case "$compose_files" in
-        *compose.arbiter.yaml*) ;;
-        *) env_set "$local_file" COMPOSE_FILE "${compose_files}:compose.arbiter.yaml" ;;
-    esac
-    log_info "Arbiter, reached at https://${ARBITER_ADDRESS}:8446 by the two boxes it judges: no GPU, no control-plane state"
-}
-
-die_on_a_compute_node_given_wrong() {
-    local problem
-    problem=$(problem_with_the_compute_node_given) || return 0
-    log_error "$problem"
-    log_error "  Give all three, as the compute node's install printed them:"
-    log_error "    --inference-from https://<node>:8444 --inference-key-file <key> --inference-ca-file <root.crt>"
-    log_error "  or none, and point VLLM_LLM_BASE_URL at the inference yourself."
-    exit 1
 }
 
 certificate_covers() {
@@ -1320,28 +1224,6 @@ write_how_tls_ends() {
         env_set "$local_file" UT_TRUSTED_PROXIES "$BEHIND_PROXY"
         log_info "TLS ends at your load balancer; forwarded addresses are believed from ${BEHIND_PROXY} only"
     fi
-}
-
-write_the_settings_a_compute_node_needs() {
-    local local_file=$1 bundle compose_files
-    [[ -n "$INFERENCE_FROM" ]] || return 0
-
-    bundle="$(dirname "$local_file")/inference-ca-bundle.pem"
-    cat "$HOST_CA_BUNDLE" "$INFERENCE_CA_FILE" > "$bundle"
-    chmod 644 "$bundle"
-
-    env_set "$local_file" VLLM_LLM_BASE_URL "$(inference_base_url "$INFERENCE_FROM")"
-    env_set "$local_file" VLLM_VLM_BASE_URL "$(inference_base_url "$INFERENCE_FROM")"
-    env_set "$local_file" VLLM_API_KEY "$(tr -d '\r\n' < "$INFERENCE_KEY_FILE")"
-    env_set "$local_file" UT_INFERENCE_CA_BUNDLE "$bundle"
-
-    compose_files=$(env_get "$local_file" COMPOSE_FILE 2>/dev/null || true)
-    [[ -n "$compose_files" ]] || compose_files=$(release_declares COMPOSE_FILE || echo "compose.yaml")
-    case "$compose_files" in
-        *compose.remote-inference.yaml*) ;;
-        *) env_set "$local_file" COMPOSE_FILE "${compose_files}:compose.remote-inference.yaml" ;;
-    esac
-    log_info "Inference from ${INFERENCE_FROM}, with its key, trusting its root"
 }
 
 write_the_settings_a_control_plane_with_an_accelerator_needs() {

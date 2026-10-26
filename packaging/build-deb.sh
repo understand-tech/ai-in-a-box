@@ -95,6 +95,8 @@ stage_commands() {
     local root=$1
     install -d "$root/usr/bin"
     install -m 755 "$REPO_ROOT/bin/ut-install" "$root/usr/bin/"
+    install -d "$root/usr/bin/ut-install.d"
+    install -m 644 "$REPO_ROOT"/bin/ut-install.d/*.sh "$root/usr/bin/ut-install.d/"
     install -m 755 "$REPO_ROOT/bin/ut-certificate" "$root/usr/bin/"
     install -m 755 "$REPO_ROOT/bin/ut-logs-archive" "$root/usr/bin/"
     install -m 755 "$REPO_ROOT/bin/ut-verify" "$root/usr/bin/"
