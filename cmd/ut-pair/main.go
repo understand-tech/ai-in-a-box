@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -20,7 +21,6 @@ import (
 
 const (
 	defaultInstall  = "/usr/share/understandtech"
-	defaultSettings = "/etc/understandtech"
 	linkRootInCaddy = "/data/caddy/pki/authorities/link/root.crt"
 	// After the first box is admitted, the window stays open a little for a
 	// platform whose answer was lost to ask again with the same root.
@@ -48,8 +48,26 @@ type Place struct {
 }
 
 func main() {
-	place := Place{Install: defaultInstall, Settings: defaultSettings, Now: time.Now, Run: run}
+	install := defaultInstall
+	if dir := os.Getenv("UT_INSTALL_DIR"); dir != "" {
+		install = dir
+	}
+	place := Place{Install: install, Settings: settingsOf(install), Now: time.Now, Run: run}
 	os.Exit(place.command(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
+}
+
+// ut-install writes the files Caddy mounts beside local.env, where the
+// install's .env points: /etc/understandtech for the package, the checkout
+// itself for an install that predates it.
+func settingsOf(install string) string {
+	target, err := os.Readlink(filepath.Join(install, ".env"))
+	if err != nil {
+		return install
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(install, target)
+	}
+	return filepath.Dir(target)
 }
 
 func run(ctx context.Context, dir string, name string, args ...string) ([]byte, error) {

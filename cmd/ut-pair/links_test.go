@@ -169,3 +169,19 @@ func TestTheCodeIsReadFromStandardInputNeverFromTheCommandLine(t *testing.T) {
 		t.Fatalf("an empty code: %v", err)
 	}
 }
+
+func TestTheLinkFilesGoWhereTheInstallsSettingsAre(t *testing.T) {
+	install, settings := t.TempDir(), t.TempDir()
+	os.WriteFile(filepath.Join(settings, ".env"), nil, 0o600)
+	if err := os.Symlink(filepath.Join(settings, ".env"), filepath.Join(install, ".env")); err != nil {
+		t.Fatal(err)
+	}
+	if got := settingsOf(install); got != settings {
+		t.Fatalf("a package install's settings read as %s, want %s", got, settings)
+	}
+	checkout := t.TempDir()
+	os.WriteFile(filepath.Join(checkout, ".env"), nil, 0o600)
+	if got := settingsOf(checkout); got != checkout {
+		t.Fatalf("a checkout's settings read as %s, want %s", got, checkout)
+	}
+}
