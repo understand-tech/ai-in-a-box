@@ -441,6 +441,10 @@ capability_discriminates "an arbiter whose ports merge with the platform's inste
     "the arbiter role publishes only its own port, never the platform's" \
     "sed -i.bak 's|ports: !override|ports:|' compose.arbiter.yaml"
 
+capability_discriminates "a box paired with an arbiter that would default its id from the hostname" \
+    "a box paired with an arbiter needs its own id, a hostname is not a safe default" \
+    "sed -i.bak '/elif \[\[ -z \"\$HA_ID\" \]\]; then/,+1d' bin/ut-install.d/ha-pair.sh"
+
 capability_discriminates "the arguments of a vLLM model passed as one" \
     "each argument of the model reaches vLLM whole, JSON included" \
     "sed -i.bak 's|--port 8000 \\\$\\\$VLLM_ENGINE_ARGS|--port 8000 \\\\\"\$\$VLLM_ENGINE_ARGS\\\\\"|' compose.engine-vllm.yaml"

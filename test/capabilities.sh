@@ -1043,6 +1043,109 @@ an_address_already_configured_is_kept() {
     return 1
 }
 
+# A self-signed cert generated for real, not a hand-typed PEM string: a faked
+# one would pass "looks like PEM" checks here without ever exercising what
+# openssl x509 actually validates.
+test_root_certificate() {
+    local dir=$1
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 1 \
+        -subj /CN=test-arbiter-root -keyout "$dir/ca.key" -out "$dir/ca.pem" 2>/dev/null
+    printf '%s' "$dir/ca.pem"
+}
+
+ha_pair_problem() {
+    local extra_vars=$1 probe report
+    probe=$(mktemp -d "$WORK_DIR/ha-pair.XXXXXX")
+    cat > "$probe/run.sh" <<EOF
+set +u
+UT_INSTALL_DIR="$probe" source "$REPO_ROOT/bin/ut-install" >/dev/null 2>&1
+set +eE
+trap - ERR
+$extra_vars
+problem_with_the_ha_pair_given
+EOF
+    bash "$probe/run.sh" 2>&1
+}
+
+ha_pair_needs_its_own_id() {
+    local report
+    report=$(ha_pair_problem 'HA_ARBITER="https://arbiter.example.com:8446"')
+    grep -q -- '--ha-arbiter needs --ha-id' <<< "$report" && return 0
+    echo "$report"
+    return 1
+}
+
+ha_pair_excludes_being_the_arbiter() {
+    local report
+    report=$(ha_pair_problem 'ARBITER_ADDRESS="10.42.0.9"
+HA_ID="box-a"
+HA_ARBITER="https://arbiter.example.com:8446"')
+    grep -q 'cannot be the arbiter and one of the pair' <<< "$report" && return 0
+    echo "$report"
+    return 1
+}
+
+ha_pair_needs_https() {
+    local report
+    report=$(ha_pair_problem 'HA_ID="box-a"
+HA_ARBITER="arbiter.example.com:8446"')
+    grep -q 'must be an https address' <<< "$report" && return 0
+    echo "$report"
+    return 1
+}
+
+# ut-arbiter hold cannot resolve .local at all (CGO_ENABLED=0, confirmed
+# 2026-10-26): unlike a container behind Caddy, no host-side avahi fixes this.
+ha_pair_refuses_a_local_arbiter_address() {
+    local report
+    report=$(ha_pair_problem 'HA_ID="box-a"
+HA_ARBITER="https://arbiter.local:8446"')
+    grep -q 'cannot resolve mDNS names at all' <<< "$report" && return 0
+    echo "$report"
+    return 1
+}
+
+ha_pair_settings_survive_the_given_files_being_deleted() {
+    local probe given_dir report key_file ca_file
+    probe=$(mktemp -d "$WORK_DIR/ha-pair-settings.XXXXXX")
+    given_dir=$(mktemp -d "$WORK_DIR/ha-pair-given.XXXXXX")
+    printf 'test-arbiter-key-value\n' > "$given_dir/arbiter.key"
+    ca_file=$(test_root_certificate "$given_dir")
+    install -d "$probe/install"
+    cat > "$probe/run.sh" <<EOF
+set +u
+UT_INSTALL_DIR="$probe/install" source "$REPO_ROOT/bin/ut-install" >/dev/null 2>&1
+set +eE
+trap - ERR
+HA_ID="box-a"
+HA_ARBITER="https://arbiter.example.com:8446"
+HA_KEY_FILE="$given_dir/arbiter.key"
+HA_CA_FILE="$ca_file"
+write_the_settings_an_ha_pair_needs "$probe/install/local.env" >/dev/null
+printf 'UT_HA_ID=%s\n' "\$(env_get "$probe/install/local.env" UT_HA_ID)"
+printf 'UT_HA_ARBITER=%s\n' "\$(env_get "$probe/install/local.env" UT_HA_ARBITER)"
+EOF
+    report=$(bash "$probe/run.sh" 2>&1)
+    rm -rf "$given_dir"
+    key_file="$probe/install/ha-arbiter.key"
+    report+=$(cat <<EOF
+
+KEY_FILE_PERSISTS=$([ -r "$key_file" ] && echo yes || echo no)
+KEY_FILE_CONTENT=$(cat "$key_file" 2>/dev/null)
+KEY_FILE_MODE=$(stat -f '%OLp' "$key_file" 2>/dev/null || stat -c '%a' "$key_file" 2>/dev/null)
+EOF
+)
+    if grep -qx 'UT_HA_ID=box-a' <<< "$report" \
+        && grep -qx 'UT_HA_ARBITER=https://arbiter.example.com:8446' <<< "$report" \
+        && grep -qx 'KEY_FILE_PERSISTS=yes' <<< "$report" \
+        && grep -qx 'KEY_FILE_CONTENT=test-arbiter-key-value' <<< "$report" \
+        && grep -qx 'KEY_FILE_MODE=600' <<< "$report"; then
+        return 0
+    fi
+    echo "$report"
+    return 1
+}
+
 write_package_probe() {
     cat > "$WORK_DIR/package-probe.sh" <<'PROBE'
 set -u
@@ -3395,6 +3498,16 @@ if [[ -f "$REPO_ROOT/compose.compute.yaml" ]]; then
         app_builder_traefik_calls_no_one
     capability "overriding the prefixes isolates every resource" \
         overrides_isolate_every_resource
+    capability "a box paired with an arbiter needs its own id, a hostname is not a safe default" \
+        ha_pair_needs_its_own_id
+    capability "a box cannot be the arbiter and one of the pair it judges at once" \
+        ha_pair_excludes_being_the_arbiter
+    capability "pairing with an arbiter needs an https address" \
+        ha_pair_needs_https
+    capability "pairing with a .local arbiter address is refused: the hold binary cannot resolve it" \
+        ha_pair_refuses_a_local_arbiter_address
+    capability "pairing with an arbiter stores its key and root where they survive the given files being deleted" \
+        ha_pair_settings_survive_the_given_files_being_deleted
 fi
 
 if [[ -f "$REPO_ROOT/compose.no-gpu.yaml" ]]; then

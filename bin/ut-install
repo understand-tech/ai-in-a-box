@@ -1668,6 +1668,7 @@ step_configure() {
     write_the_settings_an_arbiter_role_needs "$local_file"
     write_the_settings_the_model_needs "$local_file"
     write_the_settings_a_compute_node_needs "$local_file"
+    write_the_settings_an_ha_pair_needs "$local_file"
     write_how_tls_ends "$local_file"
     if this_machine_goes_without_its_accelerator; then
         write_the_settings_a_machine_without_an_accelerator_needs "$local_file"
@@ -2655,6 +2656,10 @@ parse_arguments() {
             --compute)            COMPUTE_ADDRESS="${2:?--compute needs the address the control plane reaches this machine at}"; shift ;;
             --inference-key-file) INFERENCE_KEY_FILE="${2:?--inference-key-file needs a path}"; shift ;;
             --inference-ca-file)  INFERENCE_CA_FILE="${2:?--inference-ca-file needs a path}"; shift ;;
+            --ha-id)          HA_ID="${2:?--ha-id needs this box's own identity}"; shift ;;
+            --ha-arbiter)     HA_ARBITER="${2:?--ha-arbiter needs the arbiter's address}"; shift ;;
+            --ha-key-file)    HA_KEY_FILE="${2:?--ha-key-file needs a path}"; shift ;;
+            --ha-ca-file)     HA_CA_FILE="${2:?--ha-ca-file needs a path}"; shift ;;
             --model)              MODEL_ID="${2:?--model needs one of the models in models/}"; shift ;;
             --engine)             ENGINE_CHOICE="${2:?--engine needs nim or vllm}"; shift ;;
             -h|--help)        usage; exit 0 ;;
@@ -2670,6 +2675,7 @@ main() {
     die_on_a_compute_node_given_wrong
     die_on_a_compute_role_given_wrong
     die_on_an_arbiter_role_given_wrong
+    die_on_an_ha_pair_given_wrong
     resolve_install_dir
     die_on_a_folder_that_misses_an_image
     die_on_a_model_nobody_listed
