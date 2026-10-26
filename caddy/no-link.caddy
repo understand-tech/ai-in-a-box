@@ -1,0 +1,2 @@
+# Empty on purpose: on a platform paired with a compute node, the file ut-pair
+# writes is mounted here instead. On every other role nothing is relayed.

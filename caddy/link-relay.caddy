@@ -1,0 +1,32 @@
+# The relay to the compute node this platform takes its inference from.
+#
+# Imported by the file ut-pair writes once the platform is paired, with the
+# node's address as argument. The services call http://caddy:8445/v1 with
+# VLLM_API_KEY, which never leaves this box: every container on the frontend
+# network reaches this port, and this certificate is the box's identity on the
+# node. The token stays here; the node sees the certificate only.
+#
+# Caddy orders handle before respond: the token is checked inside the route,
+# or the check would never run. The node answers 421 to a request whose Host is
+# not the name its TLS was asked for, and that name is link.internal.
+
+http://:8445 {
+    handle /v1/* {
+        @without_the_token not header Authorization "Bearer {$VLLM_API_KEY}"
+        respond @without_the_token 401
+
+        reverse_proxy {args[0]} {
+            header_up -Authorization
+            header_up Host link.internal
+            transport http {
+                tls_server_name link.internal
+                tls_client_auth link.internal
+                import linked_node_root
+            }
+        }
+    }
+
+    handle {
+        respond 404
+    }
+}

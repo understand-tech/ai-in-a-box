@@ -95,6 +95,26 @@ discriminates "a Redis that evicts the keys it holds with a lifetime" \
     "queue-eviction:redis" \
     "sed -i.bak 's/maxmemory-policy noeviction/maxmemory-policy volatile-lru/' compose.yaml"
 
+discriminates "a surface that asks for a client certificate without the admitted list" \
+    "client-auth-without-admitted-boxes:caddy/inference-surface.caddy" \
+    "sed -i.bak '/import admitted_boxes/d' caddy/inference-surface.caddy"
+
+discriminates "a relay token checked ahead of its route" \
+    "relay-token-checked-outside-its-route" \
+    "perl -0pi -e 's/(    handle \\/v1\\/\\* \\{\\n)(        \\@without_the_token[^\\n]*\\n        respond[^\\n]*\\n)/\$2\$1/' caddy/link-relay.caddy"
+
+discriminates "a relay that trusts whatever node answers" \
+    "relay-without:import-linked_node_root" \
+    "sed -i.bak '/import linked_node_root/d' caddy/link-relay.caddy"
+
+discriminates "a backup that takes every authority Caddy holds" \
+    "backup-carries-the-link-authority" \
+    "sed -i.bak 's|/pki/authorities/local}|/pki}|' backup-files.sh"
+
+discriminates "ut-pair writing a snippet the surface no longer imports" \
+    "ut-pair-writes-no:-admitted_boxes-" \
+    "sed -i.bak 's/(admitted_boxes)/(admitted_platforms)/' cmd/ut-pair/links.go"
+
 discriminates "the inference engine let into Redis's network" \
     "redis-reachable-by:nim-llm" \
     "sed -i.bak '/^  nim-llm:\$/,/^  [a-z]/ s|^      - ut-backend-network\$|      - ut-backend-network\\n      - ut-redis-network|' compose.yaml"
@@ -422,16 +442,16 @@ capability_discriminates "the recorder tied to the engine again" \
     "sed -i.bak 's|^  metrics:\$|  metrics:\n    profiles: [\"nim\", \"nim-llm\"]|' compose.yaml"
 
 capability_discriminates "a compute node that opens its engine port to the network" \
-    "a compute node lets other machines reach its engine only with its key" \
+    "a compute node lets other machines reach its engine only through the link" \
     "printf '  nim-llm:\\n    ports: !override\\n      - \"0.0.0.0:8001:8000\"\\n' >> compose.compute.yaml"
 
 capability_discriminates "an engine port declared again, which Docker never publishes" \
     "a model on vLLM runs in place of NIM, with the same GPU and cache, and no port of its own" \
     "sed -i.bak 's|^    # No ports: Docker publishes none for a container on internal networks only.\$|    ports:\\n      - \"127.0.0.1:8001:8000\"|' compose.yaml"
 
-capability_discriminates "a compute node that starts without an engine key" \
-    "a compute node lets other machines reach its engine only with its key" \
-    "sed -i.bak 's|VLLM_API_KEY: \${VLLM_API_KEY:?ut-install generates it}|VLLM_API_KEY: \${VLLM_API_KEY:-}|' compose.compute.yaml"
+capability_discriminates "a compute node whose Caddy ignores the list of platforms it admits" \
+    "a compute node lets other machines reach its engine only through the link" \
+    "sed -i.bak 's|\${UT_ADMITTED_BOXES_FILE:-./caddy/no-inference-surface.caddy}:/etc/caddy/inference.caddy|./caddy/no-inference-surface.caddy:/etc/caddy/inference.caddy|' compose.compute.yaml"
 
 capability_discriminates "an arbiter that also starts the control plane's API" \
     "the arbiter role keeps only the arbiter and Caddy, no control plane and no GPU" \
@@ -453,9 +473,9 @@ capability_discriminates "a vLLM engine checked where NIM answers" \
     "a model on vLLM runs in place of NIM, with the same GPU and cache, and no port of its own" \
     "sed -i.bak '/localhost:8000\\/health/d; /^    healthcheck:\$/d' compose.engine-vllm.yaml"
 
-capability_discriminates "a caller of the compute node left on the public roots" \
-    "every service that calls a compute node trusts its root" \
-    "sed -i.bak '/^  api-customer: \\*trusts-the-compute-node\$/d' compose.remote-inference.yaml"
+capability_discriminates "a platform relay that starts without its token" \
+    "a platform reaches its compute node through its own relay" \
+    "sed -i.bak 's|VLLM_API_KEY: \${VLLM_API_KEY:?ut-install generates it}|VLLM_API_KEY: \${VLLM_API_KEY:-}|' compose.remote-inference.yaml"
 
 if grep -q 'record_this_install' "$REPO_ROOT/bin/ut-install"; then
     capability_discriminates "an install run nobody keeps" \
@@ -1590,13 +1610,25 @@ if [[ -x "$REPO_ROOT/test/ingress.sh" ]]; then
         "a forged host is pooled" \
         "sed -i.bak 's|^        per_host\$|        per_host\\n        observe_catchall_hosts|' caddy/ingress-internal.caddy"
 
-    ingress_discriminates "an engine served to anyone" \
-        "it refuses a request without the key" \
-        "sed -i.bak '/respond @without_the_key 401/d' caddy/inference-surface.caddy"
+    ingress_discriminates "an engine served to any client" \
+        "it refuses a client without a certificate" \
+        "sed -i.bak 's/mode require_and_verify/mode request/' caddy/inference-surface.caddy"
 
-    ingress_discriminates "a compute node that answers only to its name" \
-        "it presents a certificate for that IP to a client that names none" \
-        "sed -i.bak '/default_sni/d' caddy/ingress-internal.caddy"
+    ingress_discriminates "a link served under the address dialled, which an IP leaves out" \
+        "the platform reaches the engine by its IP too" \
+        "sed -i.bak '/tls_server_name link.internal/d' caddy/link-relay.caddy"
+
+    ingress_discriminates "a relay token checked ahead of the route, so never" \
+        "the relay refuses a caller without the token" \
+        "perl -0pi -e 's/(    handle \\/v1\\/\\* \\{\\n)(        \\@without_the_token[^\\n]*\\n        respond[^\\n]*\\n)/\$2\$1/' caddy/link-relay.caddy"
+
+    ingress_discriminates "the relay token handed on to the node" \
+        "its token stays home" \
+        "sed -i.bak '/header_up -Authorization/d' caddy/link-relay.caddy"
+
+    ingress_discriminates "a link identity from the authority the backup carries" \
+        "the platform and the node each create their link authority" \
+        "sed -i.bak 's/^            ca link\$/            ca local/' Caddyfile"
 
     ingress_discriminates "a recorder that filters out the handler Caddy counts under" \
         "the recorder keeps each request to a surface" \

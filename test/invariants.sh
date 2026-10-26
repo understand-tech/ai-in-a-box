@@ -400,6 +400,65 @@ check_only_its_clients_reach_redis() {
     done <<< "$(service_networks)"
 }
 
+# Without a trust pool, Caddy checks a client certificate against the system
+# roots: a public authority that signs client certificates would get in.
+check_no_client_auth_without_the_admitted_list() {
+    local file
+    for file in "$REPO_ROOT/Caddyfile" "$REPO_ROOT"/caddy/*.caddy; do
+        grep -qE '(^|[[:space:]])client_auth[[:space:]]*\{' "$file" || continue
+        awk '/(^|[[:space:]])client_auth[[:space:]]*\{/ { inside = 1; depth = 0 }
+             inside { depth += gsub(/\{/, "{"); depth -= gsub(/\}/, "}"); if ($1 == "import" && $2 == "admitted_boxes") found = 1; if (depth <= 0) inside = 0 }
+             END { exit !found }' "$file" \
+            || report "client-auth-without-admitted-boxes:${file#"$REPO_ROOT"/}" \
+                "${file#"$REPO_ROOT"/} asks for a client certificate without importing the list ut-pair keeps: the system roots would decide who gets in"
+    done
+}
+
+# Caddy runs handle before respond, whatever the order in the file: a token
+# check written ahead of the route is never reached.
+check_the_relay_checks_its_token_inside_its_route() {
+    local relay="$REPO_ROOT/caddy/link-relay.caddy" route check proxy
+    route=$(grep -n 'handle /v1/\*' "$relay" | head -1 | cut -d: -f1)
+    check=$(grep -n 'respond @without_the_token 401' "$relay" | head -1 | cut -d: -f1)
+    proxy=$(grep -n 'reverse_proxy' "$relay" | head -1 | cut -d: -f1)
+    [[ -n "$route" && -n "$check" && -n "$proxy" ]] && (( route < check && check < proxy )) && return 0
+    report "relay-token-checked-outside-its-route" \
+        "caddy/link-relay.caddy does not check VLLM_API_KEY inside handle /v1/* ahead of reverse_proxy: any container on the frontend network would borrow this box's identity"
+}
+
+check_the_relay_trusts_its_node_alone() {
+    local relay="$REPO_ROOT/caddy/link-relay.caddy" what
+    for what in 'tls_client_auth link.internal' 'tls_server_name link.internal' 'import linked_node_root' 'header_up -Authorization'; do
+        grep -qF "$what" "$relay" \
+            || report "relay-without:${what// /-}" "caddy/link-relay.caddy no longer carries '${what}'"
+    done
+}
+
+# The backup takes Caddy's "local" authority so that browsers keep trusting a
+# restored box. The link authority stays out: a restore would clone the box.
+check_the_backup_leaves_the_link_authority_out() {
+    local backup="$REPO_ROOT/backup-files.sh"
+    grep -qE 'HTTPS_AUTHORITY="\$\{BACKUP_HTTPS_AUTHORITY:-[^}]*/pki/authorities/local\}"' "$backup" \
+        && ! grep -qE 'authorities/link|/pki[}"/]?$|/pki\}' "$backup" && return 0
+    report "backup-carries-the-link-authority" \
+        "backup-files.sh saves more of Caddy's PKI than its local authority: whoever holds the backup could pass for this box on every box it is linked to"
+}
+
+# ut-pair writes what the static files import: a renamed snippet or path on one
+# side leaves the other importing something that is not there.
+check_ut_pair_writes_what_caddy_imports() {
+    local writer="$REPO_ROOT/cmd/ut-pair/links.go" name
+    for name in '(admitted_boxes)' 'import /etc/caddy/link-surface.caddy' '(linked_node_root)' 'import /etc/caddy/link-relay.caddy'; do
+        grep -qF "$name" "$writer" || report "ut-pair-writes-no:${name//[ ()\/]/-}" "cmd/ut-pair/links.go no longer writes '${name}'"
+    done
+    grep -qF 'import admitted_boxes' "$REPO_ROOT/caddy/inference-surface.caddy" \
+        || report "surface-imports-no-admitted-list" "caddy/inference-surface.caddy does not import the list ut-pair writes"
+    grep -q 'link-surface.caddy' "$REPO_ROOT/compose.compute.yaml" \
+        || report "surface-mounted-nowhere" "compose.compute.yaml mounts no /etc/caddy/link-surface.caddy for the list to import"
+    grep -q 'link-relay.caddy' "$REPO_ROOT/compose.remote-inference.yaml" \
+        || report "relay-mounted-nowhere" "compose.remote-inference.yaml mounts no /etc/caddy/link-relay.caddy for the link to import"
+}
+
 check_every_volume_is_mounted() {
     local volume
     while read -r volume; do
@@ -858,6 +917,11 @@ main() {
     check_every_setting_reaches_something
     check_every_volume_is_mounted
     check_only_its_clients_reach_redis
+    check_no_client_auth_without_the_admitted_list
+    check_the_relay_checks_its_token_inside_its_route
+    check_the_relay_trusts_its_node_alone
+    check_the_backup_leaves_the_link_authority_out
+    check_ut_pair_writes_what_caddy_imports
     check_the_gateway_trusts_the_app_builder_key
     check_defaults_do_not_diverge
     check_required_variables_appear_in_the_template

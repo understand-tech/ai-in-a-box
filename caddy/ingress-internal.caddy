@@ -18,6 +18,13 @@
         per_host
     }
     default_sni {$UT_INFERENCE_ADDRESS:understand.local}
+    # The authority the links between boxes run on. backup-files.sh saves the
+    # "local" one only: a restored box is paired again, never a clone of the first.
+    pki {
+        ca link {
+            name "UnderstandTech link"
+        }
+    }
 }
 
 (tls) {
