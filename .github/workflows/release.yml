@@ -45,6 +45,18 @@ jobs:
       - name: Build ut-send for both architectures
         run: ./packaging/build-ut-send.sh
 
+      # ut-arbiter is built and published by its own pipeline, and pinned here by
+      # checksum. Its repository is private: the token of this one cannot read it.
+      - name: Fetch ut-arbiter for both architectures
+        env:
+          GH_TOKEN: ${{ secrets.UT_ARBITER_READ_TOKEN }}
+        run: |
+          [ -n "$GH_TOKEN" ] || {
+            echo "::error::UT_ARBITER_READ_TOKEN is not set — the package cannot carry ut-arbiter"
+            exit 1
+          }
+          ./packaging/fetch-ut-arbiter.sh
+
       - name: Build the package
         run: ./packaging/build-deb.sh "$VERSION"
 
