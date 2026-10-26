@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/pem"
 	"os"
@@ -44,27 +45,34 @@ func checkTopology(t *testing.T, answers map[string]string, role string, roots [
 	}
 }
 
-func TestAComputeBoxSendsTheRootItServesInferenceUnder(t *testing.T) {
+func TestAComputeBoxSendsTheRootOfItsLinkAuthority(t *testing.T) {
 	root, fingerprint := rootCertificate(t)
 	answers := stackAnswering("/usr/share/understandtech/compose.yaml,/usr/share/understandtech/compose.compute.yaml",
-		map[string]string{"docker exec gggg cat /data/caddy/pki/authorities/local/root.crt": root})
+		map[string]string{"docker exec gggg cat /data/caddy/pki/authorities/link/root.crt": root})
 	checkTopology(t, answers, "compute", []string{fingerprint}, []string{})
 }
 
-func TestAControlPlaneSendsTheRootOfTheComputeBoxItTrusts(t *testing.T) {
-	public, _ := rootCertificate(t)
+func linkedTo(root string) string {
+	block, _ := pem.Decode([]byte(root))
+	return "(linked_node_root) {\n\ttls_trust_pool inline {\n\t\ttrust_der " + base64.StdEncoding.EncodeToString(block.Bytes) +
+		"\n\t}\n}\nimport /etc/caddy/link-relay.caddy https://10.0.0.9:8444\n"
+}
+
+func TestAPlatformSendsTheRootOfTheNodeItIsPairedWith(t *testing.T) {
 	node, fingerprint := rootCertificate(t)
 	answers := stackAnswering("/usr/share/understandtech/compose.yaml,/usr/share/understandtech/compose.remote-inference.yaml",
-		map[string]string{"docker exec aaaa cat /etc/understandtech/inference-ca-bundle.pem": public + node,
-			"cat /etc/ssl/certs/ca-certificates.crt": public})
+		map[string]string{"docker exec gggg cat /etc/caddy/link.caddy": linkedTo(node)})
 	checkTopology(t, answers, "control-plane", []string{fingerprint}, []string{})
 }
 
-func TestABundleThatLostTheNodesRootSendsNoPublicRootInItsPlace(t *testing.T) {
-	public, _ := rootCertificate(t)
+func TestAPlatformNotPairedYetHasNoLinkToSend(t *testing.T) {
 	answers := stackAnswering("/usr/share/understandtech/compose.yaml,/usr/share/understandtech/compose.remote-inference.yaml",
-		map[string]string{"docker exec aaaa cat /etc/understandtech/inference-ca-bundle.pem": public,
-			"cat /etc/ssl/certs/ca-certificates.crt": public})
+		map[string]string{"docker exec gggg cat /etc/caddy/link.caddy": ""})
+	checkTopology(t, answers, "control-plane", []string{}, []string{})
+}
+
+func TestAPlatformWhoseLinkCannotBeReadSaysSo(t *testing.T) {
+	answers := stackAnswering("/usr/share/understandtech/compose.yaml,/usr/share/understandtech/compose.remote-inference.yaml", nil)
 	checkTopology(t, answers, "control-plane", []string{}, []string{"topology-unreadable:inference-root"})
 }
 

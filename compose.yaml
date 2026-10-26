@@ -155,6 +155,7 @@ services:
       # Caddyfile never refers to it.
       - ${UT_CERT_DIR:-./caddy/certs}:/etc/caddy/certs:ro
       - ./caddy/no-inference-surface.caddy:/etc/caddy/inference.caddy:ro
+      - ./caddy/no-link.caddy:/etc/caddy/link.caddy:ro
       - caddy-data:/data
       - caddy-config:/config
     networks:

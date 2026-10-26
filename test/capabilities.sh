@@ -1049,11 +1049,12 @@ set -u
 export OUT_DIR=/out
 # The package is under test here, not the compiler: stand-ins take the place of
 # the two ut-send builds, so this suite needs no Go.
-export UT_SEND_BUILDS=/ut-send-builds UT_SETUP_BUILDS=/ut-setup-builds UT_ARBITER_BUILDS=/ut-arbiter-builds
-mkdir -p "$UT_SEND_BUILDS" "$UT_SETUP_BUILDS" "$UT_ARBITER_BUILDS"
+export UT_SEND_BUILDS=/ut-send-builds UT_SETUP_BUILDS=/ut-setup-builds UT_PAIR_BUILDS=/ut-pair-builds UT_ARBITER_BUILDS=/ut-arbiter-builds
+mkdir -p "$UT_SEND_BUILDS" "$UT_SETUP_BUILDS" "$UT_PAIR_BUILDS" "$UT_ARBITER_BUILDS"
 for arch in arm64 amd64; do
     printf '#!/bin/sh\necho %s\n' "$arch" > "$UT_SEND_BUILDS/ut-send-linux-$arch"
     printf '#!/bin/sh\necho %s\n' "$arch" > "$UT_SETUP_BUILDS/ut-setup-linux-$arch"
+    printf '#!/bin/sh\necho %s\n' "$arch" > "$UT_PAIR_BUILDS/ut-pair-linux-$arch"
     printf '#!/bin/sh\necho %s\n' "$arch" > "$UT_ARBITER_BUILDS/ut-arbiter-linux-$arch"
 done
 /src/packaging/build-deb.sh 2026.09.1 >/dev/null
@@ -1097,6 +1098,8 @@ say UT_SEND           "$([ -x /usr/bin/ut-send ] && [ -x /usr/lib/understandtech
     && [ -x /usr/lib/understandtech/ut-send-linux-amd64 ] && echo both || echo missing)"
 say UT_SETUP          "$([ -x /usr/bin/ut-setup ] && [ -x /usr/lib/understandtech/ut-setup-linux-arm64 ] \
     && [ -x /usr/lib/understandtech/ut-setup-linux-amd64 ] && echo both || echo missing)"
+say UT_PAIR           "$([ -x /usr/bin/ut-pair ] && [ -x /usr/lib/understandtech/ut-pair-linux-arm64 ] \
+    && [ -x /usr/lib/understandtech/ut-pair-linux-amd64 ] && echo both || echo missing)"
 say UT_ARBITER        "$([ -x /usr/bin/ut-arbiter ] && [ -x /usr/lib/understandtech/ut-arbiter-linux-arm64 ] \
     && [ -x /usr/lib/understandtech/ut-arbiter-linux-amd64 ] && echo both || echo missing)"
 say CONFIG_DIR_MODE   "$(stat -c '%a' /etc/understandtech 2>/dev/null)"
@@ -2322,43 +2325,39 @@ names_are_unchanged_by_default() {
 }
 
 # A compute node is the one role whose engine other machines reach, so it is the
-# one where the engine may only be reached through the surface that checks a key.
-the_compute_engine_is_reached_only_through_its_key() {
+# one where the engine may only be reached through the surface that checks the
+# certificate of each platform it admits, from the list ut-pair keeps.
+the_compute_engine_is_reached_only_through_the_link() {
     local config engine
-    if ( cd "$WORK_DIR" && VLLM_API_KEY= docker compose -f compose.yaml -f compose.compute.yaml config >/dev/null 2>&1 ); then
-        echo "a compute node rendered without an engine key"
-        return 1
-    fi
-    config=$(VLLM_API_KEY=k compose_config -f compose.yaml -f compose.compute.yaml)
-    grep -q 'caddy/inference-surface.caddy' <<< "$config" \
-        || { echo "the compute node's Caddy does not mount the inference surface"; return 1; }
+    config=$( cd "$WORK_DIR" && UT_ADMITTED_BOXES_FILE=/etc/understandtech/admitted-boxes.caddy \
+        docker compose -f compose.yaml -f compose.compute.yaml config 2>/dev/null )
+    grep -qE 'source: .*/caddy/inference-surface.caddy' <<< "$config" \
+        && grep -A1 'source: /etc/understandtech/admitted-boxes.caddy' <<< "$config" | grep -q 'target: /etc/caddy/inference.caddy' \
+        || { echo "the compute node's Caddy does not import the list of the platforms it admits"; return 1; }
     grep -q 'published: "8444"' <<< "$config" \
         || { echo "the compute node publishes no inference surface"; return 1; }
-    engine=$(COMPOSE_PROFILES=nim VLLM_API_KEY=k compose_config -f compose.yaml -f compose.compute.yaml \
+    engine=$(COMPOSE_PROFILES=nim compose_config -f compose.yaml -f compose.compute.yaml \
         | awk '/^  nim-llm:/ { on = 1; next } on && /^  [a-z]/ { on = 0 } on')
     grep -q '^    ports:' <<< "$engine" || return 0
-    echo "the engine publishes a port of its own on a compute node, which checks no key:"
+    echo "the engine publishes a port of its own on a compute node, which checks no certificate:"
     grep -A6 'ports:' <<< "$engine"
     return 1
 }
 
-# SSL_CERT_FILE replaces a Python service's trust store, so each service that
-# calls the engine must get the node's root, and must keep the public ones.
-every_engine_caller_trusts_the_compute_node() {
-    command -v jq >/dev/null || { echo "jq absent"; return 1; }
-    local config service missing=""
-    config=$( cd "$WORK_DIR" && UT_INFERENCE_CA_BUNDLE=/etc/understandtech/inference-ca-bundle.pem \
-        docker compose -f compose.yaml -f compose.no-gpu.yaml -f compose.remote-inference.yaml config --format json 2>/dev/null )
-    for service in $(jq -r '.services | to_entries[] | select(.value.environment.VLLM_LLM_BASE_URL != null) | .key' <<< "$config"); do
-        jq -e --arg s "$service" '.services[$s]
-            | .environment.SSL_CERT_FILE == "/etc/understandtech/inference-ca-bundle.pem"
-              and .environment.REQUESTS_CA_BUNDLE == "/etc/understandtech/inference-ca-bundle.pem"
-              and any(.volumes[]?; .source == "/etc/understandtech/inference-ca-bundle.pem")' <<< "$config" >/dev/null \
-            || missing+=" ${service}"
-    done
-    [[ -n "$config" && -z "$missing" ]] && return 0
-    echo "these services call the engine without trusting the compute node:${missing:- (nothing rendered)}"
-    return 1
+# The services keep calling a plain address; this box's Caddy carries the call
+# to the node. Without the token, any container on the frontend network would.
+a_platform_reaches_its_node_through_its_own_relay() {
+    local config
+    if ( cd "$WORK_DIR" && VLLM_API_KEY= docker compose -f compose.yaml -f compose.no-gpu.yaml -f compose.remote-inference.yaml config >/dev/null 2>&1 ); then
+        echo "the relay rendered without its token"
+        return 1
+    fi
+    config=$( cd "$WORK_DIR" && VLLM_API_KEY=k UT_LINKED_NODE_FILE=/etc/understandtech/linked-node.caddy \
+        docker compose -f compose.yaml -f compose.no-gpu.yaml -f compose.remote-inference.yaml config 2>/dev/null )
+    grep -A1 'source: /etc/understandtech/linked-node.caddy' <<< "$config" | grep -q 'target: /etc/caddy/link.caddy' \
+        && grep -qE 'source: .*/caddy/link-relay.caddy' <<< "$config" \
+        || { echo "the platform's Caddy does not carry the link ut-pair writes"; return 1; }
+    ! grep -q 'SSL_CERT_FILE' <<< "$config" || { echo "a service still replaces its trust store to reach the node"; return 1; }
 }
 
 VLLM_TEST_ARGS='--trust-remote-code --max-model-len 262144 --override-generation-config {"temperature":0.2,"top_p":0.9} --speculative-config {"method":"dflash","num_speculative_tokens":7}'
@@ -3228,6 +3227,8 @@ if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
         reports UT_SEND both
     capability "it carries ut-setup for both architectures it serves" \
         reports UT_SETUP both
+    capability "it carries ut-pair for both architectures it serves" \
+        reports UT_PAIR both
     capability "it carries ut-arbiter for both architectures it serves" \
         reports UT_ARBITER both
     capability "the settings directory is prepared, and the package puts nothing in it" \
@@ -3379,10 +3380,10 @@ if [[ -f "$REPO_ROOT/compose.compute.yaml" ]]; then
         omits_service mongodb -f compose.yaml -f compose.compute.yaml
     capability "a compute node records the load of what it serves" \
         with_profiles nim lists_service metrics -f compose.yaml -f compose.compute.yaml
-    capability "a compute node lets other machines reach its engine only with its key" \
-        the_compute_engine_is_reached_only_through_its_key
-    capability "every service that calls a compute node trusts its root" \
-        every_engine_caller_trusts_the_compute_node
+    capability "a compute node lets other machines reach its engine only through the link" \
+        the_compute_engine_is_reached_only_through_the_link
+    capability "a platform reaches its compute node through its own relay" \
+        a_platform_reaches_its_node_through_its_own_relay
     capability "on the bash a Mac runs, a failure ut-install tests for is not reported as the install stopping" \
         a_failure_tested_inside_a_substitution_stops_nothing_on_bash_3
     capability "a model on vLLM runs in place of NIM, with the same GPU and cache, and no port of its own" \

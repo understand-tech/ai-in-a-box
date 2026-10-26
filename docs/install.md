@@ -280,8 +280,8 @@ not start without an accelerator: its build of llama.cpp loads CUDA when it
 starts. `--no-gpu` therefore leaves a platform that answers plain chats from the
 other machine and nothing over documents, and the install says so.
 
-When the other machine is a compute node, `--inference-from` says so: it sets the
-address, the node's key and the trust in its root in one go — see
+When the other machine is a compute node, `--inference-from <node>` says so, and
+`ut-pair` then links the two — see
 [adding a second machine](certificates-and-dns.md#adding-a-second-machine). No
 engine starts here. A machine with a GPU keeps it for `llm`; one without is
 installed as with `--no-gpu`. The compute node itself is installed with

@@ -35,8 +35,23 @@ import /etc/caddy/ingress.caddy
 
 }
 
-# The engine, for the machines a compute node serves; empty on every other role.
+# The engine, for the platforms a compute node admits; empty on every other role.
 import /etc/caddy/inference.caddy
+
+# What this box shows the box it takes its inference from: a certificate of its
+# link authority, renewed by Caddy, reachable from inside the container only.
+https://link.internal:8443 {
+    bind 127.0.0.1
+    tls {
+        issuer internal {
+            ca link
+        }
+    }
+    abort
+}
+
+# The relay to that box; empty on every other role, and until ut-pair has linked one.
+import /etc/caddy/link.caddy
 
 {$UT_CADDY_SCHEME:https}://llms.{$UT_DOMAIN:understand.local} {
     reverse_proxy app-llms:80

@@ -41,8 +41,8 @@ receiver refuses stops the sending until a new one is given with
 
 The machine's place in the deployment is its role — `complete`, `compute` for a
 compute node, `control-plane` for a machine whose inference runs elsewhere — and
-the SHA-256 fingerprint of the root certificate of its inference link: a compute
-node sends its own, a control plane the one of the compute node it trusts. Two
+the SHA-256 fingerprint of the root of its link authority: a compute node sends
+its own, a platform the one of the compute node it is paired with. Two
 machines that send the same fingerprint work together; no address is sent. What
 could not be read is named under `warnings`, as `topology-unreadable:role` or
 `topology-unreadable:inference-root`.

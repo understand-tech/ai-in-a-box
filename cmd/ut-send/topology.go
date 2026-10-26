@@ -1,19 +1,17 @@
 package main
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
-	"encoding/pem"
 	"strings"
 )
 
 const (
 	configFilesFormat = `{{index .Config.Labels "com.docker.compose.project.config_files"}}`
-	caddyRoot         = "/data/caddy/pki/authorities/local/root.crt"
-	inferenceBundle   = "/etc/understandtech/inference-ca-bundle.pem"
-	hostRoots         = "/etc/ssl/certs/ca-certificates.crt"
+	linkRoot          = "/data/caddy/pki/authorities/link/root.crt"
+	linkedNode        = "/etc/caddy/link.caddy"
 )
 
 // What the box is in a deployment, and the root certificates of its inference
@@ -33,60 +31,47 @@ func roleOf(configFiles string) string {
 	return "complete"
 }
 
-// ut-install writes the bundle as the host's public roots followed by the
-// compute node's.
-func lastCertificate(bundle string) *x509.Certificate {
-	var last *x509.Certificate
-	for rest := []byte(bundle); ; {
-		block, remaining := pem.Decode(rest)
-		if block == nil {
-			return last
-		}
-		if certificate, err := x509.ParseCertificate(block.Bytes); err == nil {
-			last = certificate
-		}
-		rest = remaining
-	}
-}
-
 func certificateFingerprint(certificate *x509.Certificate) string {
 	sum := sha256.Sum256(certificate.Raw)
 	return hex.EncodeToString(sum[:])
 }
 
-// A bundle that lost the node's root ends with a public one, which every
-// control plane shares and would pair boxes that have nothing to do together.
-func (m machine) isPublicRoot(root *x509.Certificate) bool {
-	public, _ := m.run("", "cat", hostRoots)
-	for rest := []byte(public); ; {
-		block, remaining := pem.Decode(rest)
-		if block == nil {
-			return false
+// ut-pair writes the node's root into the platform's Caddy settings, as the
+// one trust_der of the link; before the pairing, the file is empty.
+func linkedNodeRoot(settings string) (root *x509.Certificate, paired bool) {
+	for _, line := range strings.Split(settings, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 || fields[0] != "trust_der" {
+			continue
 		}
-		if bytes.Equal(block.Bytes, root.Raw) {
-			return true
+		der, err := base64.StdEncoding.DecodeString(fields[1])
+		if err != nil {
+			return nil, true
 		}
-		rest = remaining
+		root, _ = x509.ParseCertificate(der)
+		return root, true
 	}
+	return nil, false
 }
 
 func (m machine) inferenceRoot(rows []container, configFiles string) (root *x509.Certificate, linked bool) {
+	caddy := runningContainer(rows, "caddy")
 	switch {
 	case strings.Contains(configFiles, "compose.compute.yaml"):
-		if caddy := runningContainer(rows, "caddy"); caddy != "" {
-			content, _ := m.run("", "docker", "exec", caddy, "cat", caddyRoot)
+		if caddy != "" {
+			content, _ := m.run("", "docker", "exec", caddy, "cat", linkRoot)
 			root = parsePEM(content)
 		}
 		return root, true
 	case strings.Contains(configFiles, "compose.remote-inference.yaml"):
-		if api := runningContainer(rows, "api"); api != "" {
-			content, _ := m.run("", "docker", "exec", api, "cat", inferenceBundle)
-			root = lastCertificate(content)
+		if caddy == "" {
+			return nil, true
 		}
-		if root != nil && m.isPublicRoot(root) {
-			root = nil
+		content, err := m.run("", "docker", "exec", caddy, "cat", linkedNode)
+		if err != nil {
+			return nil, true
 		}
-		return root, true
+		return linkedNodeRoot(content)
 	}
 	return nil, false
 }

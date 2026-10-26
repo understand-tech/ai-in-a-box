@@ -17,6 +17,7 @@
   <li data-for="update" hidden>Update</li>
   <li data-for="role">Role</li>
   <li data-for="domain">Address</li>
+  <li data-for="node">Compute node</li>
   <li data-for="compute">Address</li>
   <li data-for="tls">Certificate</li>
   <li data-for="license">License key</li>
@@ -57,6 +58,7 @@
     <h1 id="role-title">What this box will do</h1>
     <div class="options" role="radiogroup" aria-labelledby="role-title">
       <label class="option"><input type="radio" name="role" value="complete" checked><span><b>The whole platform</b><small>People open it in their browser, and it runs its own model.</small></span></label>
+      <label class="option"><input type="radio" name="role" value="platform"><span><b>The platform, its inference from another box</b><small>People open it here; a compute node runs the model. The two are paired at the end.</small></span></label>
       <label class="option"><input type="radio" name="role" value="compute"><span><b>Inference only, for another box</b><small>Serves its GPU to the box that runs the platform. No platform and no admin password here.</small></span></label>
     </div>
     <div class="nav"><button type="button" class="back">Back</button><button class="primary">Continue</button></div>
@@ -67,6 +69,14 @@
     <h1><label for="domain-input">The address people will open</label></h1>
     <p class="lead">Keep <code>understand.local</code> on a single network with no DNS server. With one, use a name in your zone, such as <code>ai.example.com</code>, and publish it and <code>*.ai.example.com</code> pointing at this box.</p>
     <input id="domain-input" name="domain" required value="understand.local" autocomplete="off" spellcheck="false">
+    <div class="nav"><button type="button" class="back">Back</button><button class="primary">Continue</button></div>
+  </section>
+
+  <section id="node" class="screen" hidden>
+    <p class="count">Question</p>
+    <h1><label for="node-input">The compute node this box takes its inference from</label></h1>
+    <p class="lead">Its IP address or DNS name, as its own install showed it, with <code>:port</code> when that is not 8444. Never a <code>.local</code> name: this box's containers cannot resolve it.</p>
+    <input id="node-input" name="node_address" required autocomplete="off" spellcheck="false" placeholder="10.0.0.12">
     <div class="nav"><button type="button" class="back">Back</button><button class="primary">Continue</button></div>
   </section>
 
@@ -158,6 +168,18 @@
   <div class="done-mark" aria-hidden="true">✓</div>
   <h1><span id="done-title">Installed</span> <span id="took"></span></h1>
   <p class="lead"><span id="done-where">The platform answers at</span> <a id="address"></a>. <span id="done-next">The initial admin password opens its first-run wizard: models, sign-on, data sources.</span></p>
+  <div id="pair-offer" hidden>
+    <p class="lead">To give a platform this box's inference, show a pairing code here, then type it on the platform's page within 15 minutes.</p>
+    <button type="button" id="offer" class="primary">Show a pairing code</button>
+    <p id="offer-shown" class="banner info" hidden>Code, until <span id="offer-until"></span>: <code id="offer-code"></code></p>
+    <p id="offer-said" class="detail" hidden></p>
+  </div>
+  <form id="pair-join" hidden>
+    <p class="lead"><label for="pair-code">Pair it with its compute node: on the node's page, choose “Show a pairing code”, and type the code here. Pair before showing the passwords: this page closes after them.</label></p>
+    <input id="pair-code" name="code" autocomplete="off" spellcheck="false" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-X">
+    <div class="nav"><span></span><button id="pair" class="primary">Pair</button></div>
+    <p id="pair-said" class="detail" hidden></p>
+  </form>
   <p id="passwords-warning" class="banner warning">Two passwords are shown once, here, and nowhere else. Without the backup password, no backup can ever be read.</p>
   <button type="button" id="reveal" class="primary">Show the passwords</button>
   <dl id="secrets" hidden>

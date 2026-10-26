@@ -43,19 +43,19 @@ property() {
 }
 
 # The installer is under test here, not the compiler: stand-ins take the place
-# of the two ut-send builds, so this suite needs no Go. A package that did not
-# build stops the suite: every property below would otherwise pass on an
-# install that never ran.
+# of the Go builds and of ut-arbiter, so this suite needs neither Go nor the
+# network. A package that did not build stops the suite: every property below
+# would otherwise pass on an install that never ran.
 build_the_package() {
     local arch tool
-    for tool in ut-send ut-setup; do
+    for tool in ut-send ut-setup ut-pair ut-arbiter; do
         install -d "$WORK_DIR/$tool-builds"
         for arch in arm64 amd64; do
             printf '#!/bin/sh\necho stand-in\n' > "$WORK_DIR/$tool-builds/$tool-linux-$arch"
         done
     done
     docker run --rm -v "$REPO_ROOT":/src:ro -v "$WORK_DIR":/out -w /src "$DEBIAN_IMAGE" \
-        sh -c "OUT_DIR=/out UT_SEND_BUILDS=/out/ut-send-builds UT_SETUP_BUILDS=/out/ut-setup-builds ./packaging/build-deb.sh '$VERSION'" >/dev/null
+        sh -c "OUT_DIR=/out UT_SEND_BUILDS=/out/ut-send-builds UT_SETUP_BUILDS=/out/ut-setup-builds UT_PAIR_BUILDS=/out/ut-pair-builds UT_ARBITER_BUILDS=/out/ut-arbiter-builds ./packaging/build-deb.sh '$VERSION'" >/dev/null
     [[ -f "$WORK_DIR/understandtech_${VERSION}_all.deb" ]] || {
         echo "The package did not build — nothing below would mean anything." >&2
         exit 1
@@ -151,7 +151,7 @@ cp /stub/docker-login-stdin /w/$state/login-stdin 2>/dev/null || : > /w/$state/l
 cp /etc/understandtech/license /w/$state/license 2>/dev/null || : > /w/$state/license
 cp /etc/understandtech/machine.lic /w/$state/machine 2>/dev/null || : > /w/$state/machine
 cp /etc/understandtech/license-request.json /w/$state/license-request 2>/dev/null || : > /w/$state/license-request
-cp /etc/understandtech/inference-ca-bundle.pem /w/$state/inference-ca-bundle 2>/dev/null || : > /w/$state/inference-ca-bundle
+ls /etc/understandtech/*.caddy /etc/understandtech/inference-ca-bundle.pem > /w/$state/link-files 2>/dev/null || :
 stat -c '%a %U' /etc/understandtech/license > /w/$state/license-mode 2>/dev/null || : > /w/$state/license-mode
 stat -c '%a %U' /etc/understandtech/machine.lic > /w/$state/machine-mode 2>/dev/null || : > /w/$state/machine-mode
 chmod -R a+rw /w/$state
@@ -173,7 +173,7 @@ state_setup() {
         # A checkout of the repository, the way an operator who cloned it has one.
         # The package is installed too, which is what makes the choice interesting.
         launched_from_a_checkout|checkout_but_no_key)
-            echo 'install -d /srv/clone && cp -a /usr/share/understandtech/. /srv/clone/ && install -d /srv/clone/.git /srv/clone/bin && cp /usr/bin/ut-install /srv/clone/bin/ut-install' ;;
+            echo 'install -d /srv/clone && cp -a /usr/share/understandtech/. /srv/clone/ && install -d /srv/clone/.git /srv/clone/bin && cp /usr/bin/ut-install /srv/clone/bin/ut-install && cp -a /usr/bin/ut-install.d /srv/clone/bin/' ;;
         empty_settings) echo 'install -m 600 /dev/null /etc/understandtech/.env' ;;
         # The packaged ut-license trusts Keygen's key and asks Keygen; these states
         # swap in one that trusts the suite's key and asks the fake Keygen, which
@@ -220,11 +220,11 @@ state_setup() {
         # A box installed with --model, whose entry the release has since changed.
         model_kept_by_name)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'UT_MODEL="qwen3.8-27b-nvfp4"\nNIM_LLM_PASSTHROUGH_ARGS=--gpu-memory-utilization 0.10\n'"'"' > /etc/understandtech/local.env' ;;
-        # The walk image has no public roots of its own; this one stands for them.
-        pointed_at_a_compute_node|compute_node_over_http|pointed_at_an_mdns_node)
-            echo 'install -d /etc/ssl/certs && cp /w/compute/public.pem /etc/ssl/certs/ca-certificates.crt' ;;
         compute_node_from_a_machine_without_gpu)
-            echo 'rm -f /stub/nvidia-smi && install -d /etc/ssl/certs && cp /w/compute/public.pem /etc/ssl/certs/ca-certificates.crt' ;;
+            echo 'rm -f /stub/nvidia-smi' ;;
+        # A platform an older release linked to its compute node by key and root.
+        linked_by_key_before)
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'COMPOSE_FILE="compose.yaml:compose.remote-inference.yaml"\nCOMPOSE_PROFILES=""\nVLLM_LLM_BASE_URL="https://node.example.test:9444/v1"\nVLLM_VLM_BASE_URL="https://node.example.test:9444/v1"\nUT_INFERENCE_CA_BUNDLE="/etc/understandtech/inference-ca-bundle.pem"\n'"'"' > /etc/understandtech/local.env && echo root > /etc/understandtech/inference-ca-bundle.pem' ;;
         # A second machine set up the way docs/certificates-and-dns.md says, reached by IP.
         compute_node_runs_through)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'COMPOSE_FILE="compose.yaml:compose.compute.yaml"\nCOMPOSE_PROFILES="nim"\nUT_INFERENCE_ADDRESS="192.0.2.10"\n'"'"' > /etc/understandtech/local.env' ;;
@@ -648,16 +648,32 @@ a_model_nobody_listed_is_refused_before_anything_is_written() {
     return 1
 }
 
-a_control_plane_takes_the_node_s_address_and_key() {
-    local settings key
-    settings=$(cat "$WORK_DIR/pointed_at_a_compute_node/local-env" 2>/dev/null)
-    key=$(tr -d '\n' < "$WORK_DIR/compute/key")
-    grep -qx 'VLLM_LLM_BASE_URL="https://node.example.test:8444/v1"' <<< "$settings" \
-        && grep -qx 'VLLM_VLM_BASE_URL="https://node.example.test:8444/v1"' <<< "$settings" \
-        && grep -qxF "VLLM_API_KEY=\"${key}\"" <<< "$settings" \
+a_control_plane_calls_its_own_relay() {
+    local settings
+    settings=$(of_state pointed_at_a_compute_node local-env)
+    grep -qx 'VLLM_LLM_BASE_URL="http://caddy:8445/v1"' <<< "$settings" \
+        && grep -qx 'VLLM_VLM_BASE_URL="http://caddy:8445/v1"' <<< "$settings" \
+        && grep -qx 'UT_LINKED_NODE_FILE="/etc/understandtech/linked-node.caddy"' <<< "$settings" \
+        && grep -qx '/etc/understandtech/linked-node.caddy' <<< "$(of_state pointed_at_a_compute_node link-files)" \
         && grep -q '^COMPOSE_FILE=.*compose.remote-inference.yaml' <<< "$settings" && return 0
-    grep -E '^(VLLM_LLM_BASE_URL|VLLM_VLM_BASE_URL|COMPOSE_FILE)=' <<< "$settings"
+    grep -E '^(VLLM_LLM_BASE_URL|VLLM_VLM_BASE_URL|UT_LINKED_NODE_FILE|COMPOSE_FILE)=' <<< "$settings"
+    of_state pointed_at_a_compute_node link-files
     output_of pointed_at_a_compute_node | tail -5
+    return 1
+}
+
+a_platform_linked_by_key_moves_to_its_relay() {
+    local settings output
+    settings=$(of_state linked_by_key_before local-env)
+    output=$(output_of linked_by_key_before)
+    grep -qx 'VLLM_LLM_BASE_URL="http://caddy:8445/v1"' <<< "$settings" \
+        && grep -qx 'UT_LINKED_NODE_FILE="/etc/understandtech/linked-node.caddy"' <<< "$settings" \
+        && ! grep -q 'UT_INFERENCE_CA_BUNDLE' <<< "$settings" \
+        && ! grep -q 'inference-ca-bundle' <<< "$(of_state linked_by_key_before link-files)" \
+        && grep -qF 'sudo ut-pair join node.example.test:9444' <<< "$output" && return 0
+    grep -E '^(VLLM_LLM_BASE_URL|UT_LINKED_NODE_FILE|UT_INFERENCE_CA_BUNDLE)=' <<< "$settings"
+    of_state linked_by_key_before link-files
+    grep -E 'ut-pair|\[fail\]|EXIT=' <<< "$output" | tail -4
     return 1
 }
 
@@ -685,8 +701,9 @@ a_control_plane_without_a_gpu_goes_without_it() {
 the_summary_says_where_generation_comes_from() {
     local output
     output=$(output_of pointed_at_a_compute_node)
-    grep -qF 'control plane — generation comes from https://node.example.test:8444/v1' <<< "$output" && return 0
-    grep -E 'Role|EXIT=' <<< "$output"
+    grep -qF 'control plane — generation will come from a compute node, once paired with it' <<< "$output" \
+        && grep -qF 'sudo ut-pair join node.example.test' <<< "$output" && return 0
+    grep -E 'Role|Inference|EXIT=' <<< "$output"
     return 1
 }
 
@@ -702,9 +719,11 @@ a_compute_node_hands_the_control_plane_what_it_needs() {
     local output
     output=$(output_of compute_node_runs_through)
     grep -qF 'compute node — serves inference at https://192.0.2.10:8444/v1' <<< "$output" \
-        && grep -qF -- '--inference-from https://192.0.2.10:8444' <<< "$output" \
+        && grep -qF -- '--inference-from 192.0.2.10' <<< "$output" \
+        && grep -qF 'sudo ut-pair offer' <<< "$output" \
+        && ! grep -q -- '--inference-key-file' <<< "$output" \
         && ! grep -q 'first-run wizard' <<< "$output" && return 0
-    grep -E 'Role|inference-from|wizard|EXIT=' <<< "$output"
+    grep -E 'Role|inference-from|ut-pair|wizard|EXIT=' <<< "$output"
     return 1
 }
 
@@ -714,22 +733,15 @@ a_machine_without_gpu_is_told_documents_get_no_answer() {
     return 1
 }
 
-a_control_plane_trusts_the_node_beside_the_public_roots() {
-    local bundle="$WORK_DIR/pointed_at_a_compute_node/inference-ca-bundle" root public
-    root=$(grep -v -- '-----' "$WORK_DIR/compute/root.pem" | tr -d '\n')
-    public=$(grep -v -- '-----' "$WORK_DIR/compute/public.pem" | tr -d '\n')
-    grep -v -- '-----' "$bundle" 2>/dev/null | tr -d '\n' | grep -qF "$root" \
-        || { echo "the bundle the services read has no trace of the node's root"; return 1; }
-    grep -v -- '-----' "$bundle" | tr -d '\n' | grep -qF "$public" \
-        || { echo "the bundle the services read lost the host's public roots"; return 1; }
-}
-
-the_node_s_key_stays_out_of_the_output() {
-    local key
-    key=$(tr -d '\n' < "$WORK_DIR/compute/key")
-    grep -qF "$key" <<< "$(output_of pointed_at_a_compute_node)" || return 0
-    echo "the compute node's key appears in the install output"
-    return 1
+a_compute_node_keeps_the_list_of_the_platforms_it_admits() {
+    local state settings
+    for state in compute_by_flag compute_node_runs_through; do
+        settings=$(of_state "$state" local-env)
+        grep -qx 'UT_ADMITTED_BOXES_FILE="/etc/understandtech/admitted-boxes.caddy"' <<< "$settings" \
+            && grep -qx '/etc/understandtech/admitted-boxes.caddy' <<< "$(of_state "$state" link-files)" && continue
+        echo "${state}:"; grep '^UT_ADMITTED_BOXES_FILE=' <<< "$settings"; of_state "$state" link-files
+        return 1
+    done
 }
 
 tls_ends_with_the_given_certificate() {
@@ -836,11 +848,11 @@ a_compute_node_is_installed_with_one_flag() {
     return 1
 }
 
-a_compute_node_over_http_is_refused() {
+a_node_given_as_a_url_is_refused() {
     local output
-    output=$(output_of compute_node_over_http)
-    grep -q 'must be an https address' <<< "$output" && ! grep -q '^EXIT=0$' <<< "$output" \
-        && [[ ! -s "$WORK_DIR/compute_node_over_http/local-env" ]] && return 0
+    output=$(output_of node_given_as_a_url)
+    grep -q "takes the compute node's name or IP" <<< "$output" && ! grep -q '^EXIT=0$' <<< "$output" \
+        && [[ ! -s "$WORK_DIR/node_given_as_a_url/local-env" ]] && return 0
     echo "$output" | tail -5
     return 1
 }
@@ -859,7 +871,7 @@ the_engine_gets_a_key_of_its_own() {
     local key
     key=$(engine_key_of "$1")
     [[ ${#key} -ge 32 && "$key" != "EMPTY" ]] && return 0
-    echo "VLLM_API_KEY is '${key}' — the engine surface would let anyone in"
+    echo "VLLM_API_KEY is '${key}' — the relay to a compute node would let any container in"
     return 1
 }
 
@@ -1126,18 +1138,6 @@ ENTRY
     chmod -R a+r "$WORK_DIR/models"
 }
 
-prepare_a_compute_node() {
-    local work="$WORK_DIR/compute" name
-    mkdir -p "$work"
-    for name in root public; do
-        openssl req -x509 -newkey rsa:2048 -sha256 -days 30 -noenc -subj "/CN=walk ${name}" \
-            -keyout "$work/${name}.key" -out "$work/${name}.pem" 2>/dev/null
-    done
-    cp "$work/root.pem" "$work/root.crt"
-    printf 'walk-node-key-%s%s\n' "$RANDOM" "$RANDOM" > "$work/key"
-    chmod -R a+r "$work"
-}
-
 prepare_weights() {
     local work="$WORK_DIR/weights" repository revision path sha
     mkdir -p "$work/lists"
@@ -1379,7 +1379,6 @@ printf '%sWalking a fresh install%s %s(the installer, from a machine in a known 
 build_the_package
 write_machine_stubs
 prepare_licenses
-prepare_a_compute_node
 prepare_certificates
 prepare_weights
 prepare_a_vllm_entry
@@ -1405,14 +1404,15 @@ INSTALL_COMMAND="ut-install --list-models" run_install_from_state models_listed_
 INSTALL_COMMAND="ut-install --list-models --events /w/models_as_events_on_gb10/events.jsonl" run_install_from_state models_as_events_on_gb10
 run_install_from_state model_kept_by_name
 INSTALL_COMMAND="ut-install --no-gpu --model nemotron-3.5-bolt-74b" run_install_from_state model_on_a_control_plane
-PULL_EXIT=0 WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --inference-from https://node.example.test:8444 --inference-key-file /w/compute/key --inference-ca-file /w/compute/root.crt" \
+PULL_EXIT=0 INSTALL_COMMAND="ut-install --inference-from node.example.test" \
     run_install_from_state pointed_at_a_compute_node
-WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --inference-from https://node.example.test:8444 --inference-key-file /w/compute/key --inference-ca-file /w/compute/root.crt" \
+INSTALL_COMMAND="ut-install --inference-from node.example.test" \
     run_install_from_state compute_node_from_a_machine_without_gpu
-WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --inference-from http://node.example.test:8444 --inference-key-file /w/compute/key --inference-ca-file /w/compute/root.crt" \
-    run_install_from_state compute_node_over_http
-WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --inference-from https://node.local:8444 --inference-key-file /w/compute/key --inference-ca-file /w/compute/root.crt" \
+INSTALL_COMMAND="ut-install --inference-from https://node.example.test:8444" \
+    run_install_from_state node_given_as_a_url
+INSTALL_COMMAND="ut-install --inference-from node.local" \
     run_install_from_state pointed_at_an_mdns_node
+PULL_EXIT=0 run_install_from_state linked_by_key_before
 PULL_EXIT=0 INSTALL_COMMAND="ut-install --compute 192.0.2.10" \
     run_install_from_state compute_by_flag -
 INSTALL_COMMAND="ut-install --compute node.local" run_install_from_state compute_named_by_mdns
@@ -1529,12 +1529,10 @@ property "an engine key an older release left as EMPTY is replaced" \
     the_engine_gets_a_key_of_its_own engine_key_left_empty
 
 printf '\n%sA control plane pointed at a compute node%s\n' "$BOLD" "$NC"
-property "it takes the node's address and key" \
-    a_control_plane_takes_the_node_s_address_and_key
-property "it trusts the node's root beside the public ones" \
-    a_control_plane_trusts_the_node_beside_the_public_roots
-property "the node's key stays out of the install output" \
-    the_node_s_key_stays_out_of_the_output
+property "it calls its own relay, which carries the link ut-pair makes" \
+    a_control_plane_calls_its_own_relay
+property "a platform linked by key before moves to its relay and is told how to pair" \
+    a_platform_linked_by_key_moves_to_its_relay
 property "a control plane with a GPU keeps it for llm and starts no engine" \
     a_control_plane_with_a_gpu_keeps_it_for_llm
 property "a control plane without a GPU is installed as with --no-gpu" \
@@ -1545,8 +1543,8 @@ property "a compute node installs to the end" \
     a_compute_node_installs_to_the_end
 property "a compute node's summary hands the control plane what it needs" \
     a_compute_node_hands_the_control_plane_what_it_needs
-property "a node reached over plain http is refused before anything is written" \
-    a_compute_node_over_http_is_refused
+property "a node given as a URL is refused before anything is written" \
+    a_node_given_as_a_url_is_refused
 property "a node named by mDNS is refused before anything is written" \
     refused_before_anything_is_written pointed_at_an_mdns_node "names a .local host"
 property "online, the weights the release pins are downloaded, checked and placed, and nothing is fetched on first start" \
@@ -1587,6 +1585,8 @@ property "an install that downloads again forgets the names a folder gave its im
     a_pulling_install_forgets_the_names_of_a_folder
 property "a compute node is installed with one flag, and asked for no domain" \
     a_compute_node_is_installed_with_one_flag
+property "a compute node keeps the list of the platforms it admits, from its first run on" \
+    a_compute_node_keeps_the_list_of_the_platforms_it_admits
 property "a compute node named by mDNS is refused before anything is written" \
     refused_before_anything_is_written compute_named_by_mdns "cannot resolve a .local name"
 property "a compute node without its GPU is refused before anything is written" \

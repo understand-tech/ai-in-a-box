@@ -14,6 +14,7 @@ DOC_DIR="usr/share/doc/$PACKAGE"
 LIB_DIR="usr/lib/$PACKAGE"
 UT_SEND_BUILDS="${UT_SEND_BUILDS:-$REPO_ROOT/dist/ut-send}"
 UT_SETUP_BUILDS="${UT_SETUP_BUILDS:-$REPO_ROOT/dist/ut-setup}"
+UT_PAIR_BUILDS="${UT_PAIR_BUILDS:-$REPO_ROOT/dist/ut-pair}"
 UT_ARBITER_BUILDS="${UT_ARBITER_BUILDS:-$REPO_ROOT/dist/ut-arbiter}"
 CONFIG_DIR="etc/$PACKAGE"
 
@@ -26,7 +27,7 @@ build-deb.sh — builds the ${PACKAGE} Debian package.
 The version is the only argument. It has to be orderable by dpkg, so
 YYYY.MM.N reads the way it sorts.
 
-Writes to \$OUT_DIR (default: dist/). Needs ut-send and ut-setup compiled
+Writes to \$OUT_DIR (default: dist/). Needs ut-send, ut-setup and ut-pair compiled
 first (packaging/build-ut-send.sh), ut-arbiter fetched first
 (packaging/fetch-ut-arbiter.sh), and dpkg-deb, so run it on Debian or in a
 container:
@@ -107,6 +108,7 @@ stage_commands() {
     install -m 755 "$REPO_ROOT/bin/ut-report" "$root/usr/bin/"
     install -m 755 "$REPO_ROOT/bin/ut-send" "$root/usr/bin/"
     install -m 755 "$REPO_ROOT/bin/ut-setup" "$root/usr/bin/"
+    install -m 755 "$REPO_ROOT/bin/ut-pair" "$root/usr/bin/"
     install -m 755 "$REPO_ROOT/bin/ut-arbiter" "$root/usr/bin/"
 }
 
@@ -246,6 +248,7 @@ main() {
     stage_commands "$root"
     stage_builds_of "$root" ut-send "$UT_SEND_BUILDS"
     stage_builds_of "$root" ut-setup "$UT_SETUP_BUILDS"
+    stage_builds_of "$root" ut-pair "$UT_PAIR_BUILDS"
     stage_builds_of "$root" ut-arbiter "$UT_ARBITER_BUILDS"
     stage_documentation "$root"
     link_configuration_into_project_directory "$root"

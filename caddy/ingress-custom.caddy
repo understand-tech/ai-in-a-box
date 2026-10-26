@@ -23,6 +23,12 @@
     }
     # The SNI default every mode carries: see ingress-internal.caddy.
     default_sni {$UT_INFERENCE_ADDRESS:understand.local}
+    # The link authority every mode carries: see ingress-internal.caddy.
+    pki {
+        ca link {
+            name "UnderstandTech link"
+        }
+    }
 }
 
 (tls) {

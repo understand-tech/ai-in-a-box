@@ -188,6 +188,16 @@ and `--behind-proxy` replace editing `UT_INGRESS_MODE`, `UT_CADDY_SCHEME` and
 `UT_PUBLIC_SCHEME` is gone: the addresses the applications advertise are always
 `https`. A `local.env` that set it to `http` sees them move to `https`.
 
+**A platform and its compute node are paired again.** The node no longer
+answers the bearer of its `VLLM_API_KEY`: it serves the platforms paired with it
+by `ut-pair`, and no other. Update both machines, then pair them: `sudo ut-pair
+offer` on the node, `sudo ut-pair join <node>` on the platform — the platform's
+update prints that command with the node's address. Until then the platform
+answers nothing a model has to write. The key and root files the platform was
+given, and its `inference-ca-bundle.pem`, are no longer read; the update removes
+the bundle. See
+[pairing a platform with it](certificates-and-dns.md#pairing-a-platform-with-it).
+
 **The model weights are downloaded by `ut-install`.** It fetches the files the
 release pins, checks each checksum, and places them where the engines read them;
 nothing is fetched by a container any more. The first update of a box that
@@ -202,8 +212,8 @@ warns again. That switch is a deliberate act, never part of an update.
 **The engine no longer declares a host port.** `127.0.0.1:8001` was declared but
 never answered: Docker publishes no port for a container that sits on internal
 networks only, as the engine does. Query it with `docker compose exec nim-llm
-curl -s localhost:8000/v1/models`, or from another machine through a compute
-node's surface. A `NIM_LLM_BIND_ADDRESS` or `NIM_LLM_HOST_PORT` left in
+curl -s localhost:8000/v1/models`, or from a platform paired with a compute
+node. A `NIM_LLM_BIND_ADDRESS` or `NIM_LLM_HOST_PORT` left in
 `local.env` is now ignored.
 
 **Neither does MongoDB.** `127.0.0.1:27018` never answered either, for the same

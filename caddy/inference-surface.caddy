@@ -1,17 +1,24 @@
-# The engine, for the machines a compute node serves.
+# The engine, for the platforms this compute node admits.
 #
-# NIM refuses an API key of its own ("authentication should be managed
-# externally", nim_llm 2.0.12), so the key is checked here, whichever image
-# serves the model, and the engine's own port stays on loopback.
+# Imported by the file ut-pair writes, and only once that file names one
+# platform: without a trust pool, client_auth checks certificates against the
+# system roots, and a public authority would get in. A platform is known by the
+# root of its link authority, which it handed over when it paired.
 #
-# The certificate comes from Caddy's own authority. A control plane trusts it by
-# its root, /data/caddy/pki/authorities/local/root.crt in this container.
+# Served under one name whatever address the platform dials: a client calling
+# an IP sends no SNI, and Caddy then applies no site's client_auth at all. The
+# node is known by its root, not by its name.
 
-https://{$UT_INFERENCE_ADDRESS}:8444 {
-    tls internal
-
-    @without_the_key not header Authorization "Bearer {$VLLM_API_KEY}"
-    respond @without_the_key 401
+https://link.internal:8444 {
+    tls {
+        issuer internal {
+            ca link
+        }
+        client_auth {
+            mode require_and_verify
+            import admitted_boxes
+        }
+    }
 
     reverse_proxy nim-llm:8000
 }

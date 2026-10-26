@@ -56,7 +56,7 @@ BEHIND_PROXY=""
 IMAGES_FROM=""
 MODEL_ID=""
 ENGINE_CHOICE=""
-HOST_CA_BUNDLE="${UT_HOST_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}"
+LINK_RELAY_URL="http://caddy:8445/v1"
 UT_SEND="${UT_SEND:-ut-send}"
 CURRENT_STEP=""
 INFERENCE_STILL_LOADING=""
@@ -184,7 +184,7 @@ Options
                        connected machine, under the digest the release names,
                        and download none. ut-get --from passes it on its own.
   --no-gpu             This machine has no accelerator and serves no inference;
-                       another machine does, named by VLLM_LLM_BASE_URL. Waives
+                       another machine does (see --inference-from). Waives
                        the accelerator check, never a driver that stopped
                        answering. A settings file already carrying
                        compose.no-gpu.yaml says the same thing.
@@ -196,14 +196,16 @@ Options
   --compute ADDRESS    Serve inference only, to a control plane that reaches this
                        machine at ADDRESS: a DNS name or an IP, never a .local
                        name, which the control plane's containers cannot resolve.
-                       Starts the engine and Caddy's keyed surface on port 8444,
-                       no platform. Kept by later runs.
-  --inference-from URL, --inference-key-file PATH, --inference-ca-file PATH
-                       Take the inference from a compute node: its address
-                       (https://<node>:8444), its VLLM_API_KEY and its Caddy
-                       root, as its own install printed them. No engine starts
-                       here; a GPU, when there is one, stays with llm, which
-                       searches the documents. Without one, as --no-gpu.
+                       Starts the engine and, on port 8444, the surface that
+                       serves the platforms paired with it by ut-pair, no
+                       platform. Kept by later runs.
+  --inference-from ADDRESS
+                       Take the inference from the compute node at ADDRESS: a
+                       DNS name or an IP, with :port when it is not 8444. The
+                       two are linked afterwards: ut-pair offer on the node,
+                       then ut-pair join ADDRESS here. No engine starts here;
+                       a GPU, when there is one, stays with llm, which searches
+                       the documents. Without one, as --no-gpu.
   --arbiter ADDRESS    This machine judges which of a pair of boxes is
                        reachable, to settle a two-box failover without two
                        primaries. ADDRESS is this machine's own: a DNS name or
@@ -288,6 +290,15 @@ env_get() {
     printf '%s' "$value"
 }
 
+env_drop() {
+    local file=$1 key=$2 tmp
+    grep -qE "^[[:space:]]*${key}=" "$file" 2>/dev/null || return 0
+    tmp=$(mktemp)
+    grep -vE "^[[:space:]]*${key}=" "$file" > "$tmp" || true
+    cat "$tmp" > "$file"
+    rm -f "$tmp"
+}
+
 env_set() {
     # Copying the temp file's content back, rather than moving it over, keeps
     # the original inode and its 0600 permissions.
@@ -330,6 +341,18 @@ this_machine_is_a_compute_node() {
     [[ "$(env_get "$INSTALL_DIR/.env" COMPOSE_FILE 2>/dev/null || true)" == *compose.compute.yaml* ]]
 }
 
+this_machine_relays_to_a_compute_node() {
+    [[ "$(env_get "$INSTALL_DIR/.env" COMPOSE_FILE 2>/dev/null || true)" == *compose.remote-inference.yaml* ]]
+}
+
+# What ut-pair recorded when it linked this platform; nothing before that.
+linked_node_address() {
+    local links
+    links="$(settings_directory "$INSTALL_DIR/.env")/links.json"
+    [[ -r "$links" ]] || return 0
+    sed -n 's/^.*"address": *"\([^"]*\)".*$/\1/p' "$links" | head -1
+}
+
 inference_surface_url() {
     local address port
     address=$(env_get "$INSTALL_DIR/.env" UT_INFERENCE_ADDRESS 2>/dev/null || true)
@@ -353,7 +376,13 @@ the_inference_is_served_by_another_machine() {
 # first one is a failure nobody would look for.
 role_this_machine_was_installed_as() {
     if this_machine_is_a_compute_node; then
-        printf 'compute node — serves inference at %s/v1 to the bearer of its key' "$(inference_surface_url)"
+        printf 'compute node — serves inference at %s/v1 to the platforms paired with it' "$(inference_surface_url)"
+    elif this_machine_relays_to_a_compute_node; then
+        if [[ -n "$(linked_node_address)" ]]; then
+            printf 'control plane — generation comes from the compute node at %s' "$(linked_node_address)"
+        else
+            printf 'control plane — generation will come from a compute node, once paired with it'
+        fi
     elif ! the_inference_url_names_a_service_this_machine_will_not_run; then
         printf 'control plane — generation comes from %s' \
             "$(env_get "$INSTALL_DIR/.env" VLLM_LLM_BASE_URL 2>/dev/null)"
@@ -373,6 +402,9 @@ say_what_is_installed() {
     [[ -n "$address" ]] || return 0
     if this_machine_is_a_compute_node; then
         role=compute
+    elif this_machine_relays_to_a_compute_node; then
+        role=control-plane
+        node=$(linked_node_address)
     elif ! the_inference_url_names_a_service_this_machine_will_not_run || the_inference_is_served_by_another_machine; then
         role=control-plane
         node=$(env_get "$env_file" VLLM_LLM_BASE_URL 2>/dev/null || true)
@@ -1121,28 +1153,9 @@ write_the_settings_a_machine_without_an_accelerator_needs() {
     if the_inference_url_names_a_service_this_machine_will_not_run; then
         log_warn "VLLM_LLM_BASE_URL still names ${INTERNAL_INFERENCE_HOST}, an engine this"
         log_warn "  machine no longer starts. The platform will come up and answer nothing"
-        log_warn "  a model has to write. Point it at a machine that serves inference:"
-        log_warn "    echo 'VLLM_LLM_BASE_URL=\"https://<that machine>/v1\"' | sudo tee -a ${local_file}"
+        log_warn "  a model has to write. Take it from a compute node:"
+        log_warn "    sudo ut-install --inference-from <the node's address>"
     fi
-}
-
-inference_base_url() {
-    local url=${1%/}
-    printf '%s/v1' "${url%/v1}"
-}
-
-the_key_file_holds_one_key() {
-    local key
-    [[ -r "$1" ]] || return 1
-    (( $(grep -c . "$1") == 1 )) || return 1
-    key=$(tr -d '\r\n' < "$1")
-    [[ -n "$key" && "$key" != *[[:space:]]* ]]
-}
-
-host_of_url() {
-    local rest=${1#*://}
-    rest=${rest%%/*}
-    printf '%s' "${rest%:*}"
 }
 
 names_an_mdns_host() {
@@ -1668,6 +1681,8 @@ step_configure() {
     write_the_settings_an_arbiter_role_needs "$local_file"
     write_the_settings_the_model_needs "$local_file"
     write_the_settings_a_compute_node_needs "$local_file"
+    write_the_list_a_compute_node_keeps "$local_file"
+    write_the_link_a_platform_keeps "$local_file"
     write_how_tls_ends "$local_file"
     if this_machine_goes_without_its_accelerator; then
         write_the_settings_a_machine_without_an_accelerator_needs "$local_file"
@@ -2549,9 +2564,9 @@ step_reporting() {
 }
 
 print_compute_node_summary() {
-    local surface settings
-    surface=$(inference_surface_url)
+    local settings node
     settings="$(settings_directory "$INSTALL_DIR/.env")/local.env"
+    node=$(inference_surface_url); node=${node#https://}; node=${node%:8444}
     cat <<EOF
 
 ${BOLD}Installation complete in $(( SECONDS / 60 )) min${NC}
@@ -2559,16 +2574,15 @@ ${BOLD}Installation complete in $(( SECONDS / 60 )) min${NC}
   This machine serves inference only: no platform, no admin password.
 
   Directory      ${INSTALL_DIR}
-  Configuration  ${settings}   (holds the engine key)
+  Configuration  ${settings}
   Role           $(role_this_machine_was_installed_as)
   Engine         ${INFERENCE_STILL_LOADING:+still loading: }${INFERENCE_STILL_LOADING:-ready}
 
-  On the control plane, give its install this node's key and root:
+  To give a platform this node's inference:
 
-    sudo grep '^VLLM_API_KEY=' ${settings} | cut -d= -f2- | tr -d '"' > node.key
-    docker exec ut-caddy cat /data/caddy/pki/authorities/local/root.crt > node-root.crt
-    sudo ut-install --inference-from ${surface} \\
-        --inference-key-file node.key --inference-ca-file node-root.crt
+    on the platform   sudo ut-install --inference-from ${node}
+    here              sudo ut-pair offer           shows a code for 15 minutes
+    on the platform   sudo ut-pair join ${node}    asks for that code
 
   Status         cd ${INSTALL_DIR} && docker compose ps
   Logs           cd ${INSTALL_DIR} && docker compose logs -f nim-llm
@@ -2585,6 +2599,9 @@ print_summary() {
     fi
     [[ -z "$INFERENCE_STILL_LOADING" ]] \
         || inference=$'\n'"  Inference      still loading: ${INFERENCE_STILL_LOADING} — the platform works meanwhile"
+    if this_machine_relays_to_a_compute_node && [[ -z "$(linked_node_address)" ]]; then
+        inference=$'\n'"  Inference      not paired yet: on the node, sudo ut-pair offer; here, sudo ut-pair join ${INFERENCE_FROM:-<node>}"
+    fi
 
     cat <<EOF
 
@@ -2653,8 +2670,6 @@ parse_arguments() {
             --inference-from)     INFERENCE_FROM="${2:?--inference-from needs an address}"; shift ;;
             --images-from)        IMAGES_FROM="${2:?--images-from needs the folder ut-get --prepare wrote}"; DO_PULL=false; shift ;;
             --compute)            COMPUTE_ADDRESS="${2:?--compute needs the address the control plane reaches this machine at}"; shift ;;
-            --inference-key-file) INFERENCE_KEY_FILE="${2:?--inference-key-file needs a path}"; shift ;;
-            --inference-ca-file)  INFERENCE_CA_FILE="${2:?--inference-ca-file needs a path}"; shift ;;
             --model)              MODEL_ID="${2:?--model needs one of the models in models/}"; shift ;;
             --engine)             ENGINE_CHOICE="${2:?--engine needs nim or vllm}"; shift ;;
             -h|--help)        usage; exit 0 ;;

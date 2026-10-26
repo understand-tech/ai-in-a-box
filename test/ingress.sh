@@ -15,7 +15,7 @@ PROBE_IMAGE=$ALPINE_IMAGE
 # them: caddy:2-alpine is public, and stubs answer for the eight upstreams. So
 # the one surface a browser actually meets is the one that can be checked here.
 cleanup() {
-    docker rm -f ut-ingress-caddy ut-ingress-stub ut-ingress-probe ut-ingress-recorder >/dev/null 2>&1
+    docker rm -f ut-ingress-caddy ut-ingress-platform ut-ingress-stub ut-ingress-probe ut-ingress-recorder >/dev/null 2>&1
     docker network rm "$NETWORK" >/dev/null 2>&1
     rm -rf "$WORK_DIR"
 }
@@ -78,7 +78,7 @@ start_the_upstreams() {
 	respond "stub 8001" 200
 }
 :8000 {
-	respond "stub 8000" 200
+	respond "stub 8000 authorization=[{http.request.header.Authorization}]" 200
 }
 STUB
     local args=()
@@ -122,10 +122,11 @@ EOF
 # bash 3.2 treats "${empty[@]}" as an unbound variable under set -u, so the
 # expansion has to be guarded rather than quoted.
 ENGINE_ADDRESS="engine.${DOMAIN}"
-ENGINE_KEY="ingress-check-key-${RANDOM}${RANDOM}"
+RELAY_TOKEN="ingress-check-token-${RANDOM}${RANDOM}"
+PLATFORM_DOMAIN="platform.example.test"
 
 start_the_front_door() {
-    local mode=${1:-internal} args=() extra=() inference=no-inference-surface ingress=${1:-internal}
+    local mode=${1:-internal} args=() extra=() inference="$REPO_ROOT/caddy/no-inference-surface.caddy" ingress=${1:-internal}
     while IFS= read -r line; do args+=("$line"); done < <(aliases_for "$SURFACES $ENGINE_ADDRESS caddy")
 
     case "$mode" in
@@ -139,15 +140,32 @@ start_the_front_door() {
             extra=(-e UT_CADDY_SCHEME=http -e UT_TRUSTED_PROXIES=private_ranges) ;;
         compute)
             ingress=internal
-            inference=inference-surface
-            extra=(-e UT_INFERENCE_ADDRESS="$ENGINE_ADDRESS" -e VLLM_API_KEY="$ENGINE_KEY") ;;
+            inference="$WORK_DIR/admitted-boxes.caddy"
+            : > "$inference"
+            extra=(-e UT_INFERENCE_ADDRESS="$ENGINE_ADDRESS"
+                -v "$REPO_ROOT/caddy/inference-surface.caddy":/etc/caddy/link-surface.caddy:ro) ;;
     esac
 
     docker run -d --name ut-ingress-caddy --network "$NETWORK" "${args[@]}" \
         -e UT_DOMAIN="$DOMAIN" ${extra[@]+"${extra[@]}"} \
         -v "$REPO_ROOT/Caddyfile":/etc/caddy/Caddyfile:ro \
         -v "$REPO_ROOT/caddy/ingress-${ingress}.caddy":/etc/caddy/ingress.caddy:ro \
-        -v "$REPO_ROOT/caddy/${inference}.caddy":/etc/caddy/inference.caddy:ro \
+        -v "$inference":/etc/caddy/inference.caddy:ro \
+        -v "$REPO_ROOT/caddy/no-link.caddy":/etc/caddy/link.caddy:ro \
+        "$CADDY_IMAGE" >/dev/null
+}
+
+# A platform that takes its inference from the compute node: the same Caddyfile,
+# with the relay ut-pair links once the two are paired.
+start_the_platform() {
+    : > "$WORK_DIR/linked-node.caddy"
+    docker run -d --name ut-ingress-platform --network "$NETWORK" \
+        -e UT_DOMAIN="$PLATFORM_DOMAIN" -e VLLM_API_KEY="$RELAY_TOKEN" \
+        -v "$REPO_ROOT/Caddyfile":/etc/caddy/Caddyfile:ro \
+        -v "$REPO_ROOT/caddy/ingress-internal.caddy":/etc/caddy/ingress.caddy:ro \
+        -v "$REPO_ROOT/caddy/no-inference-surface.caddy":/etc/caddy/inference.caddy:ro \
+        -v "$WORK_DIR/linked-node.caddy":/etc/caddy/link.caddy:ro \
+        -v "$REPO_ROOT/caddy/link-relay.caddy":/etc/caddy/link-relay.caddy:ro \
         "$CADDY_IMAGE" >/dev/null
 }
 
@@ -428,73 +446,203 @@ surface "it serves the certificate it was given, not one of its own" \
 surface "the apex still answers" a_surface_answers "$DOMAIN"
 surface "a generated application still answers" a_surface_answers "demo.apps.${DOMAIN}"
 
-# --connect-to keeps the address in the URL, so that called by IP curl sends no
-# SNI, as the control plane does, while Caddy sees its container's own address.
 engine_curl() {
     docker exec ut-ingress-probe curl -sk --max-time 10 \
-        --connect-to "${ENGINE_ADDRESS}:8444:ut-ingress-caddy:8444" "$@" \
-        "https://${ENGINE_ADDRESS}:8444/v1/models" 2>/dev/null
+        --connect-to "link.internal:8444:ut-ingress-caddy:8444" "$@" \
+        "https://link.internal:8444/v1/models" 2>/dev/null
 }
 
 engine_answers() {
     engine_curl -o /dev/null -w '%{http_code}' "$@"
 }
 
-wait_for_the_engine_surface() {
-    local waited=0 code
-    while (( waited < 90 )); do
-        code=$(engine_answers)
-        [[ "$code" =~ ^[0-9][0-9][0-9]$ && "$code" != 000 ]] && return 0
+link_root_of() {
+    docker exec "$1" cat /data/caddy/pki/authorities/link/root.crt 2>/dev/null
+}
+
+der_of() { sed '/-----/d' | tr -d '\n'; }
+
+wait_for_the_link_authority_of() {
+    local waited=0
+    while (( waited < 60 )); do
+        link_root_of "$1" | grep -q 'BEGIN CERTIFICATE' && return 0
         sleep 2; waited=$((waited + 2))
     done
-    echo "https://${ENGINE_ADDRESS}:8444 never answered — last code ${code:-none}"
-    docker logs --tail 15 ut-ingress-caddy 2>&1
+    echo "$1 never created its link authority"
+    docker logs --tail 15 "$1" 2>&1
+    return 1
+}
+
+both_create_their_link_authority() {
+    wait_for_the_link_authority_of ut-ingress-caddy && wait_for_the_link_authority_of ut-ingress-platform
+}
+
+# Docker Desktop shows a file mounted on its own a few seconds after the host
+# wrote it; a reload before that reads the previous content. A Linux host shows
+# it at once.
+reload_once_it_reads() {
+    local container=$1 file=$2 mounted=$3 waited=0
+    until [[ "$(docker exec "$container" cat "$mounted" 2>/dev/null)" == "$(cat "$file")" ]] || (( waited >= 30 )); do
+        sleep 1; waited=$((waited + 1))
+    done
+    docker exec "$container" caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1
+}
+
+# Written as ut-pair writes them (cmd/ut-pair/links.go), rewritten in place:
+# each is bind-mounted on its own, and such a mount keeps its first inode.
+admit() {
+    local root
+    if (( $# == 0 )); then
+        : > "$WORK_DIR/admitted-boxes.caddy"
+    else
+        {
+            printf '(admitted_boxes) {\n\ttrust_pool inline {\n'
+            for root in "$@"; do printf '\t\ttrust_der %s\n' "$(der_of < "$root")"; done
+            printf '\t}\n}\nimport /etc/caddy/link-surface.caddy\n'
+        } > "$WORK_DIR/admitted-boxes.caddy"
+    fi
+    reload_once_it_reads ut-ingress-caddy "$WORK_DIR/admitted-boxes.caddy" /etc/caddy/inference.caddy
+}
+
+link_the_platform_to() {
+    local address=$1 root=${2:-}
+    [[ -n "$root" ]] || root=$(link_root_of ut-ingress-caddy)
+    printf '(linked_node_root) {\n\ttls_trust_pool inline {\n\t\ttrust_der %s\n\t}\n}\nimport /etc/caddy/link-relay.caddy https://%s:8444\n' \
+        "$(der_of <<< "$root")" "$address" > "$WORK_DIR/linked-node.caddy"
+    reload_once_it_reads ut-ingress-platform "$WORK_DIR/linked-node.caddy" /etc/caddy/link.caddy
+}
+
+# A client certificate in the prober, from a file in a Caddy's storage: the
+# platform's link leaf, or a leaf of its local authority.
+hand_the_prober() {
+    local container=$1 name=$2 as=$3 crt="" waited=0
+    while [[ -z "$crt" ]] && (( waited < 30 )); do
+        crt=$(docker exec "$container" find /data/caddy/certificates -name "${name}.crt" | head -1)
+        [[ -n "$crt" ]] || { sleep 2; waited=$((waited + 2)); }
+    done
+    [[ -n "$crt" ]] || { echo "no certificate for ${name} in ${container}"; return 1; }
+    docker exec "$container" cat "$crt" | docker exec -i ut-ingress-probe sh -c "cat > /tmp/${as}.crt"
+    docker exec "$container" cat "${crt%.crt}.key" | docker exec -i ut-ingress-probe sh -c "cat > /tmp/${as}.key"
+}
+
+# Another authority altogether, and a client certificate it signed.
+make_an_outside_authority() {
+    docker exec ut-ingress-probe sh -c '
+        cd /tmp &&
+        printf "[e]\nextendedKeyUsage=clientAuth\n" > leaf.cnf &&
+        openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -noenc -days 2 -subj /CN=outside \
+            -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign \
+            -keyout outside-ca.key -out outside-ca.crt &&
+        openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -noenc -subj /CN=outside-client \
+            -keyout outside.key -out outside.csr &&
+        openssl x509 -req -in outside.csr -CA outside-ca.crt -CAkey outside-ca.key -CAcreateserial \
+            -days 2 -extfile leaf.cnf -extensions e -out outside.crt' >/dev/null 2>&1
+    docker exec ut-ingress-probe cat /tmp/outside-ca.crt > "$WORK_DIR/outside-ca.crt"
+}
+
+served_as() {
+    if [[ -n "$1" ]]; then
+        engine_curl --cert "/tmp/$1.crt" --key "/tmp/$1.key"
+    else
+        engine_curl
+    fi
+}
+
+the_engine_serves() {
+    local body
+    body=$(served_as "$1")
+    [[ "$body" == "stub 8000"* ]] && return 0
+    echo "with ${1:-no} certificate, the engine surface returned '${body:-nothing}'"
     return 1
 }
 
 the_engine_refuses() {
-    local code
-    code=$(engine_answers "$@")
-    [[ "$code" == 401 ]] && return 0
-    echo "the engine surface answered ${code:-nothing} instead of 401"
-    return 1
-}
-
-the_engine_serves_the_bearer_of_the_key() {
     local body
-    body=$(engine_curl -H "Authorization: Bearer ${ENGINE_KEY}")
-    [[ "$body" == "stub 8000" ]] && return 0
-    echo "with the key, the engine surface returned '${body:-nothing}'"
+    body=$(served_as "$1")
+    [[ -z "$body" ]] && return 0
+    echo "with ${1:-no} certificate, the engine surface answered '${body}'"
     return 1
 }
 
-the_engine_certificate_names_its_address() {
-    local names
-    names=$(docker exec ut-ingress-probe sh -c \
-        "openssl s_client -connect ut-ingress-caddy:8444 -noservername </dev/null 2>/dev/null \
-            | openssl x509 -noout -ext subjectAltName 2>/dev/null")
-    [[ "$names" == *"IP Address:${ENGINE_ADDRESS}"* ]] && return 0
-    echo "without SNI, the engine surface presented '${names:-no certificate}'"
+the_engine_surface_is_off() {
+    local code
+    code=$(engine_answers)
+    docker exec ut-ingress-caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1 \
+        || { echo "Caddy itself is not running"; return 1; }
+    [[ "$code" == 000 ]] && return 0
+    echo "with no platform admitted, the engine surface answered ${code}"
     return 1
 }
 
-printf '\n%sMode compute — the engine behind its key%s\n' "$BOLD" "$NC"
-restart_the_front_door_in compute
-[[ -n "${DEBUG_ENGINE:-}" ]] && { sleep 10; docker ps -a --format "{{.Names}} {{.Status}}"; docker inspect ut-ingress-caddy --format "{{json .Config.Env}} {{json .NetworkSettings.Networks}}" | cut -c1-900; docker exec ut-ingress-probe sh -c "getent hosts engine.box.example.test; curl -skv --max-time 5 https://engine.box.example.test:8444/v1/models 2>&1 | tail -5"; }
-surface "the engine surface comes up" wait_for_the_engine_surface
-surface "it refuses a request without the key" the_engine_refuses
-surface "it refuses a request with another key" \
-    the_engine_refuses -H "Authorization: Bearer not-${ENGINE_KEY}"
-surface "it serves the bearer of the key" the_engine_serves_the_bearer_of_the_key
+wait_for_the_engine_surface() {
+    local waited=0
+    while (( waited < 90 )); do
+        [[ "$(served_as platform)" == "stub 8000"* ]] && return 0
+        sleep 2; waited=$((waited + 2))
+    done
+    echo "the engine surface never served the platform"
+    docker logs --tail 15 ut-ingress-caddy 2>&1
+    return 1
+}
 
-printf '\n%sMode compute, reached by its address — no SNI%s\n' "$BOLD" "$NC"
-ENGINE_ADDRESS="192.0.2.10"
+relay_curl() {
+    docker exec ut-ingress-probe curl -s --max-time 15 "$@" 2>/dev/null
+}
+
+the_platform_reaches_the_engine_through_its_relay() {
+    local body waited=0
+    while (( waited < 60 )); do
+        body=$(relay_curl -H "Authorization: Bearer ${RELAY_TOKEN}" "http://ut-ingress-platform:8445/v1/models")
+        [[ "$body" == "stub 8000"* ]] && break
+        sleep 2; waited=$((waited + 2))
+    done
+    [[ "$body" == "stub 8000 authorization=[]" ]] && return 0
+    echo "through the relay, the engine returned '${body:-nothing}'"
+    return 1
+}
+
+the_relay_answers() {
+    local want=$1 path=$2 code; shift 2
+    code=$(relay_curl -o /dev/null -w '%{http_code}' "$@" "http://ut-ingress-platform:8445${path}")
+    [[ "$code" == "$want" ]] && return 0
+    echo "the relay answered ${code:-nothing} on ${path} instead of ${want}"
+    return 1
+}
+
+printf '\n%sMode compute — the engine, for the platforms it admits%s\n' "$BOLD" "$NC"
 restart_the_front_door_in compute
-surface "the engine surface comes up when called by IP" wait_for_the_engine_surface
-surface "it presents a certificate for that IP to a client that names none" \
-    the_engine_certificate_names_its_address
-surface "called by IP, it still refuses a request without the key" the_engine_refuses
-surface "called by IP, it serves the bearer of the key" the_engine_serves_the_bearer_of_the_key
+start_the_platform
+surface "the platform and the node each create their link authority" both_create_their_link_authority
+link_root_of ut-ingress-platform > "$WORK_DIR/platform-link-root.crt"
+hand_the_prober ut-ingress-platform link.internal platform
+hand_the_prober ut-ingress-platform "$PLATFORM_DOMAIN" platform-local
+make_an_outside_authority
+surface "with no platform admitted, the engine surface is off" the_engine_surface_is_off
+admit "$WORK_DIR/platform-link-root.crt" "$WORK_DIR/outside-ca.crt"
+surface "the engine surface comes up for the platforms it admits" wait_for_the_engine_surface
+surface "it serves another authority on the list too" the_engine_serves outside
+surface "it refuses a client without a certificate" the_engine_refuses ""
+surface "it refuses a leaf of the platform's local authority, which the backup carries" \
+    the_engine_refuses platform-local
+admit "$WORK_DIR/platform-link-root.crt"
+surface "a platform taken off the list is refused after a plain reload" the_engine_refuses outside
+surface "the platform still on the list is served" the_engine_serves platform
+link_the_platform_to "$ENGINE_ADDRESS"
+surface "the platform reaches the engine through its relay, and its token stays home" \
+    the_platform_reaches_the_engine_through_its_relay
+surface "the relay refuses a caller without the token" the_relay_answers 401 /v1/models
+surface "the relay refuses a caller with another token" \
+    the_relay_answers 401 /v1/models -H "Authorization: Bearer not-${RELAY_TOKEN}"
+surface "the relay carries nothing outside /v1/" \
+    the_relay_answers 404 /metrics -H "Authorization: Bearer ${RELAY_TOKEN}"
+link_the_platform_to "$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ut-ingress-caddy)"
+surface "the platform reaches the engine by its IP too, which carries no name" \
+    the_platform_reaches_the_engine_through_its_relay
+link_the_platform_to "$ENGINE_ADDRESS" "$(cat "$WORK_DIR/outside-ca.crt")"
+surface "the relay refuses a node whose root the platform was not given" \
+    the_relay_answers 502 /v1/models -H "Authorization: Bearer ${RELAY_TOKEN}"
+admit
+surface "with the last platform taken off, the engine surface is off again" the_engine_surface_is_off
 
 printf '\n%sMode edge — TLS is terminated upstream%s\n' "$BOLD" "$NC"
 restart_the_front_door_in edge
