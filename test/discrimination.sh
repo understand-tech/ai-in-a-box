@@ -1308,25 +1308,29 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
         "an engine key an older release left as EMPTY is replaced" \
         "sed -i.bak 's| \"EMPTY\"\$||' bin/ut-install"
 
-    install_walk_discriminates "a control plane told the node's key and keeping its own" \
-        "it takes the node's address and key" \
-        "sed -i.bak '/env_set \"\$local_file\" VLLM_API_KEY /d' bin/ut-install"
+    install_walk_discriminates "a platform left calling the node itself" \
+        "it calls its own relay" \
+        "sed -i.bak 's|^LINK_RELAY_URL=\"http://caddy:8445/v1\"\$|LINK_RELAY_URL=\"https://node.example.test:8444/v1\"|' bin/ut-install"
 
-    install_walk_discriminates "a bundle without the node's root" \
-        "it trusts the node's root beside the public ones" \
-        "sed -i.bak 's|cat \"\$HOST_CA_BUNDLE\" \"\$INFERENCE_CA_FILE\" >|cat \"\$HOST_CA_BUNDLE\" >|' bin/ut-install"
+    install_walk_discriminates "a platform whose link file Docker would make a directory of" \
+        "it calls its own relay" \
+        "sed -i.bak '/install -m 644 \\/dev\\/null \"\$dir\\/linked-node.caddy\"/d' bin/ut-install"
 
-    install_walk_discriminates "a bundle with the node's root alone" \
-        "it trusts the node's root beside the public ones" \
-        "sed -i.bak 's|cat \"\$HOST_CA_BUNDLE\" \"\$INFERENCE_CA_FILE\" >|cat \"\$INFERENCE_CA_FILE\" >|' bin/ut-install"
+    install_walk_discriminates "a platform linked by key left with the bundle it no longer reads" \
+        "a platform linked by key before moves to its relay" \
+        "sed -i.bak '/env_drop \"\$local_file\" UT_INFERENCE_CA_BUNDLE/d' bin/ut-install"
 
-    install_walk_discriminates "the node's key written to the install log" \
-        "the node's key stays out of the install output" \
-        "sed -i.bak 's|with its key, trusting its root\"|with key \$(cat \"\$INFERENCE_KEY_FILE\"), trusting its root\"|' bin/ut-install"
+    install_walk_discriminates "a node given as a URL taken as given" \
+        "a node given as a URL is refused before anything is written" \
+        "sed -i.bak 's|^    if \\[\\[ ! \"\$INFERENCE_FROM\" =~ .*|    if false; then|' bin/ut-install"
 
-    install_walk_discriminates "a compute node reached over plain http" \
-        "a node reached over plain http is refused before anything is written" \
-        "sed -i.bak 's|\\^https://\\[\\^/\\]+|^https?://[^/]+|' bin/ut-install"
+    install_walk_discriminates "a compute node that never says where its list is" \
+        "a compute node keeps the list of the platforms it admits" \
+        "sed -i.bak '/env_set \"\$local_file\" UT_ADMITTED_BOXES_FILE/d' bin/ut-install"
+
+    install_walk_discriminates "a compute node's summary that leaves pairing out" \
+        "a compute node's summary hands the control plane what it needs" \
+        "sed -i.bak '/sudo ut-pair offer           shows a code/d' bin/ut-install"
 
     install_walk_discriminates "a registry token asked for even when nothing is pulled" \
         "a license with no registry token is refused to pull, and taken when nothing is pulled" \

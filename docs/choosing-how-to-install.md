@@ -47,8 +47,8 @@ Only `internal` needs no setting. The other three are written in
 | It | Install with | Settings |
 |---|---|---|
 | Everything, with its own GPU | nothing more | — |
-| Everything but inference, which runs on another machine | `--no-gpu`, or `--inference-from` when it is a compute node | [`VLLM_LLM_BASE_URL`](install.md#a-machine-that-serves-no-inference) names the machine that generates; `--inference-from` sets it with the node's key and root. Chats over documents need a GPU on this machine as well |
-| Only inference, for a box that keeps the data | the compute overlay | [adding a second machine](certificates-and-dns.md#adding-a-second-machine) — read [what does not work yet](certificates-and-dns.md#what-does-not-work-yet) first |
+| Everything but inference, which runs on another machine | `--no-gpu`, or `--inference-from` when it is a compute node | [`VLLM_LLM_BASE_URL`](install.md#a-machine-that-serves-no-inference) names the machine that generates; with a compute node, `--inference-from` and [a pairing](certificates-and-dns.md#pairing-a-platform-with-it) take its place. Chats over documents need a GPU on this machine as well |
+| Only inference, for a box that keeps the data | `--compute` | [adding a second machine](certificates-and-dns.md#adding-a-second-machine) |
 | A test, beside a live install | `--dir … --no-autostart` | [installing beside something already running](install.md#installing-beside-something-already-running) |
 
 ## 6 · Where will backups go?

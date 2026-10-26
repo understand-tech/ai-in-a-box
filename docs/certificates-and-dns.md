@@ -274,21 +274,25 @@ the browser is on.
 
 Caddy keeps its own, in the `ut-caddy-data` volume. Its root lasts ten years;
 Caddy renews its intermediate itself, every few days, with no network. It signs
-the public names in `internal` mode and a compute node's inference surface on
-port 8444. Exporting and trusting it is the same command as
-[`internal` mode](#internal--the-default) above.
+the public names in `internal` mode. Exporting and trusting it is the same
+command as [`internal` mode](#internal--the-default) above.
+
+## The link authority
+
+A second authority in the same volume, `link`, signs only what two boxes show
+each other once they are paired: never a name a browser sees. The file backup
+leaves it out, so a restored box is paired again instead of passing for the one
+it was restored from.
 
 ## Adding a second machine
 
-A compute node serves inference to the machine that holds the data. Part of
-this works today, part does not, and the difference matters before you promise
-anything to a customer.
+A compute node serves inference to the machine that holds the data.
 
-### What works
+### Installing the compute node
 
-The role itself. `compose.compute.yaml` keeps the inference engines and Caddy
-and switches off everything belonging to the control plane, so the second
-machine runs no database and no application. On that machine:
+`compose.compute.yaml` keeps the inference engines and Caddy and switches off
+everything belonging to the control plane, so the second machine runs no
+database and no application. On that machine:
 
 ```bash
 sudo ut-install --compute <IP or DNS name the control plane reaches it by>
@@ -296,44 +300,64 @@ sudo ut-install --compute <IP or DNS name the control plane reaches it by>
 
 The address cannot be a `.local` name: the control plane's containers do not
 resolve mDNS. The install starts no platform, asks for no domain, and ends by
-printing the commands the control plane needs. Later runs keep the role.
+printing how to pair a platform with it. Later runs keep the role.
 
-The engine publishes no port of its own. Caddy serves it at
-`https://<UT_INFERENCE_ADDRESS>:8444/v1`, with a certificate from its own
-authority, and refuses with `401` any request that does not carry the node's
-`VLLM_API_KEY` as `Authorization: Bearer`. The key is in the node's
-`/etc/understandtech/local.env`; the root of its certificate is in its Caddy:
+The engine publishes no port of its own. Caddy serves it on port 8444 to the
+platforms paired with the node, and to nothing else: until one is, the port
+does not answer.
 
-```bash
-docker exec ut-caddy cat /data/caddy/pki/authorities/local/root.crt
-```
+### Pairing a platform with it
 
-On the control plane, give the three to the install, naming the node by the
-same address. It takes the inference
-from the node instead of starting an engine, and its services trust the node's
-root on top of the public ones:
+On the platform, name the node by the same address:
 
 ```bash
-sudo ut-install --inference-from https://<node>:8444 \
-    --inference-key-file node.key --inference-ca-file node-root.crt
+sudo ut-install --inference-from <node>
 ```
+
+It takes the inference from the node instead of starting an engine. Then pair
+the two, within 15 minutes:
+
+```bash
+# on the compute node
+sudo ut-pair offer
+# on the platform, with the code the node shows
+sudo ut-pair join <node>
+```
+
+`ut-pair offer` shows a code of 24 letters and digits; `ut-pair join` asks for
+it, never on the command line. The two machines exchange the roots of their link
+authorities, sealed with that code. From then on the node serves the platform's
+certificate, and the platform trusts the node's root and no other. The pairing
+port, 8447, is open for those 15 minutes only.
+
+The platform's services call its own Caddy, at `http://caddy:8445/v1`, with
+`VLLM_API_KEY`, which never leaves the platform. Caddy carries each call to the
+node under the platform's certificate.
 
 Give the control plane a GPU if its users chat over their documents: `llm` runs
 there, and does not start without one.
 
-`llm` is switched off there too, and that is a limitation rather than a choice:
-it carries the embedding and reranking work, but it also reads the customer's
-documents and talks to MongoDB, so it cannot run on a machine that holds
-neither. A compute node therefore serves generation and vision, where the GPU
-time goes, while indexing stays on the machine with the data.
+`llm` is switched off on the compute node, and that is a limitation rather than
+a choice: it carries the embedding and reranking work, but it also reads the
+customer's documents and talks to MongoDB, so it cannot run on a machine that
+holds neither. A compute node therefore serves generation and vision, where the
+GPU time goes, while indexing stays on the machine with the data.
 
-### What does not work yet
+### Unpairing a platform
 
-**Mutual authentication.** A compute node answers only the bearer of its key,
-over TLS, with a certificate from its own authority, which the control plane is
-told to trust by hand. On a network you control, between two machines you own,
-that is a deliberate and bounded choice. Nothing changes a compute node's key:
-a control plane that received it keeps access.
+On the compute node:
+
+```bash
+sudo ut-pair list
+sudo ut-pair forget <the first characters of the platform's fingerprint>
+```
+
+The node refuses the platform as soon as Caddy has reloaded; a generation already
+under way finishes. If Caddy refuses the new list, `ut-pair forget` says so, and
+the platform stays served until Caddy restarts.
+
+A restored box has a new link authority: pair it again with each box it was
+paired with, and forget its old fingerprint there.
 
 ## Changing the address later
 

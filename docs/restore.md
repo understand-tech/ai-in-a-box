@@ -198,8 +198,8 @@ once at install time and stored nowhere else.
 Caddy keeps it in the `ut-caddy-data` volume, under
 `caddy/pki/authorities/local`; the file backup reads it from there. It signs
 the HTTPS certificate of every name the appliance serves, when it issues its
-own (`UT_INGRESS_MODE="internal"`), and a compute node's inference surface. It
-is the root your users' machines imported. With a certificate of your own, or
+own (`UT_INGRESS_MODE="internal"`). It is the root your users' machines
+imported. With a certificate of your own, or
 behind your load balancer, browsers trust your authority instead, and this one
 signs nothing they see.
 
@@ -211,8 +211,13 @@ docker exec ut-caddy cat /data/caddy/pki/authorities/local/root.crt | openssl x5
 
 If the fingerprint matches what the appliance used before, every certificate it
 ever issued is still valid. If it does not, the authority is a new one:
-browsers warn again until they import it, and a compute node's control plane
-has to be given the new root again, with `--inference-ca-file`.
+browsers warn again until they import it.
+
+The link authority, which a compute node and its platform know each other by,
+is not in the backup, on purpose: whoever held a backup could otherwise pass for
+the box. A restored box comes back with a new one, and is paired again with each
+box it was paired with — see
+[unpairing a platform](certificates-and-dns.md#unpairing-a-platform).
 
 ## 4 · Start again
 
@@ -302,8 +307,8 @@ docker compose up -d
 docker exec ut-caddy cat /data/caddy/pki/authorities/local/root.crt | openssl x509 -noout -fingerprint -sha256
 ```
 
-The fingerprint is the old machine's: the browsers that imported it, and a
-compute node's control plane that was told to trust it, see nothing change.
+The fingerprint is the old machine's: the browsers that imported it see nothing
+change. A compute node or the platform it serves is paired again, as above.
 Then open the platform and check one document you know the content of.
 
 **What you set again by hand.** `/etc/understandtech/local.env` is not in the
