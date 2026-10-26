@@ -1049,11 +1049,12 @@ set -u
 export OUT_DIR=/out
 # The package is under test here, not the compiler: stand-ins take the place of
 # the two ut-send builds, so this suite needs no Go.
-export UT_SEND_BUILDS=/ut-send-builds UT_SETUP_BUILDS=/ut-setup-builds
-mkdir -p "$UT_SEND_BUILDS" "$UT_SETUP_BUILDS"
+export UT_SEND_BUILDS=/ut-send-builds UT_SETUP_BUILDS=/ut-setup-builds UT_ARBITER_BUILDS=/ut-arbiter-builds
+mkdir -p "$UT_SEND_BUILDS" "$UT_SETUP_BUILDS" "$UT_ARBITER_BUILDS"
 for arch in arm64 amd64; do
     printf '#!/bin/sh\necho %s\n' "$arch" > "$UT_SEND_BUILDS/ut-send-linux-$arch"
     printf '#!/bin/sh\necho %s\n' "$arch" > "$UT_SETUP_BUILDS/ut-setup-linux-$arch"
+    printf '#!/bin/sh\necho %s\n' "$arch" > "$UT_ARBITER_BUILDS/ut-arbiter-linux-$arch"
 done
 /src/packaging/build-deb.sh 2026.09.1 >/dev/null
 /src/packaging/build-deb.sh 2026.09.2 >/dev/null
@@ -1096,6 +1097,8 @@ say UT_SEND           "$([ -x /usr/bin/ut-send ] && [ -x /usr/lib/understandtech
     && [ -x /usr/lib/understandtech/ut-send-linux-amd64 ] && echo both || echo missing)"
 say UT_SETUP          "$([ -x /usr/bin/ut-setup ] && [ -x /usr/lib/understandtech/ut-setup-linux-arm64 ] \
     && [ -x /usr/lib/understandtech/ut-setup-linux-amd64 ] && echo both || echo missing)"
+say UT_ARBITER        "$([ -x /usr/bin/ut-arbiter ] && [ -x /usr/lib/understandtech/ut-arbiter-linux-arm64 ] \
+    && [ -x /usr/lib/understandtech/ut-arbiter-linux-amd64 ] && echo both || echo missing)"
 say CONFIG_DIR_MODE   "$(stat -c '%a' /etc/understandtech 2>/dev/null)"
 say DATA_DIR          "$(present_dir /var/lib/understandtech)"
 say SETTINGS_SHIPPED  "$(dpkg -L understandtech | grep -c '^/etc/understandtech/.' || true)"
@@ -3225,6 +3228,8 @@ if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
         reports UT_SEND both
     capability "it carries ut-setup for both architectures it serves" \
         reports UT_SETUP both
+    capability "it carries ut-arbiter for both architectures it serves" \
+        reports UT_ARBITER both
     capability "the settings directory is prepared, and the package puts nothing in it" \
         the_settings_directory_is_prepared_but_never_filled
     capability "the settings are read from where the release lives" \
