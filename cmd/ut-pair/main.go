@@ -182,7 +182,9 @@ func (p Place) join(typed string, stdin io.Reader, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprint(stdout, "Code the node shows: ")
+	if fromATerminal(stdin) {
+		fmt.Fprint(stdout, "Code the node shows: ")
+	}
 	line, err := bufio.NewReader(stdin).ReadString('\n')
 	if err != nil && line == "" {
 		return errors.New("no code given")
@@ -209,6 +211,15 @@ func (p Place) join(typed string, stdin io.Reader, stdout io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "Linked to the node at %s, root %s\n", node, fingerprint(root.Raw))
 	return nil
+}
+
+func fromATerminal(stdin io.Reader) bool {
+	file, ok := stdin.(*os.File)
+	if !ok {
+		return false
+	}
+	info, err := file.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
 func (p Place) list(stdout io.Writer) error {

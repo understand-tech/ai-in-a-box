@@ -3,12 +3,14 @@
 const $ = (id) => document.getElementById(id);
 const show = (id, visible = true) => { $(id).hidden = !visible; };
 
-const screens = ["check", "update", "role", "domain", "compute", "tls", "license", "model", "reporting", "running", "done"];
-const askable = ["role", "domain", "compute", "tls", "license", "model", "reporting"];
+const screens = ["check", "update", "role", "domain", "node", "compute", "tls", "license", "model", "reporting", "running", "done"];
+const askable = ["role", "domain", "node", "compute", "tls", "license", "model", "reporting"];
+const skipped = { complete: ["node", "compute"], platform: ["compute"], compute: ["domain", "node", "tls"] };
 let questions = [...askable];
 let updating = false;
 let fromFolder = false;
 let licenseFromFolder = false;
+let installedRole = "";
 const roles = { appliance: "Complete box: the platform and its inference", compute: "Inference only, served to another box" };
 const marks = { ok: ["✓", ""], done: ["✓", ""], current: ["…", ""], warn: ["⚠", "Warning: "], fail: ["✕", "Problem: "] };
 const unmarked = ["", ""];
@@ -23,8 +25,7 @@ function refreshQuestions() {
     questions = [];
     return;
   }
-  const compute = chosen("role") === "compute";
-  questions = askable.filter((name) => !(compute ? ["domain", "tls"] : ["compute"]).includes(name)
+  questions = askable.filter((name) => !(skipped[chosen("role")] || skipped.complete).includes(name)
     && !(fromFolder && name === "reporting") && !(licenseFromFolder && name === "license"));
 }
 
@@ -100,6 +101,7 @@ async function readiness() {
 
 function showInstalled(installed) {
   updating = true;
+  installedRole = installed.role;
   refreshQuestions();
   document.querySelector('.dots li[data-for="running"]').textContent = "Update";
   $("installed-role").textContent = roles[installed.role] || `Platform; its inference comes from ${installed.node || "another box"}`;
@@ -181,9 +183,12 @@ function render(p) {
   $("done-title").textContent = p.update ? "Up to date" : "Installed";
   if (p.update) $("done-next").textContent = "Its accounts, documents and settings are as they were.";
   if (p.compute) {
-    $("done-where").textContent = "This box serves inference at";
-    $("done-next").textContent = "Link the box that runs the platform to it: “Adding a second machine” in docs/certificates-and-dns.md.";
+    $("done-where").textContent = "A platform takes its inference from it at";
+    $("done-next").textContent = "It serves the platforms paired with it, and no other.";
   }
+  if (p.platform) $("done-next").textContent = "It answers once paired with its compute node, below. The initial admin password then opens its first-run wizard.";
+  show("pair-offer", done && (p.compute || installedRole === "compute"));
+  show("pair-join", done && p.platform);
   show("passwords-warning", !p.update && !p.compute);
   show("reveal", !p.update && !p.compute && $("secrets").hidden);
   if (p.update) {
@@ -191,7 +196,7 @@ function render(p) {
     $("open").setAttribute("aria-disabled", "false");
     $("open").tabIndex = 0;
   }
-  $("address").textContent = p.compute ? `https://${p.domain}:8444/v1` : `https://${p.domain}`;
+  $("address").textContent = p.compute ? p.domain : `https://${p.domain}`;
   if (p.compute) $("address").removeAttribute("href");
   else $("address").href = `https://${p.domain}`;
   $("open").href = `https://${p.domain}`;
@@ -277,6 +282,50 @@ $("show-license").addEventListener("click", (event) => {
 });
 
 $("again").addEventListener("click", () => go(updating ? "update" : questions[questions.length - 1]));
+
+function said(id, text) {
+  $(id).textContent = text.charAt(0).toUpperCase() + text.slice(1);
+  show(id, text !== "");
+}
+
+async function followThePairing() {
+  const answer = await fetch("/pairing");
+  if (!answer.ok) return;
+  const pairing = await answer.json();
+  $("offer-code").textContent = pairing.code;
+  $("offer-until").textContent = pairing.until;
+  show("offer-shown", pairing.running && pairing.code !== "");
+  if (pairing.paired) said("offer-said", `Paired with the platform at ${pairing.paired}.`);
+  else if (pairing.problem) said("offer-said", pairing.problem);
+  else said("offer-said", "");
+  show("offer", !pairing.running);
+  if (pairing.running) setTimeout(followThePairing, 2000);
+}
+
+$("offer").addEventListener("click", async () => {
+  const answer = await fetch("/offer", { method: "POST" });
+  if (!answer.ok) {
+    said("offer-said", await answer.text());
+    return;
+  }
+  show("offer", false);
+  followThePairing();
+});
+
+$("pair-join").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  $("pair").disabled = true;
+  said("pair-said", "Pairing… this takes up to a minute.");
+  const answer = await fetch("/pair", { method: "POST", body: new URLSearchParams(new FormData($("pair-join"))) });
+  $("pair").disabled = false;
+  if (!answer.ok) {
+    said("pair-said", await answer.text());
+    return;
+  }
+  const pairing = await answer.json();
+  said("pair-said", `Paired with the compute node at ${pairing.paired}.`);
+  $("pair").disabled = true;
+});
 
 $("reveal").addEventListener("click", async () => {
   const answer = await fetch("/secrets", { method: "POST" });

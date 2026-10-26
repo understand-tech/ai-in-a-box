@@ -41,6 +41,10 @@ type Wizard struct {
 	listing sync.Mutex
 	listed  bool
 	models  []Model
+
+	pairer    Pairer
+	pairingMu sync.Mutex
+	pairing   Pairing
 }
 
 type Model struct {
@@ -101,6 +105,9 @@ func (w *Wizard) Handler() http.Handler {
 	mux.HandleFunc("GET /check", w.withSession(w.check))
 	mux.HandleFunc("GET /models", w.withSession(w.listModels))
 	mux.HandleFunc("POST /secrets", w.withSession(w.secrets))
+	mux.HandleFunc("POST /offer", w.withSession(w.offer))
+	mux.HandleFunc("GET /pairing", w.withSession(w.reportPairing))
+	mux.HandleFunc("POST /pair", w.withSession(w.pair))
 	return w.guarded(mux)
 }
 
@@ -256,8 +263,11 @@ func (w *Wizard) install(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.progress = Progress{Running: true, Domain: answers.Domain, started: time.Now()}
-	if answers.Role == "compute" {
+	switch answers.Role {
+	case "compute":
 		w.progress = Progress{Running: true, Compute: true, Domain: answers.ComputeAddress, started: time.Now()}
+	case "platform":
+		w.progress = Progress{Running: true, Platform: true, Node: answers.NodeAddress, Domain: answers.Domain, started: time.Now()}
 	}
 	w.mu.Unlock()
 

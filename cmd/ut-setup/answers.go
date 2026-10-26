@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -17,10 +18,13 @@ var ipv4 = regexp.MustCompile(`^([0-9]{1,3}\.){3}[0-9]{1,3}$`)
 
 var addressRanges = regexp.MustCompile(`^[0-9a-fA-F:./,]{1,256}$`)
 
+var hostAndPort = regexp.MustCompile(`^([a-z0-9.-]+)(:([0-9]{1,5}))?$`)
+
 type Answers struct {
 	Role           string
 	Domain         string
 	ComputeAddress string
+	NodeAddress    string
 	TLS            string
 	CertificateDir string
 	ProxyRanges    string
@@ -36,6 +40,7 @@ func parseAnswers(form url.Values, folder Folder) (Answers, error) {
 		Role:           form.Get("role"),
 		Domain:         strings.ToLower(strings.TrimSpace(form.Get("domain"))),
 		ComputeAddress: strings.ToLower(strings.TrimSpace(form.Get("compute_address"))),
+		NodeAddress:    strings.ToLower(strings.TrimSpace(form.Get("node_address"))),
 		TLS:            form.Get("tls"),
 		CertificateDir: strings.TrimSpace(form.Get("certificate_dir")),
 		ProxyRanges:    strings.ReplaceAll(form.Get("proxy_ranges"), " ", ""),
@@ -49,12 +54,21 @@ func parseAnswers(form url.Values, folder Folder) (Answers, error) {
 	if folder.Images != "" {
 		answers.Reporting = "no"
 	}
-	if answers.Role == "compute" {
-		if err := computeProblem(answers); err != nil {
-			return Answers{}, err
+	var problem error
+	switch answers.Role {
+	case "compute":
+		problem = computeProblem(answers)
+	case "platform":
+		problem = platformProblem(answers)
+		if problem == nil {
+			problem = nodeProblem(answers.NodeAddress)
 		}
-	} else if err := platformProblem(&answers); err != nil {
-		return Answers{}, err
+	default:
+		answers.Role = "complete"
+		problem = platformProblem(answers)
+	}
+	if problem != nil {
+		return Answers{}, problem
 	}
 	switch {
 	case answers.License == "" && folder.License == "":
@@ -79,8 +93,27 @@ func computeProblem(answers Answers) error {
 	return nil
 }
 
-func platformProblem(answers *Answers) error {
-	answers.Role = "complete"
+// The compute node's address goes on to ut-pair, which dials it and writes it
+// into Caddy's settings: a name or an IP, with a port when it is not 8444.
+func nodeProblem(address string) error {
+	parts := hostAndPort.FindStringSubmatch(address)
+	if parts == nil {
+		return errors.New("the compute node's address is its IP address or host name, with :port when it is not 8444")
+	}
+	host, port := parts[1], parts[3]
+	number, _ := strconv.Atoi(port)
+	switch {
+	case strings.HasSuffix(host, ".local"):
+		return errors.New("this box's containers cannot resolve a .local name: give the compute node's IP address or a DNS name")
+	case !ipv4.MatchString(host) && (!hostname.MatchString(host) || len(host) > 253):
+		return errors.New("the compute node's address is not an IP address or a host name, such as 10.0.0.12 or gpu-1.example.com")
+	case port != "" && (number < 1 || number > 65535):
+		return errors.New("the compute node's port is a number between 1 and 65535")
+	}
+	return nil
+}
+
+func platformProblem(answers Answers) error {
 	switch {
 	case !hostname.MatchString(answers.Domain) || len(answers.Domain) > 253:
 		return errors.New("the address is not a host name, such as box.example.com")
@@ -96,8 +129,11 @@ func platformProblem(answers *Answers) error {
 
 func installArguments(answers Answers, licenseFile string) []string {
 	arguments := []string{"--domain", answers.Domain}
-	if answers.Role == "compute" {
+	switch answers.Role {
+	case "compute":
 		arguments = []string{"--compute", answers.ComputeAddress}
+	case "platform":
+		arguments = append(arguments, "--inference-from", answers.NodeAddress)
 	}
 	switch answers.TLS {
 	case "certificate":
