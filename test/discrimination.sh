@@ -1631,7 +1631,7 @@ if [[ -x "$REPO_ROOT/test/ingress.sh" ]]; then
         "sed -i.bak '/header_up -Authorization/d' caddy/link-relay.caddy"
 
     ingress_discriminates "a link identity from the authority the backup carries" \
-        "the platform and the node each create their link authority" \
+        "the platform reaches the engine through its relay" \
         "sed -i.bak 's/^            ca link\$/            ca local/' Caddyfile"
 
     ingress_discriminates "a recorder that filters out the handler Caddy counts under" \
