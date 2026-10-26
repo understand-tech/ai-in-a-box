@@ -53,6 +53,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	code, session := randomCode(20), randomHex(32)
 	wizard := newWizard(runInstaller(installer), folder, code, session,
 		fmt.Sprintf("127.0.0.1:%d", port), fmt.Sprintf("localhost:%d", port))
+	wizard.pairer = runPair("ut-pair")
 
 	server := &http.Server{Handler: wizard.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go server.Serve(listener)
@@ -116,6 +117,30 @@ func runInstaller(path string) Installer {
 			return fmt.Errorf("ut-install exited with %d", exit.ExitCode())
 		}
 		return err
+	}
+}
+
+func runPair(path string) Pairer {
+	return func(ctx context.Context, args []string, stdin string, said func(string)) error {
+		command := exec.CommandContext(ctx, path, args...)
+		command.Stdin = strings.NewReader(stdin)
+		reader, writer := io.Pipe()
+		command.Stdout, command.Stderr = writer, writer
+		if err := command.Start(); err != nil {
+			return fmt.Errorf("cannot start %s: %w", path, err)
+		}
+		done := make(chan error, 1)
+		go func() {
+			err := command.Wait()
+			writer.Close()
+			done <- err
+		}()
+		scanner := bufio.NewScanner(reader)
+		for scanner.Scan() {
+			said(scanner.Text())
+		}
+		io.Copy(io.Discard, reader)
+		return <-done
 	}
 }
 

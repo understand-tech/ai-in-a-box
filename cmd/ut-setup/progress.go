@@ -13,6 +13,8 @@ type Progress struct {
 	Succeeded bool      `json:"succeeded"`
 	Update    bool      `json:"update"`
 	Compute   bool      `json:"compute"`
+	Platform  bool      `json:"platform"`
+	Node      string    `json:"node"`
 	Domain    string    `json:"domain"`
 	Step      string    `json:"step"`
 	Steps     []string  `json:"steps"`
