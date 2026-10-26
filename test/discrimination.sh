@@ -1314,19 +1314,19 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
 
     install_walk_discriminates "a platform whose link file Docker would make a directory of" \
         "it calls its own relay" \
-        "sed -i.bak '/install -m 644 \\/dev\\/null \"\$dir\\/linked-node.caddy\"/d' bin/ut-install"
+        "sed -i.bak '/install -m 644 \\/dev\\/null \"\$dir\\/linked-node.caddy\"/d' bin/ut-install.d/remote-inference.sh"
 
     install_walk_discriminates "a platform linked by key left with the bundle it no longer reads" \
         "a platform linked by key before moves to its relay" \
-        "sed -i.bak '/env_drop \"\$local_file\" UT_INFERENCE_CA_BUNDLE/d' bin/ut-install"
+        "sed -i.bak '/env_drop \"\$local_file\" UT_INFERENCE_CA_BUNDLE/d' bin/ut-install.d/remote-inference.sh"
 
     install_walk_discriminates "a node given as a URL taken as given" \
         "a node given as a URL is refused before anything is written" \
-        "sed -i.bak 's|^    if \\[\\[ ! \"\$INFERENCE_FROM\" =~ .*|    if false; then|' bin/ut-install"
+        "sed -i.bak 's|^    if \\[\\[ ! \"\$INFERENCE_FROM\" =~ .*|    if false; then|' bin/ut-install.d/remote-inference.sh"
 
     install_walk_discriminates "a compute node that never says where its list is" \
         "a compute node keeps the list of the platforms it admits" \
-        "sed -i.bak '/env_set \"\$local_file\" UT_ADMITTED_BOXES_FILE/d' bin/ut-install"
+        "sed -i.bak '/env_set \"\$local_file\" UT_ADMITTED_BOXES_FILE/d' bin/ut-install.d/compute-role.sh"
 
     install_walk_discriminates "a compute node's summary that leaves pairing out" \
         "a compute node's summary hands the control plane what it needs" \
@@ -1370,7 +1370,7 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
 
     install_walk_discriminates "a control plane pointed at a node only mDNS can name" \
         "a node named by mDNS is refused before anything is written" \
-        "sed -i.bak '/^    elif names_an_mdns_host \"\\\$(host_of_url/d' bin/ut-install"
+        "sed -i.bak '/^    elif names_an_mdns_host \"\\\${INFERENCE_FROM/d' bin/ut-install.d/remote-inference.sh"
 
     install_walk_discriminates "--compute that leaves the compute overlay out" \
         "a compute node is installed with one flag, and asked for no domain" \
