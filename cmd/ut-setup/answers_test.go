@@ -134,3 +134,30 @@ func TestHowTLSEndsReachesTheInstaller(t *testing.T) {
 		}
 	}
 }
+
+func TestAPlatformTakesItsInferenceFromTheNodeItNames(t *testing.T) {
+	answers, err := parseAnswers(url.Values{"role": {"platform"}, "domain": {"box.example.com"}, "node_address": {" 10.0.0.12 "}, "license": {"k"}, "reporting": {"no"}}, Folder{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(installArguments(answers, "/tmp/key"), " "); got != "--domain box.example.com --inference-from 10.0.0.12 --license-file /tmp/key --reporting no" {
+		t.Fatalf("ut-install given %q", got)
+	}
+	for _, address := range []string{"gpu-1.example.com:9444", "10.0.0.12:8444"} {
+		if _, err := parseAnswers(url.Values{"role": {"platform"}, "domain": {"box.example.com"}, "node_address": {address}, "license": {"k"}, "reporting": {"no"}}, Folder{}); err != nil {
+			t.Fatalf("the node address %q was refused: %v", address, err)
+		}
+	}
+	for _, address := range []string{"", "https://10.0.0.12:8444", "node.local", "10.0.0.12:0", "10.0.0.12:99999", "gpu}\nimport x", "a b"} {
+		if _, err := parseAnswers(url.Values{"role": {"platform"}, "domain": {"box.example.com"}, "node_address": {address}, "license": {"k"}, "reporting": {"no"}}, Folder{}); err == nil {
+			t.Fatalf("the node address %q was taken", address)
+		}
+	}
+}
+
+func TestARoleNobodyOffersInstallsTheWholePlatform(t *testing.T) {
+	answers, err := parseAnswers(url.Values{"role": {"anything"}, "domain": {"box.example.com"}, "node_address": {"10.0.0.12"}, "license": {"k"}, "reporting": {"no"}}, Folder{})
+	if err != nil || answers.Role != "complete" || strings.Contains(strings.Join(installArguments(answers, ""), " "), "inference-from") {
+		t.Fatalf("read as %+v, %v", answers, err)
+	}
+}
