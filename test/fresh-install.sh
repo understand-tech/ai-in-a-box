@@ -173,7 +173,7 @@ state_setup() {
         # A checkout of the repository, the way an operator who cloned it has one.
         # The package is installed too, which is what makes the choice interesting.
         launched_from_a_checkout|checkout_but_no_key)
-            echo 'install -d /srv/clone && cp -a /usr/share/understandtech/. /srv/clone/ && install -d /srv/clone/.git /srv/clone/bin && cp /usr/bin/ut-install /srv/clone/bin/ut-install' ;;
+            echo 'install -d /srv/clone && cp -a /usr/share/understandtech/. /srv/clone/ && install -d /srv/clone/.git /srv/clone/bin && cp /usr/bin/ut-install /srv/clone/bin/ut-install && cp -a /usr/bin/ut-install.d /srv/clone/bin/' ;;
         empty_settings) echo 'install -m 600 /dev/null /etc/understandtech/.env' ;;
         # The packaged ut-license trusts Keygen's key and asks Keygen; these states
         # swap in one that trusts the suite's key and asks the fake Keygen, which
