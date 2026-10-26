@@ -6,11 +6,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUT_DIR="${OUT_DIR:-$REPO_ROOT/dist}"
 ARCHITECTURES="arm64 amd64"
-TOOLS="ut-send ut-setup"
+TOOLS="ut-send ut-setup ut-pair"
 
 usage() {
     cat <<EOF
-build-ut-send.sh — compiles the Go tools, ut-send and ut-setup, for every
+build-ut-send.sh — compiles the Go tools, ut-send, ut-setup and ut-pair, for every
 architecture the package serves.
 
   ./packaging/build-ut-send.sh

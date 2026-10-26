@@ -48,14 +48,14 @@ property() {
 # install that never ran.
 build_the_package() {
     local arch tool
-    for tool in ut-send ut-setup; do
+    for tool in ut-send ut-setup ut-pair; do
         install -d "$WORK_DIR/$tool-builds"
         for arch in arm64 amd64; do
             printf '#!/bin/sh\necho stand-in\n' > "$WORK_DIR/$tool-builds/$tool-linux-$arch"
         done
     done
     docker run --rm -v "$REPO_ROOT":/src:ro -v "$WORK_DIR":/out -w /src "$DEBIAN_IMAGE" \
-        sh -c "OUT_DIR=/out UT_SEND_BUILDS=/out/ut-send-builds UT_SETUP_BUILDS=/out/ut-setup-builds ./packaging/build-deb.sh '$VERSION'" >/dev/null
+        sh -c "OUT_DIR=/out UT_SEND_BUILDS=/out/ut-send-builds UT_SETUP_BUILDS=/out/ut-setup-builds UT_PAIR_BUILDS=/out/ut-pair-builds ./packaging/build-deb.sh '$VERSION'" >/dev/null
     [[ -f "$WORK_DIR/understandtech_${VERSION}_all.deb" ]] || {
         echo "The package did not build — nothing below would mean anything." >&2
         exit 1

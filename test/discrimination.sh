@@ -791,6 +791,9 @@ if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
     capability_discriminates "a package that leaves ut-setup's builds behind" \
         "it carries ut-setup for both architectures" \
         "sed -i.bak '/stage_builds_of \"\$root\" ut-setup/d' packaging/build-deb.sh"
+    capability_discriminates "a package that leaves ut-pair's builds behind" \
+        "it carries ut-pair for both architectures" \
+        "sed -i.bak '/stage_builds_of \"\$root\" ut-pair/d' packaging/build-deb.sh"
 
     capability_discriminates "a package that leaves ut-send's builds behind" \
         "it carries ut-send for both architectures" \
