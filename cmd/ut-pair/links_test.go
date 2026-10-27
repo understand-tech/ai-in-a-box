@@ -165,7 +165,7 @@ func TestTheCodeIsReadFromStandardInputNeverFromTheCommandLine(t *testing.T) {
 	if status := place.command([]string{"join", "10.0.0.9", code(t).String()}, strings.NewReader(""), &out, &errs); status != 2 {
 		t.Fatalf("a code on the command line was taken (%d)", status)
 	}
-	if err := place.join("10.0.0.9", strings.NewReader("\n"), &out); err == nil || !strings.Contains(err.Error(), "pairing code") {
+	if err := place.join("10.0.0.9", toTheNode, strings.NewReader("\n"), &out); err == nil || !strings.Contains(err.Error(), "pairing code") {
 		t.Fatalf("an empty code: %v", err)
 	}
 }
@@ -183,5 +183,50 @@ func TestTheLinkFilesGoWhereTheInstallsSettingsAre(t *testing.T) {
 	os.WriteFile(filepath.Join(checkout, ".env"), nil, 0o600)
 	if got := settingsOf(checkout); got != checkout {
 		t.Fatalf("a checkout's settings read as %s, want %s", got, checkout)
+	}
+}
+
+func TestTheArbiterIsReachedAtItsAddressThroughItsOwnRelay(t *testing.T) {
+	arbiter := root(t, "arbiter")
+	file := linkedArbiterCaddyfile(&Node{Address: "10.0.0.20:8446", Root: arbiter.Raw})
+	if !strings.HasPrefix(file, "(linked_arbiter_root) {\n\ttls_trust_pool inline {\n\t\ttrust_der "+base64.StdEncoding.EncodeToString(arbiter.Raw)+"\n") ||
+		!strings.HasSuffix(file, "import /etc/caddy/arbiter-relay.caddy https://10.0.0.20:8446\n") {
+		t.Fatalf("written as\n%s", file)
+	}
+	if linkedArbiterCaddyfile(nil) != "" {
+		t.Fatal("a box with no arbiter relays to one")
+	}
+}
+
+func TestAnArbiterIsListedAndForgottenLikeANode(t *testing.T) {
+	caddy := &fakeCaddy{}
+	place := caddy.place(t)
+	arbiter, node := root(t, "arbiter"), root(t, "node")
+	links := Links{Arbiter: &Node{Address: "10.0.0.20:8446", Root: arbiter.Raw, Paired: now}, Node: &Node{Address: "10.0.0.9:8444", Root: node.Raw, Paired: now}}
+	if err := links.save(place.Settings); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	place.list(&out)
+	if !strings.Contains(out.String(), "arbiter   "+fingerprint(arbiter.Raw)) || !strings.Contains(out.String(), "node      "+fingerprint(node.Raw)) {
+		t.Fatalf("listed as\n%s", out.String())
+	}
+	if err := place.forget(fingerprint(arbiter.Raw)[:12], &out); err != nil {
+		t.Fatal(err)
+	}
+	if read(t, place, linkedArbiterFile) != "" || read(t, place, linkedNodeFile) == "" {
+		t.Fatal("forgetting the arbiter did not leave the node alone")
+	}
+}
+
+func TestJoiningAnArbiterTakesItsPortByDefault(t *testing.T) {
+	if got, err := peerAddress("10.0.0.20", arbiterPort); err != nil || got != "10.0.0.20:8446" {
+		t.Fatalf("read as %q, %v", got, err)
+	}
+	caddy := &fakeCaddy{root: root(t, "box").Raw}
+	place := caddy.place(t)
+	var out, errs bytes.Buffer
+	if status := place.command([]string{"join", "--arbiter", "10.0.0.20"}, strings.NewReader("\n"), &out, &errs); status != 1 || !strings.Contains(errs.String(), "pairing code") {
+		t.Fatalf("join --arbiter with no code: %d, %q", status, errs.String())
 	}
 }

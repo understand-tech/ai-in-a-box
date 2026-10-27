@@ -44,6 +44,7 @@ services:
       - ${UT_ADMITTED_BOXES_FILE:-./caddy/no-inference-surface.caddy}:/etc/caddy/inference.caddy:ro
       - ./caddy/inference-surface.caddy:/etc/caddy/link-surface.caddy:ro
       - ./caddy/no-link.caddy:/etc/caddy/link.caddy:ro
+      - ./caddy/no-link.caddy:/etc/caddy/arbiter-link.caddy:ro
       - caddy-data:/data
       - caddy-config:/config
 

@@ -434,6 +434,19 @@ check_the_relay_trusts_its_node_alone() {
     done
 }
 
+# ut-arbiter hold runs on the host: the socket is the only door to the relay,
+# and its mode is who may borrow this box's identity on the arbiter.
+check_the_arbiter_relay_opens_to_root_alone() {
+    local relay="$REPO_ROOT/caddy/arbiter-relay.caddy" what
+    for what in 'tls_client_auth link.internal' 'tls_server_name link.internal' 'import linked_arbiter_root'; do
+        grep -qF "$what" "$relay" \
+            || report "arbiter-relay-without:${what// /-}" "caddy/arbiter-relay.caddy no longer carries '${what}'"
+    done
+    [[ "$(grep -E '^[[:space:]]*bind' "$relay")" =~ ^[[:space:]]*bind[[:space:]]+unix//run/understandtech/arbiter\.sock\|0[0-7][0-7]0$ ]] \
+        || report "arbiter-relay-open-beyond-its-group" \
+            "caddy/arbiter-relay.caddy listens elsewhere than a Unix socket closed to other accounts: any process of the box could pass for it on the arbiter"
+}
+
 # The backup takes Caddy's "local" authority so that browsers keep trusting a
 # restored box. The link authority stays out: a restore would clone the box.
 check_the_backup_leaves_the_link_authority_out() {
@@ -448,8 +461,9 @@ check_the_backup_leaves_the_link_authority_out() {
 # side leaves the other importing something that is not there.
 check_ut_pair_writes_what_caddy_imports() {
     local writer="$REPO_ROOT/cmd/ut-pair/links.go" name
-    for name in '(admitted_boxes)' 'import /etc/caddy/link-surface.caddy' '(linked_node_root)' 'import /etc/caddy/link-relay.caddy'; do
-        grep -qF "$name" "$writer" || report "ut-pair-writes-no:${name//[ ()\/]/-}" "cmd/ut-pair/links.go no longer writes '${name}'"
+    for name in '(admitted_boxes)' 'import /etc/caddy/link-surface.caddy' '"linked_node_root"' '"/etc/caddy/link-relay.caddy"' \
+        '"linked_arbiter_root"' '"/etc/caddy/arbiter-relay.caddy"'; do
+        grep -qF "$name" "$writer" || report "ut-pair-writes-no:${name//[ ()\/\"]/-}" "cmd/ut-pair/links.go no longer writes '${name}'"
     done
     grep -qF 'import admitted_boxes' "$REPO_ROOT/caddy/inference-surface.caddy" \
         || report "surface-imports-no-admitted-list" "caddy/inference-surface.caddy does not import the list ut-pair writes"
@@ -457,6 +471,10 @@ check_ut_pair_writes_what_caddy_imports() {
         || report "surface-mounted-nowhere" "compose.compute.yaml mounts no /etc/caddy/link-surface.caddy for the list to import"
     grep -q 'link-relay.caddy' "$REPO_ROOT/compose.remote-inference.yaml" \
         || report "relay-mounted-nowhere" "compose.remote-inference.yaml mounts no /etc/caddy/link-relay.caddy for the link to import"
+    grep -q 'arbiter-surface.caddy:/etc/caddy/link-surface.caddy' "$REPO_ROOT/compose.arbiter.yaml" \
+        || report "arbiter-surface-mounted-nowhere" "compose.arbiter.yaml mounts no surface for the list ut-pair writes to import"
+    grep -q 'arbiter-relay.caddy:/etc/caddy/arbiter-relay.caddy' "$REPO_ROOT/compose.arbiter-link.yaml" \
+        || report "arbiter-relay-mounted-nowhere" "compose.arbiter-link.yaml mounts no relay for the link to the arbiter to import"
 }
 
 check_every_volume_is_mounted() {
@@ -920,6 +938,7 @@ main() {
     check_no_client_auth_without_the_admitted_list
     check_the_relay_checks_its_token_inside_its_route
     check_the_relay_trusts_its_node_alone
+    check_the_arbiter_relay_opens_to_root_alone
     check_the_backup_leaves_the_link_authority_out
     check_ut_pair_writes_what_caddy_imports
     check_the_gateway_trusts_the_app_builder_key

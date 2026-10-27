@@ -15,7 +15,8 @@ PROBE_IMAGE=$ALPINE_IMAGE
 # them: caddy:2-alpine is public, and stubs answer for the eight upstreams. So
 # the one surface a browser actually meets is the one that can be checked here.
 cleanup() {
-    docker rm -f ut-ingress-caddy ut-ingress-platform ut-ingress-stub ut-ingress-probe ut-ingress-recorder >/dev/null 2>&1
+    docker rm -f ut-ingress-caddy ut-ingress-platform ut-ingress-pairbox ut-ingress-hold ut-ingress-stub ut-ingress-probe ut-ingress-recorder >/dev/null 2>&1
+    docker volume rm ut-ingress-run >/dev/null 2>&1
     docker network rm "$NETWORK" >/dev/null 2>&1
     rm -rf "$WORK_DIR"
 }
@@ -46,7 +47,7 @@ surface() {
     fi
 }
 
-UPSTREAMS="frontend api api-customer app-llms admin-portal app-assistants app-builder app-builder-traefik nim-llm"
+UPSTREAMS="frontend api api-customer app-llms admin-portal app-assistants app-builder app-builder-traefik nim-llm arbiter"
 SURFACES="${DOMAIN} llms.${DOMAIN} admin.${DOMAIN} assistants.${DOMAIN} builder.${DOMAIN} demo.apps.${DOMAIN}"
 
 aliases_for() {
@@ -79,6 +80,9 @@ start_the_upstreams() {
 }
 :8000 {
 	respond "stub 8000 authorization=[{http.request.header.Authorization}]" 200
+}
+:8446 {
+	respond "stub 8446" 200
 }
 STUB
     local args=()
@@ -144,6 +148,11 @@ start_the_front_door() {
             : > "$inference"
             extra=(-e UT_INFERENCE_ADDRESS="$ENGINE_ADDRESS"
                 -v "$REPO_ROOT/caddy/inference-surface.caddy":/etc/caddy/link-surface.caddy:ro) ;;
+        arbiter)
+            ingress=internal
+            inference="$WORK_DIR/admitted-boxes.caddy"
+            : > "$inference"
+            extra=(-v "$REPO_ROOT/caddy/arbiter-surface.caddy":/etc/caddy/link-surface.caddy:ro) ;;
     esac
 
     docker run -d --name ut-ingress-caddy --network "$NETWORK" "${args[@]}" \
@@ -152,7 +161,30 @@ start_the_front_door() {
         -v "$REPO_ROOT/caddy/ingress-${ingress}.caddy":/etc/caddy/ingress.caddy:ro \
         -v "$inference":/etc/caddy/inference.caddy:ro \
         -v "$REPO_ROOT/caddy/no-link.caddy":/etc/caddy/link.caddy:ro \
+        -v "$REPO_ROOT/caddy/no-link.caddy":/etc/caddy/arbiter-link.caddy:ro \
         "$CADDY_IMAGE" >/dev/null
+}
+
+# A box of a high-availability pair: the relay to its arbiter listens on a
+# socket in a volume, which ut-ingress-hold reads the way ut-arbiter hold would.
+start_the_pair_box() {
+    local attempt
+    : > "$WORK_DIR/linked-arbiter.caddy"
+    docker run -d --name ut-ingress-pairbox --network "$NETWORK" \
+        -e UT_DOMAIN="pairbox.example.test" \
+        -v "$REPO_ROOT/Caddyfile":/etc/caddy/Caddyfile:ro \
+        -v "$REPO_ROOT/caddy/ingress-internal.caddy":/etc/caddy/ingress.caddy:ro \
+        -v "$REPO_ROOT/caddy/no-inference-surface.caddy":/etc/caddy/inference.caddy:ro \
+        -v "$REPO_ROOT/caddy/no-link.caddy":/etc/caddy/link.caddy:ro \
+        -v "$WORK_DIR/linked-arbiter.caddy":/etc/caddy/arbiter-link.caddy:ro \
+        -v "$REPO_ROOT/caddy/arbiter-relay.caddy":/etc/caddy/arbiter-relay.caddy:ro \
+        -v ut-ingress-run:/run/understandtech \
+        "$CADDY_IMAGE" >/dev/null
+    docker run -d --name ut-ingress-hold -v ut-ingress-run:/run/understandtech "$PROBE_IMAGE" sleep 600 >/dev/null
+    for attempt in 1 2 3; do
+        docker exec ut-ingress-hold apk add --no-cache curl >/dev/null 2>&1 && break
+        sleep 5
+    done
 }
 
 # A platform that takes its inference from the compute node: the same Caddyfile,
@@ -166,6 +198,7 @@ start_the_platform() {
         -v "$REPO_ROOT/caddy/no-inference-surface.caddy":/etc/caddy/inference.caddy:ro \
         -v "$WORK_DIR/linked-node.caddy":/etc/caddy/link.caddy:ro \
         -v "$REPO_ROOT/caddy/link-relay.caddy":/etc/caddy/link-relay.caddy:ro \
+        -v "$REPO_ROOT/caddy/no-link.caddy":/etc/caddy/arbiter-link.caddy:ro \
         "$CADDY_IMAGE" >/dev/null
 }
 
@@ -643,6 +676,75 @@ surface "the relay refuses a node whose root the platform was not given" \
     the_relay_answers 502 /v1/models -H "Authorization: Bearer ${RELAY_TOKEN}"
 admit
 surface "with the last platform taken off, the engine surface is off again" the_engine_surface_is_off
+
+arbiter_curl() {
+    docker exec ut-ingress-probe curl -sk --max-time 10 \
+        --connect-to "link.internal:8446:ut-ingress-caddy:8446" "$@" \
+        "https://link.internal:8446/lease" 2>/dev/null
+}
+
+hold_curl() {
+    docker exec "$@" curl -s --max-time 10 --unix-socket /run/understandtech/arbiter.sock http://localhost/lease 2>/dev/null
+}
+
+link_the_pair_box_to_the_arbiter() {
+    printf '(linked_arbiter_root) {\n\ttls_trust_pool inline {\n\t\ttrust_der %s\n\t}\n}\nimport /etc/caddy/arbiter-relay.caddy https://%s:8446\n' \
+        "$(link_root_of ut-ingress-caddy | der_of)" "$1" > "$WORK_DIR/linked-arbiter.caddy"
+    reload_once_it_reads ut-ingress-pairbox "$WORK_DIR/linked-arbiter.caddy" /etc/caddy/arbiter-link.caddy
+}
+
+the_arbiter_surface_is_off() {
+    local code
+    code=$(arbiter_curl -o /dev/null -w '%{http_code}')
+    [[ "$code" == 000 ]] && return 0
+    echo "with no box admitted, the arbiter's surface answered ${code}"
+    return 1
+}
+
+the_pair_box_reaches_the_arbiter_through_its_socket() {
+    local body waited=0
+    while (( waited < 60 )); do
+        body=$(hold_curl ut-ingress-hold)
+        [[ "$body" == "stub 8446" ]] && return 0
+        sleep 2; waited=$((waited + 2))
+    done
+    echo "through the socket, the arbiter returned '${body:-nothing}'"
+    docker exec ut-ingress-hold ls -l /run/understandtech 2>&1
+    return 1
+}
+
+the_socket_refuses_an_account_other_than_root() {
+    local body
+    body=$(hold_curl --user nobody ut-ingress-hold)
+    [[ -z "$body" ]] && return 0
+    echo "an account other than root got '${body}' through the socket"
+    return 1
+}
+
+the_arbiter_refuses_a_client_without_a_certificate() {
+    local body
+    body=$(arbiter_curl)
+    [[ -z "$body" ]] && return 0
+    echo "without a certificate, the arbiter's surface answered '${body}'"
+    return 1
+}
+
+both_pair_parties_create_their_link_authority() {
+    wait_for_the_link_authority_of ut-ingress-caddy && wait_for_the_link_authority_of ut-ingress-pairbox
+}
+
+printf '\n%sMode arbiter — the lease server, for the boxes paired with it%s\n' "$BOLD" "$NC"
+restart_the_front_door_in arbiter
+start_the_pair_box
+surface "the arbiter and a box of the pair each create their link authority" both_pair_parties_create_their_link_authority
+link_root_of ut-ingress-pairbox > "$WORK_DIR/pairbox-link-root.crt"
+surface "with no box admitted, the arbiter's surface is off" the_arbiter_surface_is_off
+admit "$WORK_DIR/pairbox-link-root.crt"
+link_the_pair_box_to_the_arbiter "$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ut-ingress-caddy)"
+surface "a box of the pair reaches the arbiter through its socket, by IP" \
+    the_pair_box_reaches_the_arbiter_through_its_socket
+surface "the socket refuses an account other than root" the_socket_refuses_an_account_other_than_root
+surface "the arbiter refuses a client without a certificate" the_arbiter_refuses_a_client_without_a_certificate
 
 printf '\n%sMode edge — TLS is terminated upstream%s\n' "$BOLD" "$NC"
 restart_the_front_door_in edge

@@ -65,7 +65,7 @@ SHIPPED_PLACEHOLDERS=(
     "" "12345678" "password" "SECRET" "SJKFVK" "FVVE" "SJBVSJB" "ut"
     "czIzgahTJGzdG3b1XtEgGIWPvwhdfBvhVd1JjzetjWQ" "EMPTY"
 )
-GENERATED_SECRET_KEYS=(JWT_SECRET STATE_SECRET OPENID_SECRET_KEY ADMIN_SETUP_PASSWORD BACKUP_FILES_PASSWORD GPU_VM_API_TOKEN GATEWAY_METRICS_TOKEN APP_BUILDER_TOKEN_ENCRYPTION_KEY VLLM_API_KEY UT_ARBITER_API_KEY)
+GENERATED_SECRET_KEYS=(JWT_SECRET STATE_SECRET OPENID_SECRET_KEY ADMIN_SETUP_PASSWORD BACKUP_FILES_PASSWORD GPU_VM_API_TOKEN GATEWAY_METRICS_TOKEN APP_BUILDER_TOKEN_ENCRYPTION_KEY VLLM_API_KEY)
 
 # One file per role a machine can be given at install, sibling of this script
 # so it is found the same way whether run from a checkout or from the package
@@ -297,6 +297,20 @@ env_drop() {
     grep -vE "^[[:space:]]*${key}=" "$file" > "$tmp" || true
     cat "$tmp" > "$file"
     rm -f "$tmp"
+}
+
+# Every run, not only the one given a role flag: a compute node or an arbiter
+# gets the list ut-pair keeps of the boxes it serves, created empty so that
+# Docker never mounts a directory in its place.
+write_the_list_a_server_keeps() {
+    local local_file=$1 dir
+    case "$(env_get "$local_file" COMPOSE_FILE 2>/dev/null || true)" in
+        *compose.compute.yaml*|*compose.arbiter.yaml*) ;;
+        *) return 0 ;;
+    esac
+    dir=$(dirname "$local_file")
+    [[ -e "$dir/admitted-boxes.caddy" ]] || install -m 644 /dev/null "$dir/admitted-boxes.caddy"
+    env_set "$local_file" UT_ADMITTED_BOXES_FILE "$dir/admitted-boxes.caddy"
 }
 
 env_set() {
@@ -1681,8 +1695,9 @@ step_configure() {
     write_the_settings_an_arbiter_role_needs "$local_file"
     write_the_settings_the_model_needs "$local_file"
     write_the_settings_a_compute_node_needs "$local_file"
-    write_the_list_a_compute_node_keeps "$local_file"
+    write_the_list_a_server_keeps "$local_file"
     write_the_link_a_platform_keeps "$local_file"
+    write_the_link_a_pair_box_keeps "$local_file"
     write_how_tls_ends "$local_file"
     if this_machine_goes_without_its_accelerator; then
         write_the_settings_a_machine_without_an_accelerator_needs "$local_file"

@@ -53,6 +53,9 @@ https://link.internal:8443 {
 # The relay to that box; empty on every other role, and until ut-pair has linked one.
 import /etc/caddy/link.caddy
 
+# The relay to the arbiter of a high-availability pair; empty unless this box is in one.
+import /etc/caddy/arbiter-link.caddy
+
 {$UT_CADDY_SCHEME:https}://llms.{$UT_DOMAIN:understand.local} {
     reverse_proxy app-llms:80
 

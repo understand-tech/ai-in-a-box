@@ -124,6 +124,31 @@ arbiter_role_publishes_only_its_own_port() {
     [[ "$published" == "8446" ]]
 }
 
+# The arbiter serves the two boxes ut-pair admitted, by their certificate: its
+# Caddy imports the list ut-pair keeps, and no key is asked of anyone.
+the_arbiter_serves_the_boxes_on_its_list() {
+    local config
+    config=$( cd "$WORK_DIR" && UT_ADMITTED_BOXES_FILE=/etc/understandtech/admitted-boxes.caddy \
+        docker compose -f compose.yaml -f compose.arbiter.yaml config 2>/dev/null )
+    grep -A1 'source: /etc/understandtech/admitted-boxes.caddy' <<< "$config" | grep -q 'target: /etc/caddy/inference.caddy' \
+        && grep -A1 -E 'source: .*/caddy/arbiter-surface.caddy' <<< "$config" | grep -q 'target: /etc/caddy/link-surface.caddy' \
+        || { echo "the arbiter's Caddy does not import the list of the boxes it admits"; return 1; }
+    ! grep -q 'UT_ARBITER_API_KEY' <<< "$config" || { echo "the arbiter still asks for a key"; return 1; }
+}
+
+# ut-arbiter hold runs on the host and reaches its box's relay through a socket
+# in /run/understandtech, the one door to this box's identity on the arbiter.
+a_pair_box_relays_to_its_arbiter_through_a_socket() {
+    local config
+    config=$( cd "$WORK_DIR" && UT_LINKED_ARBITER_FILE=/etc/understandtech/linked-arbiter.caddy \
+        docker compose -f compose.yaml -f compose.arbiter-link.yaml config 2>/dev/null )
+    grep -A1 'source: /etc/understandtech/linked-arbiter.caddy' <<< "$config" | grep -q 'target: /etc/caddy/arbiter-link.caddy' \
+        && grep -A1 -E 'source: .*/caddy/arbiter-relay.caddy' <<< "$config" | grep -q 'target: /etc/caddy/arbiter-relay.caddy' \
+        && grep -A1 'source: /run/understandtech' <<< "$config" | grep -q 'target: /run/understandtech' && return 0
+    echo "a box of a pair does not carry the link ut-pair writes, its relay and the socket's folder"
+    return 1
+}
+
 renders_valid_configuration() {
     ( cd "$WORK_DIR" && docker compose "$@" config >/dev/null )
 }
@@ -3056,6 +3081,10 @@ capability "the arbiter role keeps only the arbiter and Caddy, no control plane 
     arbiter_role_keeps_only_arbiter_and_caddy
 capability "the arbiter role publishes only its own port, never the platform's" \
     arbiter_role_publishes_only_its_own_port
+capability "the arbiter serves the boxes ut-pair admitted, and asks no key" \
+    the_arbiter_serves_the_boxes_on_its_list
+capability "a box of a pair relays to its arbiter through a socket in /run/understandtech" \
+    a_pair_box_relays_to_its_arbiter_through_a_socket
 
 if [[ -x "$REPO_ROOT/bin/ut-certificate" ]]; then
     group "Public certificate"

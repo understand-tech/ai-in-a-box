@@ -9,6 +9,7 @@ name: ${COMPOSE_PROJECT_NAME:-understandtech}
 #
 #   COMPOSE_FILE="compose.yaml:compose.arbiter.yaml"
 #   COMPOSE_PROFILES=""
+#   UT_ADMITTED_BOXES_FILE=<the list ut-pair keeps of the two boxes it serves>
 #
 # Named after the role rather than the product it arbitrates, so the same file
 # applies whatever the two paired boxes' own palier (GB10, GB300, rack) or role.
@@ -24,17 +25,16 @@ services:
     # 8446 instead of being swapped out for it.
     ports: !override
       - "${UT_ARBITER_BIND_ADDRESS:-0.0.0.0}:${UT_ARBITER_PORT:-8446}:8446"
-    environment:
-      UT_ARBITER_ADDRESS: ${UT_ARBITER_ADDRESS:-${UT_DOMAIN:-understand.local}}
-      UT_ARBITER_API_KEY: ${UT_ARBITER_API_KEY:?ut-install generates it}
     networks:
       ut-backend-network:
     volumes: !override
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./caddy/ingress-${UT_INGRESS_MODE:-internal}.caddy:/etc/caddy/ingress.caddy:ro
       - ${UT_CERT_DIR:-./caddy/certs}:/etc/caddy/certs:ro
-      - ./caddy/arbiter-surface.caddy:/etc/caddy/inference.caddy:ro
+      - ${UT_ADMITTED_BOXES_FILE:-./caddy/no-inference-surface.caddy}:/etc/caddy/inference.caddy:ro
+      - ./caddy/arbiter-surface.caddy:/etc/caddy/link-surface.caddy:ro
       - ./caddy/no-link.caddy:/etc/caddy/link.caddy:ro
+      - ./caddy/no-link.caddy:/etc/caddy/arbiter-link.caddy:ro
       - caddy-data:/data
       - caddy-config:/config
 

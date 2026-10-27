@@ -1,0 +1,19 @@
+# The relay from a box of a high-availability pair to its arbiter.
+#
+# Imported by the file ut-pair writes once the box is paired with the arbiter,
+# with the arbiter's address as argument. ut-arbiter hold runs on the host and
+# reaches it through a Unix socket that root alone can open: any process of the
+# box allowed to connect would hold this box's identity on the arbiter.
+
+http:// {
+    bind unix//run/understandtech/arbiter.sock|0660
+
+    reverse_proxy {args[0]} {
+        header_up Host link.internal
+        transport http {
+            tls_server_name link.internal
+            tls_client_auth link.internal
+            import linked_arbiter_root
+        }
+    }
+}

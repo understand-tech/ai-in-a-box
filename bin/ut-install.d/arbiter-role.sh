@@ -38,5 +38,5 @@ write_the_settings_an_arbiter_role_needs() {
         *compose.arbiter.yaml*) ;;
         *) env_set "$local_file" COMPOSE_FILE "${compose_files}:compose.arbiter.yaml" ;;
     esac
-    log_info "Arbiter, reached at https://${ARBITER_ADDRESS}:8446 by the two boxes it judges: no GPU, no control-plane state"
+    log_info "Arbiter, reached at https://${ARBITER_ADDRESS}:8446 by the two boxes paired with it: no GPU, no control-plane state"
 }

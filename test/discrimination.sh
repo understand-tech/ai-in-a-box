@@ -29,7 +29,7 @@ fresh_copy() {
     rm -rf "$COPY"
     mkdir -p "$COPY"
     ( cd "$REPO_ROOT" && tar -cf - release.env compose.yaml compose.appbuilder.yaml \
-        compose.compute.yaml compose.no-gpu.yaml compose.arbiter.yaml compose.backup-mount.yaml compose.backup-network.yaml compose.remote-inference.yaml compose.engine-vllm.yaml models \
+        compose.compute.yaml compose.no-gpu.yaml compose.arbiter.yaml compose.arbiter-link.yaml compose.backup-mount.yaml compose.backup-network.yaml compose.remote-inference.yaml compose.engine-vllm.yaml models \
         Caddyfile caddy metrics backup-files.sh \
         setup-autostart.sh bin go.mod cmd appbuilder docs \
         packaging README.md test .github 2>/dev/null ) | tar -xf - -C "$COPY" 2>/dev/null
@@ -114,6 +114,14 @@ discriminates "a backup that takes every authority Caddy holds" \
 discriminates "ut-pair writing a snippet the surface no longer imports" \
     "ut-pair-writes-no:-admitted_boxes-" \
     "sed -i.bak 's/(admitted_boxes)/(admitted_platforms)/' cmd/ut-pair/links.go"
+
+discriminates "an arbiter surface that asks for a client certificate without the admitted list" \
+    "client-auth-without-admitted-boxes:caddy/arbiter-surface.caddy" \
+    "sed -i.bak '/import admitted_boxes/d' caddy/arbiter-surface.caddy"
+
+discriminates "a socket to the arbiter any account can open" \
+    "arbiter-relay-open-beyond-its-group" \
+    "sed -i.bak 's/|0660/|0666/' caddy/arbiter-relay.caddy"
 
 discriminates "the inference engine let into Redis's network" \
     "redis-reachable-by:nim-llm" \
@@ -452,6 +460,14 @@ capability_discriminates "an engine port declared again, which Docker never publ
 capability_discriminates "a compute node whose Caddy ignores the list of platforms it admits" \
     "a compute node lets other machines reach its engine only through the link" \
     "sed -i.bak 's|\${UT_ADMITTED_BOXES_FILE:-./caddy/no-inference-surface.caddy}:/etc/caddy/inference.caddy|./caddy/no-inference-surface.caddy:/etc/caddy/inference.caddy|' compose.compute.yaml"
+
+capability_discriminates "an arbiter that ignores the list of the boxes it admits" \
+    "the arbiter serves the boxes ut-pair admitted" \
+    "sed -i.bak 's|\${UT_ADMITTED_BOXES_FILE:-./caddy/no-inference-surface.caddy}:/etc/caddy/inference.caddy|./caddy/no-inference-surface.caddy:/etc/caddy/inference.caddy|' compose.arbiter.yaml"
+
+capability_discriminates "a pair box whose socket stays in its container" \
+    "a box of a pair relays to its arbiter through a socket" \
+    "sed -i.bak '/\/run\/understandtech:\/run\/understandtech/d' compose.arbiter-link.yaml"
 
 capability_discriminates "an arbiter that also starts the control plane's API" \
     "the arbiter role keeps only the arbiter and Caddy, no control plane and no GPU" \
@@ -1326,7 +1342,7 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
 
     install_walk_discriminates "a compute node that never says where its list is" \
         "a compute node keeps the list of the platforms it admits" \
-        "sed -i.bak '/env_set \"\$local_file\" UT_ADMITTED_BOXES_FILE/d' bin/ut-install.d/compute-role.sh"
+        "sed -i.bak '/env_set \"\$local_file\" UT_ADMITTED_BOXES_FILE/d' bin/ut-install"
 
     install_walk_discriminates "a compute node's summary that leaves pairing out" \
         "a compute node's summary hands the control plane what it needs" \
@@ -1625,6 +1641,14 @@ if [[ -x "$REPO_ROOT/test/ingress.sh" ]]; then
     ingress_discriminates "a relay token checked ahead of the route, so never" \
         "the relay refuses a caller without the token" \
         "perl -0pi -e 's/(    handle \\/v1\\/\\* \\{\\n)(        \\@without_the_token[^\\n]*\\n        respond[^\\n]*\\n)/\$2\$1/' caddy/link-relay.caddy"
+
+    ingress_discriminates "a socket to the arbiter any account of the box can open" \
+        "the socket refuses an account other than root" \
+        "sed -i.bak 's/|0660/|0666/' caddy/arbiter-relay.caddy"
+
+    ingress_discriminates "an arbiter served to any client" \
+        "the arbiter refuses a client without a certificate" \
+        "sed -i.bak 's/mode require_and_verify/mode request/' caddy/arbiter-surface.caddy"
 
     ingress_discriminates "the relay token handed on to the node" \
         "its token stays home" \

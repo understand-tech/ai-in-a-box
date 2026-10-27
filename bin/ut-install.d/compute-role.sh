@@ -36,14 +36,3 @@ write_the_settings_a_compute_role_needs() {
     esac
     log_info "Compute node, reached at https://${COMPUTE_ADDRESS}:8444 by the platforms paired with it"
 }
-
-# Every run, not only the one given --compute: a node that had the role before
-# gets the list ut-pair keeps, created empty so that Docker never mounts a
-# directory in its place.
-write_the_list_a_compute_node_keeps() {
-    local local_file=$1 dir
-    [[ "$(env_get "$local_file" COMPOSE_FILE 2>/dev/null || true)" == *compose.compute.yaml* ]] || return 0
-    dir=$(dirname "$local_file")
-    [[ -e "$dir/admitted-boxes.caddy" ]] || install -m 644 /dev/null "$dir/admitted-boxes.caddy"
-    env_set "$local_file" UT_ADMITTED_BOXES_FILE "$dir/admitted-boxes.caddy"
-}

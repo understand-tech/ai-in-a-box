@@ -1,0 +1,16 @@
+name: ${COMPOSE_PROJECT_NAME:-understandtech}
+
+# Overlay for a box of a high-availability pair: its Caddy relays ut-arbiter
+# hold, on the host, to the arbiter it was paired with by ut-pair.
+#
+#   UT_LINKED_ARBITER_FILE=<the file ut-pair writes once the box is paired>
+#
+# hold reaches the relay at /run/understandtech/arbiter.sock, which root alone
+# can open.
+
+services:
+  caddy:
+    volumes:
+      - ${UT_LINKED_ARBITER_FILE:-./caddy/no-link.caddy}:/etc/caddy/arbiter-link.caddy:ro
+      - ./caddy/arbiter-relay.caddy:/etc/caddy/arbiter-relay.caddy:ro
+      - /run/understandtech:/run/understandtech

@@ -357,12 +357,12 @@ func TestOnlyANameOrAnIPReachesCaddysSettings(t *testing.T) {
 		"fd00::9":            "[fd00::9]:8444",
 		"[fd00::9]:9444":     "[fd00::9]:9444",
 	} {
-		if got, err := nodeAddress(typed); err != nil || got != want {
+		if got, err := peerAddress(typed, inferencePort); err != nil || got != want {
 			t.Errorf("%q read as %q, %v", typed, got, err)
 		}
 	}
 	for _, typed := range []string{"https://10.0.0.9", "10.0.0.9:0", "node.local", "a b", "gpu}\nimport x", "10.0.0.9:8444/v1", ""} {
-		if got, err := nodeAddress(typed); err == nil {
+		if got, err := peerAddress(typed, inferencePort); err == nil {
 			t.Errorf("%q taken as %q", typed, got)
 		}
 	}
