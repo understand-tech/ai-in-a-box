@@ -1,2 +1,3 @@
-# Empty on purpose: on a platform paired with a compute node, the file ut-pair
-# writes is mounted here instead. On every other role nothing is relayed.
+# Empty on purpose: on a platform paired with a compute node, or a box paired
+# with its arbiter, the file ut-pair writes is mounted here instead. Otherwise
+# nothing is relayed.

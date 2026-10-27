@@ -20,6 +20,7 @@ import (
 const (
 	pairingPort   = 8447
 	inferencePort = 8444
+	arbiterPort   = 8446
 	pairingWindow = 15 * time.Minute
 	maxMessage    = 16 << 10
 	// The code is 120 bits: guessing it online is out of reach, so failures
@@ -204,9 +205,9 @@ var hostName = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-
 
 // What the operator typed ends up in a Caddy file: a name or an IP and an
 // optional port, nothing else.
-func nodeAddress(typed string) (string, error) {
+func peerAddress(typed string, defaultPort int) (string, error) {
 	typed = strings.TrimSpace(typed)
-	host, port := typed, strconv.Itoa(inferencePort)
+	host, port := typed, strconv.Itoa(defaultPort)
 	if h, p, err := net.SplitHostPort(typed); err == nil {
 		host, port = h, p
 	}

@@ -28,12 +28,14 @@ type Node struct {
 type Links struct {
 	Admitted []Box `json:"admitted"`
 	Node     *Node `json:"node,omitempty"`
+	Arbiter  *Node `json:"arbiter,omitempty"`
 }
 
 const (
 	linksFile         = "links.json"
 	admittedBoxesFile = "admitted-boxes.caddy"
 	linkedNodeFile    = "linked-node.caddy"
+	linkedArbiterFile = "linked-arbiter.caddy"
 )
 
 func loadLinks(settings string) (Links, error) {
@@ -75,11 +77,19 @@ func admittedBoxesCaddyfile(boxes []Box) string {
 }
 
 func linkedNodeCaddyfile(node *Node) string {
-	if node == nil {
+	return relayCaddyfile(node, "linked_node_root", "/etc/caddy/link-relay.caddy")
+}
+
+func linkedArbiterCaddyfile(arbiter *Node) string {
+	return relayCaddyfile(arbiter, "linked_arbiter_root", "/etc/caddy/arbiter-relay.caddy")
+}
+
+func relayCaddyfile(peer *Node, snippet, relay string) string {
+	if peer == nil {
 		return ""
 	}
-	return fmt.Sprintf("(linked_node_root) {\n\ttls_trust_pool inline {\n\t\ttrust_der %s\n\t}\n}\nimport /etc/caddy/link-relay.caddy https://%s\n",
-		base64.StdEncoding.EncodeToString(node.Root), node.Address)
+	return fmt.Sprintf("(%s) {\n\ttls_trust_pool inline {\n\t\ttrust_der %s\n\t}\n}\nimport %s https://%s\n",
+		snippet, base64.StdEncoding.EncodeToString(peer.Root), relay, peer.Address)
 }
 
 // The two Caddy files are bind-mounted one by one, and such a mount keeps the
@@ -93,6 +103,7 @@ func (l Links) save(settings string) error {
 		linksFile:         string(data) + "\n",
 		admittedBoxesFile: admittedBoxesCaddyfile(l.Admitted),
 		linkedNodeFile:    linkedNodeCaddyfile(l.Node),
+		linkedArbiterFile: linkedArbiterCaddyfile(l.Arbiter),
 	} {
 		if err := os.WriteFile(filepath.Join(settings, name), []byte(content), 0o644); err != nil {
 			return err

@@ -31,9 +31,13 @@ const usage = `usage: ut-pair <command>
 
   offer           on a compute node: shows a pairing code and waits up to 15
                   minutes for one platform to pair with it
+  offer           on an arbiter: the same, once for each box of the pair
   join ADDRESS    on a platform: pairs with the node at ADDRESS (a name or an
                   IP, with :port if it is not 8444), reading the code the node
                   shows on standard input
+  join --arbiter ADDRESS
+                  on a box of a high-availability pair: the same with its
+                  arbiter, :port if it is not 8446
   list            the boxes this one is linked to, by the fingerprint of their
                   root
   forget PREFIX   unlinks the box whose fingerprint starts with PREFIX: a node
@@ -86,7 +90,9 @@ func (p Place) command(args []string, stdin io.Reader, stdout, stderr io.Writer)
 	case len(args) == 1 && args[0] == "offer":
 		err = p.offer(stdout)
 	case len(args) == 2 && args[0] == "join":
-		err = p.join(args[1], stdin, stdout)
+		err = p.join(args[1], toTheNode, stdin, stdout)
+	case len(args) == 3 && args[0] == "join" && args[1] == "--arbiter":
+		err = p.join(args[2], toTheArbiter, stdin, stdout)
 	case len(args) == 1 && args[0] == "list":
 		err = p.list(stdout)
 	case len(args) == 2 && args[0] == "forget":
@@ -191,8 +197,21 @@ func (p Place) offer(stdout io.Writer) error {
 	}
 }
 
-func (p Place) join(typed string, stdin io.Reader, stdout io.Writer) error {
-	node, err := nodeAddress(typed)
+// What a box links to: the compute node it takes its inference from, or the
+// arbiter of the pair it belongs to.
+type Peer struct {
+	Name string
+	Port int
+	Set  func(*Links, *Node)
+}
+
+var (
+	toTheNode    = Peer{"node", inferencePort, func(l *Links, n *Node) { l.Node = n }}
+	toTheArbiter = Peer{"arbiter", arbiterPort, func(l *Links, n *Node) { l.Arbiter = n }}
+)
+
+func (p Place) join(typed string, peer Peer, stdin io.Reader, stdout io.Writer) error {
+	node, err := peerAddress(typed, peer.Port)
 	if err != nil {
 		return err
 	}
@@ -220,14 +239,14 @@ func (p Place) join(typed string, stdin io.Reader, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	links.Node = &Node{Address: node, Root: root.Raw, Paired: p.Now().UTC()}
+	peer.Set(&links, &Node{Address: node, Root: root.Raw, Paired: p.Now().UTC()})
 	if err := links.save(p.Settings); err != nil {
 		return err
 	}
 	if err := p.reload(); err != nil {
 		return fmt.Errorf("paired, but Caddy did not take the link: %w", err)
 	}
-	fmt.Fprintf(stdout, "Linked to the node at %s, root %s\n", node, fingerprint(root.Raw))
+	fmt.Fprintf(stdout, "Linked to the %s at %s, root %s\n", peer.Name, node, fingerprint(root.Raw))
 	return nil
 }
 
@@ -248,10 +267,15 @@ func (p Place) list(stdout io.Writer) error {
 	for _, box := range links.Admitted {
 		fmt.Fprintf(stdout, "admitted  %s  paired %s  from %s\n", fingerprint(box.Root), box.Paired.Format(time.DateOnly), box.From)
 	}
-	if links.Node != nil {
-		fmt.Fprintf(stdout, "node      %s  paired %s  at %s\n", fingerprint(links.Node.Root), links.Node.Paired.Format(time.DateOnly), links.Node.Address)
+	for _, peer := range []struct {
+		name string
+		node *Node
+	}{{"node     ", links.Node}, {"arbiter  ", links.Arbiter}} {
+		if peer.node != nil {
+			fmt.Fprintf(stdout, "%s %s  paired %s  at %s\n", peer.name, fingerprint(peer.node.Root), peer.node.Paired.Format(time.DateOnly), peer.node.Address)
+		}
 	}
-	if len(links.Admitted) == 0 && links.Node == nil {
+	if len(links.Admitted) == 0 && links.Node == nil && links.Arbiter == nil {
 		fmt.Fprintln(stdout, "This box is linked to no other.")
 	}
 	return nil
@@ -280,6 +304,10 @@ func (p Place) forget(prefix string, stdout io.Writer) error {
 	links.Admitted = kept
 	if links.Node != nil && strings.HasPrefix(fingerprint(links.Node.Root), prefix) {
 		links.Node = nil
+		forgotten++
+	}
+	if links.Arbiter != nil && strings.HasPrefix(fingerprint(links.Arbiter.Root), prefix) {
+		links.Arbiter = nil
 		forgotten++
 	}
 	switch forgotten {
