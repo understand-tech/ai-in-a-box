@@ -3833,6 +3833,66 @@ EOF
     return 1
 }
 
+# The box's own Prometheus relabels every scrape to drop almost everything —
+# only ut_inference_* and (since the cost metric landed) ut_cost_* survive the
+# gateway job. A real Prometheus against the real config, not a regex read by
+# eye: the filter is a single line a typo could silently narrow or widen.
+the_box_prometheus_keeps_cost_alongside_inference_and_drops_the_rest() {
+    local probe project kept
+    probe=$(mktemp -d "$WORK_DIR/metrics.XXXXXX")
+    project="metrics-probe-$$"
+    mkdir -p "$probe/metrics" "$probe/secrets"
+    cp "$REPO_ROOT/metrics/prometheus.yml" "$probe/metrics/"
+    printf 'does-not-matter\n' > "$probe/secrets/gateway_metrics_token"
+    cat > "$probe/serve.py" <<'EOF'
+import http.server
+BODY = b"""# TYPE ut_inference_requests_total counter
+ut_inference_requests_total{tool="llms",outcome="ok"} 3
+# TYPE ut_cost_usd_total counter
+ut_cost_usd_total{tool="llms"} 0.5
+# TYPE some_other_metric counter
+some_other_metric 1
+"""
+class Api(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(BODY)
+http.server.HTTPServer(("", 8501), Api).serve_forever()
+EOF
+    cat > "$probe/compose.yaml" <<EOF
+name: ${project}
+services:
+  api:
+    image: ${PYTHON_IMAGE}
+    command: ["python", "/p/serve.py"]
+    volumes: ["./:/p:ro"]
+  metrics:
+    image: $(grep -m1 '^PROMETHEUS_IMAGE=' "$REPO_ROOT/release.env" | cut -d'"' -f2)
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus"]
+    volumes:
+      - "./metrics/prometheus.yml:/etc/prometheus/prometheus.yml:ro"
+      - "./secrets/gateway_metrics_token:/run/secrets/gateway_metrics_token:ro"
+    ports: ["19090:9090"]
+EOF
+    ( cd "$probe" && docker compose up -d >/dev/null 2>&1 )
+    for tries in 1 2 3 4 5 6 7 8; do
+        sleep 5
+        kept=$(curl -s "http://127.0.0.1:19090/api/v1/label/__name__/values" 2>/dev/null)
+        [[ "$kept" == *ut_cost_usd_total* ]] && break
+    done
+    ( cd "$probe" && docker compose down -v >/dev/null 2>&1 )
+    [[ "$kept" == *ut_cost_usd_total* && "$kept" == *ut_inference_requests_total* \
+       && "$kept" != *some_other_metric* ]] && return 0
+    echo "names kept: ${kept:-none}"
+    return 1
+}
+
+group "Metrics the box's own Prometheus keeps"
+capability "the gateway job keeps ut_cost_* alongside ut_inference_*, and drops everything else" \
+    the_box_prometheus_keeps_cost_alongside_inference_and_drops_the_rest
+
 if [[ -x "$REPO_ROOT/bin/ut-report" ]]; then
     group "Reporting what decides the size of a box"
     capability "the report finds the engine the recorder holds" \
