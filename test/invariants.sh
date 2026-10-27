@@ -477,6 +477,15 @@ check_ut_pair_writes_what_caddy_imports() {
         || report "arbiter-relay-mounted-nowhere" "compose.arbiter-link.yaml mounts no relay for the link to the arbiter to import"
 }
 
+# The App Builder rewrites every route of its Traefik directory whose name does
+# not start with "_" (agentic-app-builder, runner.py, heal_traefik_configs_*):
+# an imported app's route under any other name is replaced at its next start.
+check_imported_app_routes_stay_out_of_the_app_builders_hands() {
+    grep -q 'file="$traefik_dynamic_dir/_imported-' "$REPO_ROOT/bin/ut-import-app" && return 0
+    report "imported-app-route-rewritten-by-the-app-builder" \
+        "bin/ut-import-app writes its Traefik route under a name the App Builder rewrites at each start: the imported app would answer 502 after the next update"
+}
+
 check_every_volume_is_mounted() {
     local volume
     while read -r volume; do
@@ -941,6 +950,7 @@ main() {
     check_the_arbiter_relay_opens_to_root_alone
     check_the_backup_leaves_the_link_authority_out
     check_ut_pair_writes_what_caddy_imports
+    check_imported_app_routes_stay_out_of_the_app_builders_hands
     check_the_gateway_trusts_the_app_builder_key
     check_defaults_do_not_diverge
     check_required_variables_appear_in_the_template
