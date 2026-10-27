@@ -29,7 +29,7 @@ fresh_copy() {
     rm -rf "$COPY"
     mkdir -p "$COPY"
     ( cd "$REPO_ROOT" && tar -cf - release.env compose.yaml compose.appbuilder.yaml \
-        compose.compute.yaml compose.no-gpu.yaml compose.arbiter.yaml compose.arbiter-link.yaml compose.backup-mount.yaml compose.backup-network.yaml compose.remote-inference.yaml compose.engine-vllm.yaml models \
+        compose.compute.yaml compose.no-gpu.yaml compose.arbiter.yaml compose.arbiter-link.yaml compose.backup-mount.yaml compose.backup-network.yaml compose.backup-relay.yaml compose.remote-inference.yaml compose.engine-vllm.yaml models \
         Caddyfile caddy metrics backup-files.sh \
         setup-autostart.sh bin go.mod cmd appbuilder docs \
         packaging README.md test .github 2>/dev/null ) | tar -xf - -C "$COPY" 2>/dev/null
@@ -134,6 +134,18 @@ discriminates "the inference engine let into Redis's network" \
 discriminates "Redis put back on the network the engines share" \
     "redis-on-a-shared-network:ut-backend-network" \
     "sed -i.bak '/^  redis:\$/,/^  [a-z]/ s|^      - ut-redis-network\$|      - ut-backend-network|' compose.yaml"
+
+discriminates "the network between the backup and its relay given a way out" \
+    "backup-reaches-out-past-its-relay:ut-backup-relay-network" \
+    "sed -i.bak '/^    internal: true\$/d' compose.backup-relay.yaml"
+
+discriminates "the backup let onto the relay's way out" \
+    "backup-reaches-out-past-its-relay:ut-backup-network" \
+    "sed -i.bak 's|^      - ut-backup-relay-network\$|      - ut-backup-relay-network\\n      - ut-backup-network|' compose.backup-relay.yaml"
+
+discriminates "a relay that sends elsewhere than the name the backup resolves to it" \
+    "backup-relay-sends-elsewhere" \
+    "sed -i.bak 's|- TCP:\${BACKUP_RELAY_HOST:-|- TCP:\${BACKUP_FILES_DESTINATION:-|' compose.backup-relay.yaml"
 
 discriminates "a secret given a value by the release" \
     "plaintext-secret:OA_KEY" \
@@ -626,6 +638,10 @@ capability_discriminates "a bill of materials that forgets the weights" \
 capability_discriminates "a folder's images all required, whatever the role" \
     "a compute node loads from a folder only the images it runs" \
     "sed -i.bak 's|^        digests=\$(digests_the_role_runs \"\\\$(role_this_install_takes)\" \|\| true)\$|        digests=\"\"|' bin/ut-install"
+
+capability_discriminates "a backup relay no role carries into a folder" \
+    "the bill of materials says which role runs each image and each weight" \
+    "sed -i.bak 's/:compose.backup-relay.yaml//g' packaging/release-bom.sh"
 
 capability_discriminates "a bill that says no role runs anything" \
     "the bill of materials says which role runs each image and each weight" \
@@ -1179,7 +1195,19 @@ capability_discriminates "a network destination left on the internal network" \
 
 capability_discriminates "an SFTP destination without the keys to check it" \
     "trusted only under the host key pinned for it" \
-    "sed -i.bak '/\/root\/.ssh:ro/d' compose.backup-network.yaml"
+    "sed -i.bak '/\/root\/.ssh:ro/d' compose.backup-relay.yaml"
+
+capability_discriminates "a backup that resolves its destination on its own, around the relay" \
+    "a backup to S3 over TLS goes through the relay" \
+    "sed -i.bak '/^    extra_hosts:\$/d; /BACKUP_RELAY_ADDRESS:-198.18.255.250}\"\$/d' compose.backup-relay.yaml"
+
+capability_discriminates "the written host taken for the one restic dials" \
+    "restic names the host the backup dials" \
+    "perl -0pi -e 's/(the_host_restic_dials\\(\\) \\{\\n)/\$1    backup_destination_written_in \"\\\$2\" | cut -d\" \" -f1; return 0\\n/' bin/ut-install"
+
+capability_discriminates "a box moved to the relay by changing the network it had" \
+    "moves to the relay on update, unattended" \
+    "perl -0pi -e 's/(  ut-backup-network:\\n    name: [^\\n]*\\n    driver: bridge\\n)/\$1    internal: true\\n/' compose.backup-relay.yaml"
 
 capability_discriminates "a destination that does not answer, left unnamed" \
     "does not answer is named" \
@@ -1606,9 +1634,33 @@ fi
         "one on the machine's own disk stops the install" \
         "sed -i.bak 's|^    \[\[ \"\$filesystem\" != .*|    true|' bin/ut-install"
 
-    install_walk_discriminates "an SFTP destination left without its way out" \
-        "an S3 or SFTP destination gets its way out" \
-        "sed -i.bak 's|\"\${compose_files}:compose.backup-network.yaml\"|\"\${compose_files}\"|' bin/ut-install"
+    install_walk_discriminates "an SFTP destination left without its relay" \
+        "an S3 or SFTP destination goes through a relay" \
+        "sed -i.bak 's|\"\${compose_files}:\${overlay}\"|\"\${compose_files}\"|' bin/ut-install"
+
+    install_walk_discriminates "a b2 destination sent through a relay that cannot carry it" \
+        "keeps a network of its own, and the install says so" \
+        "sed -i.bak 's/^        s3:\\*|sftp:\\*|rest:\\*) return 0 ;;/        *:*) return 0 ;;/' bin/ut-install"
+
+    install_walk_discriminates "a destination given by its address taken for a name" \
+        "a destination given by its address stops the install" \
+        "sed -i.bak '/&& die_on_a_backup_destination_given_by_its_address/d' bin/ut-install"
+
+    install_walk_discriminates "a box left on its own network beside the relay" \
+        "a box whose backup had a network of its own moves to the relay" \
+        "sed -i.bak '/^            compose_files=\${compose_files\\/\\/:compose.backup-network.yaml\\/}\$/d' bin/ut-install"
+
+    install_walk_discriminates "the relay left on the host the repository writes" \
+        "the relay is pointed at the host restic dials" \
+        "perl -0pi -e 's/    env_set \"\\\$local_file\" BACKUP_RELAY_HOST \"\\\$host\"\\n    render_settings/    render_settings/' bin/ut-install"
+
+    install_walk_discriminates "an install that carries on when restic names no host" \
+        "an install restic names no host for stops" \
+        "sed -i.bak '/^    if \\[\\[ -z \"\\\$host\" \\]\\]; then\$/,/^    fi\$/d' bin/ut-install"
+
+    install_walk_discriminates "the subnet given for the relay ignored" \
+        "the relay takes its address in the subnet given" \
+        "sed -i.bak 's/BACKUP_RELAY_SUBNET 2>\\/dev\\/null/BACKUP_RELAY_NETWORK 2>\\/dev\\/null/' bin/ut-install"
 
     install_walk_discriminates "every repository taken for one over the network" \
         "the default destination adds no way out" \

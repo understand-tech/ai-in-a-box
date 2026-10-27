@@ -1,12 +1,14 @@
 name: ${COMPOSE_PROJECT_NAME:-understandtech}
 
-# Overlay for a backup sent over the network, to S3 or SFTP:
+# Overlay for a backup sent over the network to a backend the relay does not
+# carry (b2, azure, gs, swift, rclone):
 #
-#   BACKUP_FILES_REPOSITORY="sftp:backup@nas.example:/appliance"
+#   BACKUP_FILES_REPOSITORY="b2:bucket:appliance"
 #
-# ut-install adds it to COMPOSE_FILE when BACKUP_FILES_REPOSITORY names one, and
-# only then. Docker cannot narrow a network to one destination: the service that
-# reads every document can reach whatever the host can.
+# ut-install adds it to COMPOSE_FILE for those, and only those: S3, SFTP and a
+# REST server go through compose.backup-relay.yaml. Docker cannot narrow a
+# network to one destination: here the service that reads every document can
+# reach whatever the host can.
 
 services:
   files-backup:
