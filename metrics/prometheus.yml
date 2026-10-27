@@ -14,8 +14,10 @@ scrape_configs:
         action: keep
 
   # What each request costs and how fast it is answered, by tool and prompt size:
-  # the gateway's and the LLM service's ut_inference_* families. Both answer /metrics only
-  # to the bearer of GATEWAY_METRICS_TOKEN.
+  # the gateway's and the LLM service's ut_inference_* families, plus the
+  # gateway's own ut_cost_* (dollars for a SaaS call, GPU-seconds for a local
+  # one, summed by tool only — never by route or model, see ut-api's
+  # pricing.py). Both answer /metrics only to the bearer of GATEWAY_METRICS_TOKEN.
   - job_name: gateway
     authorization:
       credentials_file: /run/secrets/gateway_metrics_token
@@ -23,7 +25,7 @@ scrape_configs:
       - targets: ["api:8501", "api-customer:8501"]
     metric_relabel_configs:
       - source_labels: [__name__]
-        regex: "ut_inference_.*"
+        regex: "ut_(inference|cost)_.*"
         action: keep
 
   - job_name: llm

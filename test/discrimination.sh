@@ -1193,6 +1193,10 @@ capability_discriminates "the dumps looked for where they are not" \
     "the database leaves with them" \
     "sed -i.bak 's|BACKUP_DUMPS:-/backup|BACKUP_DUMPS:-/nowhere|' backup-files.sh"
 
+capability_discriminates "the gateway job's filter narrowed back to drop the cost metric" \
+    "gateway job keeps ut_cost" \
+    "sed -i.bak 's#ut_(inference|cost)_\\.\\*#ut_inference_.*#' metrics/prometheus.yml"
+
 if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
     printf '\n%sA fresh install, seen failing%s\n\n' "$BOLD" "$NC"
 
