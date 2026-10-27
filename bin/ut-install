@@ -1554,10 +1554,23 @@ write_the_settings_a_backup_over_the_network_needs() {
         log_warn "  Check the fingerprint with whoever runs ${host}, then:"
         log_warn "    ssh-keyscan ${host} | sudo tee ${ssh_dir}/known_hosts"
     fi
-    if [[ ! -s "$ssh_dir/id_ed25519" ]]; then
-        log_warn "  And no key to log in with. Make one, and give ${host} its public half:"
+    [[ -s "$ssh_dir/id_ed25519" ]] || make_the_key_the_backup_logs_in_with "$ssh_dir" "$host"
+}
+
+# The one secret of the box ut-install used to leave to the operator. A key
+# already there is never rewritten: the destination knows that one.
+make_the_key_the_backup_logs_in_with() {
+    local ssh_dir=$1 host=$2
+    if ! command -v ssh-keygen >/dev/null 2>&1; then
+        log_warn "  And no key to log in with, and no ssh-keygen here to make one (apt install openssh-client), then:"
         log_warn "    sudo ssh-keygen -t ed25519 -N '' -f ${ssh_dir}/id_ed25519"
+        return 0
     fi
+    rm -f "$ssh_dir/id_ed25519.pub"
+    ssh-keygen -q -t ed25519 -N '' -C "understandtech-backup" -f "$ssh_dir/id_ed25519" </dev/null
+    chmod 600 "$ssh_dir/id_ed25519"
+    log_info "Made the key the backup logs in with. Give ${host} its public half, for the account in the repository address:"
+    log "    $(cat "$ssh_dir/id_ed25519.pub")"
 }
 
 INTERNAL_INFERENCE_HOST=""

@@ -152,6 +152,9 @@ cp /etc/understandtech/license /w/$state/license 2>/dev/null || : > /w/$state/li
 cp /etc/understandtech/machine.lic /w/$state/machine 2>/dev/null || : > /w/$state/machine
 cp /etc/understandtech/license-request.json /w/$state/license-request 2>/dev/null || : > /w/$state/license-request
 ls /etc/understandtech/*.caddy /etc/understandtech/inference-ca-bundle.pem > /w/$state/link-files 2>/dev/null || :
+stat -c '%a %U' /etc/understandtech/backup-ssh/id_ed25519 > /w/$state/backup-key-mode 2>/dev/null || : > /w/$state/backup-key-mode
+cat /etc/understandtech/backup-ssh/id_ed25519.pub > /w/$state/backup-key-pub 2>/dev/null || : > /w/$state/backup-key-pub
+sha256sum /etc/understandtech/backup-ssh/id_ed25519 2>/dev/null | cut -d' ' -f1 > /w/$state/backup-key-sum || : > /w/$state/backup-key-sum
 stat -c '%a %U' /etc/understandtech/license > /w/$state/license-mode 2>/dev/null || : > /w/$state/license-mode
 stat -c '%a %U' /etc/understandtech/machine.lic > /w/$state/machine-mode 2>/dev/null || : > /w/$state/machine-mode
 chmod -R a+rw /w/$state
@@ -290,6 +293,9 @@ state_setup() {
             echo 'install -d /mnt/nas && install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_DESTINATION="/mnt/nas"\nCOMPOSE_FILE="compose.yaml:compose.backup-mount.yaml"\n'"'"' > /etc/understandtech/local.env' ;;
         backup_over_sftp)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_REPOSITORY="sftp:backup@nas.example.test:/appliance"\n'"'"' > /etc/understandtech/local.env' ;;
+        # The destination already knows this key: an install must not replace it.
+        backup_over_sftp_with_its_key)
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_REPOSITORY="sftp:backup@nas.example.test:/appliance"\n'"'"' > /etc/understandtech/local.env && install -d -m 700 /etc/understandtech/backup-ssh && echo the-key-the-nas-knows > /etc/understandtech/backup-ssh/id_ed25519 && chmod 600 /etc/understandtech/backup-ssh/id_ed25519' ;;
         backup_in_two_places)
             echo 'install -d /w/backup_in_two_places/nas && install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_DESTINATION="/w/backup_in_two_places/nas"\nBACKUP_FILES_REPOSITORY="s3:https://s3.example.test/appliance"\n'"'"' > /etc/understandtech/local.env' ;;
         *)             echo ': ' ;;
@@ -918,6 +924,26 @@ a_network_destination_gets_its_way_out_and_names_the_key_it_lacks() {
     return 1
 }
 
+an_sftp_destination_gets_a_key_only_root_reads() {
+    local mode public output
+    mode=$(of_state backup_over_sftp backup-key-mode)
+    public=$(of_state backup_over_sftp backup-key-pub)
+    output=$(output_of backup_over_sftp)
+    [[ "$mode" == "600 root" && "$public" == ssh-ed25519\ * ]] && grep -qF "$public" <<< "$output" && return 0
+    echo "key mode '${mode}', public half '${public}'"
+    grep -E 'key|ssh-keygen' <<< "$output"
+    return 1
+}
+
+a_key_the_destination_knows_is_never_replaced() {
+    local sum
+    sum=$(of_state backup_over_sftp_with_its_key backup-key-sum)
+    [[ "$sum" == "$(printf 'the-key-the-nas-knows\n' | shasum -a 256 | cut -d' ' -f1)" ]] \
+        && ! grep -q 'Made the key the backup logs in with' <<< "$(output_of backup_over_sftp_with_its_key)" && return 0
+    echo "the key the destination knew was replaced (sum ${sum:-none})"
+    return 1
+}
+
 the_default_destination_adds_no_way_out() {
     ! grep -q 'compose.backup-network.yaml' <<< "$(settings_of bare)" && return 0
     grep -E '^COMPOSE_FILE' <<< "$(settings_of bare)"
@@ -1186,7 +1212,7 @@ prepare_licenses() {
     mkdir -p "$work"
     WITH_OPENSSL_IMAGE=$(docker build -q - 2>/dev/null <<DOCKERFILE
 FROM ${DEBIAN_IMAGE}
-RUN apt-get update && apt-get install -y --no-install-recommends openssl jq curl python3 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends openssl jq curl python3 openssh-client && rm -rf /var/lib/apt/lists/*
 DOCKERFILE
 ) || { echo "Could not build the image the license walks run in." >&2; exit 1; }
     # Signed here rather than by Keygen: the walk is about the installer, and
@@ -1477,7 +1503,8 @@ WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --skip
 run_install_from_state backup_destination_mounted
 run_install_from_state backup_destination_not_mounted
 run_install_from_state backup_destination_gone_on_an_update
-run_install_from_state backup_over_sftp
+WALK_IMAGE=$WITH_OPENSSL_IMAGE run_install_from_state backup_over_sftp
+WALK_IMAGE=$WITH_OPENSSL_IMAGE run_install_from_state backup_over_sftp_with_its_key
 run_install_from_state backup_in_two_places
 
 printf '%sA machine with nothing on it%s\n' "$BOLD" "$NC"
@@ -1713,6 +1740,10 @@ property "one on the machine's own disk stops the install, and says how to get o
     a_destination_on_the_machine_s_own_disk_stops_the_install
 
 printf '\n%sA backup sent over the network%s\n' "$BOLD" "$NC"
+property "an SFTP destination gets a key made for it, read by root alone, its public half shown" \
+    an_sftp_destination_gets_a_key_only_root_reads
+property "a key the SFTP destination already knows is never replaced" \
+    a_key_the_destination_knows_is_never_replaced
 property "an S3 or SFTP destination gets its way out, and the missing host key is named" \
     a_network_destination_gets_its_way_out_and_names_the_key_it_lacks
 property "the default destination adds no way out" \
