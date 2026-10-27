@@ -1348,6 +1348,18 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
         "a compute node's summary hands the control plane what it needs" \
         "sed -i.bak '/sudo ut-pair offer           shows a code/d' bin/ut-install"
 
+    install_walk_discriminates "an SFTP destination left without a key" \
+        "an SFTP destination gets a key made for it" \
+        "sed -i.bak 's|^    \\[\\[ -s \"\\\$ssh_dir/id_ed25519\" \\]\\] \\|\\| make_the_key_the_backup_logs_in_with .*|    :|' bin/ut-install"
+
+    install_walk_discriminates "a backup key other accounts can read" \
+        "an SFTP destination gets a key made for it" \
+        "sed -i.bak 's|^    chmod 600 \"\\\$ssh_dir/id_ed25519\"\$|    chmod 644 \"\\\$ssh_dir/id_ed25519\"|' bin/ut-install"
+
+    install_walk_discriminates "a key the destination knows, made again" \
+        "a key the SFTP destination already knows is never replaced" \
+        "sed -i.bak 's|^    \\[\\[ -s \"\\\$ssh_dir/id_ed25519\" \\]\\] \\|\\| make_the_key|    rm -f \"\\\$ssh_dir/id_ed25519\"; make_the_key|' bin/ut-install"
+
     install_walk_discriminates "a registry token asked for even when nothing is pulled" \
         "a license with no registry token is refused to pull, and taken when nothing is pulled" \
         "sed -i.bak 's|^        if \$DO_PULL; then\$|        if true; then|' bin/ut-install"

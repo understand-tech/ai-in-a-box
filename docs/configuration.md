@@ -351,18 +351,20 @@ the host mounts, above, needs none. Name one destination only: given both, the
 installer stops.
 
 **SFTP needs two files**, in `/etc/understandtech/backup-ssh`, which the
-installer creates and the service reads as root's `.ssh`:
+service reads as root's `.ssh`. The installer makes the key, `id_ed25519`,
+readable by root alone, and prints its public half: give it to the account on
+the server. A key already there is kept, never replaced. The server's host key
+is yours to pin:
 
 ```bash
-sudo ssh-keygen -t ed25519 -N '' -f /etc/understandtech/backup-ssh/id_ed25519
 ssh-keyscan nas.example | sudo tee /etc/understandtech/backup-ssh/known_hosts
 ```
 
-Give `id_ed25519.pub` to the account on the server. **Check the fingerprint
-`ssh-keyscan` printed with whoever runs that server before you keep it**: the
-backup trusts that key and no other, and refuses to connect when the server's
-key changes. Until both files are there, every backup is refused, and the
-installer says so.
+**Check the fingerprint `ssh-keyscan` printed with whoever runs that server
+before you keep it**: the backup trusts that key and no other, and refuses to
+connect when the server's key changes. Until both files are there, every backup
+is refused, and the installer says so. The public half stays in
+`/etc/understandtech/backup-ssh/id_ed25519.pub`.
 
 The first run creates the repository and uploads everything; later runs send
 only what changed. Check it arrived:
