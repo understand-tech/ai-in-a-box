@@ -123,6 +123,10 @@ discriminates "a socket to the arbiter any account can open" \
     "arbiter-relay-open-beyond-its-group" \
     "sed -i.bak 's/|0660/|0666/' caddy/arbiter-relay.caddy"
 
+discriminates "an imported app's route named like an App Builder project" \
+    "imported-app-route-rewritten-by-the-app-builder" \
+    "sed -i.bak 's|file=\"\$traefik_dynamic_dir/_imported-|file=\"\$traefik_dynamic_dir/|' bin/ut-import-app"
+
 discriminates "the inference engine let into Redis's network" \
     "redis-reachable-by:nim-llm" \
     "sed -i.bak '/^  nim-llm:\$/,/^  [a-z]/ s|^      - ut-backend-network\$|      - ut-backend-network\\n      - ut-redis-network|' compose.yaml"

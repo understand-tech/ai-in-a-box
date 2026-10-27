@@ -283,21 +283,23 @@ ensure_proxy_network() {
     log_info "Created network 'proxy'"
 }
 
+# The App Builder rewrites, at each start, every route in this directory whose
+# name does not start with "_", with the template of the apps it generates.
 write_traefik_route() {
     local traefik_dynamic_dir=$1 project_id=$2 domain=$3 port=$4 file
-    file="$traefik_dynamic_dir/${project_id}.yml"
+    file="$traefik_dynamic_dir/_imported-${project_id}.yml"
     install -d -m 755 "$traefik_dynamic_dir"
     cat > "$file" <<EOF
 http:
   routers:
-    $project_id:
+    imported-$project_id:
       rule: "Host(\`$project_id.apps.$domain\`)"
       entryPoints:
         - web
-      service: $project_id
+      service: imported-$project_id
 
   services:
-    $project_id:
+    imported-$project_id:
       loadBalancer:
         servers:
           - url: "http://$project_id:$port"
@@ -333,7 +335,7 @@ smoke_test_inbound() {
     code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 \
         --resolve "${project_id}.apps.${domain}:443:${address}" \
         "https://${project_id}.apps.${domain}/" 2>/dev/null) || true
-    [[ -n "$code" && "$code" != "000" ]]
+    [[ "$code" =~ ^[1-4] ]]
 }
 
 main() {
@@ -372,6 +374,8 @@ main() {
     container_prefix=$(platform_setting CONTAINER_PREFIX "$CONTAINER_PREFIX_DEFAULT")
     public_url="https://$domain"
     traefik_dir="$data_root/appbuilder/traefik-dynamic"
+    [[ -e "$traefik_dir/${project_id}.yml" ]] \
+        && die "$traefik_dir/${project_id}.yml already routes $project_id.apps.$domain — an App Builder project, or an import made before this version. Choose another project id, or move that file out of the directory first."
 
     local app_dir compose_file
     app_dir=$(stage_source "$source" "$project_id" "$data_root")
