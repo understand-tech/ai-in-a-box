@@ -206,6 +206,11 @@ Options
                        then ut-pair join ADDRESS here. No engine starts here;
                        a GPU, when there is one, stays with llm, which searches
                        the documents. Without one, as --no-gpu.
+  --inference-here     Undo --inference-from: serve the inference on this
+                       machine's own GPU again. Takes the relay and its settings
+                       out, starts the engine, downloads the model's weights.
+                       Refused on a machine whose GPU does not answer. What
+                       ut-pair recorded stays, unused, until ut-pair forget.
   --arbiter ADDRESS    This machine judges which of a pair of boxes is
                        reachable, to settle a two-box failover without two
                        primaries. ADDRESS is this machine's own: a DNS name or
@@ -380,9 +385,11 @@ inference_surface_url() {
 # answers for a laboratory stack, which docs/install.md has the operator write
 # before calling this.
 the_inference_is_served_by_another_machine() {
+    $INFERENCE_HERE && return 1
     $NO_GPU && return 0
     [[ -n "$INFERENCE_FROM" ]] && return 0
-    [[ "$(env_get "$INSTALL_DIR/.env" COMPOSE_FILE 2>/dev/null || true)" == *no-gpu* ]]
+    [[ "$(env_get "$INSTALL_DIR/.env" COMPOSE_FILE 2>/dev/null || true)" == *no-gpu* ]] && return 0
+    this_machine_relays_to_a_compute_node
 }
 
 # Printed at the end and kept in the install log. Without it, a box whose driver
@@ -1787,6 +1794,7 @@ step_configure() {
 
     write_the_settings_a_compute_role_needs "$local_file"
     write_the_settings_an_arbiter_role_needs "$local_file"
+    write_the_settings_a_platform_taking_its_inference_back_needs "$local_file"
     write_the_settings_the_model_needs "$local_file"
     write_the_settings_a_compute_node_needs "$local_file"
     write_the_list_a_server_keeps "$local_file"
@@ -1974,6 +1982,8 @@ role_this_install_takes() {
         echo arbiter
     elif [[ -n "$COMPUTE_ADDRESS" || "$compose_files" == *compose.compute.yaml* ]]; then
         echo compute
+    elif $INFERENCE_HERE; then
+        echo appliance
     elif [[ -n "$INFERENCE_FROM" ]] || $NO_GPU || [[ "$compose_files" == *compose.remote-inference.yaml* || "$compose_files" == *compose.no-gpu.yaml* ]]; then
         echo control-plane
     else
@@ -2816,6 +2826,7 @@ parse_arguments() {
             --reporting-receiver-cert) REPORTING_RECEIVER_CERT="${2:?--reporting-receiver-cert needs a path}"; shift ;;
             --reporting-every)         REPORTING_EVERY="${2:?--reporting-every needs minutes}"; shift ;;
             --inference-from)     INFERENCE_FROM="${2:?--inference-from needs an address}"; shift ;;
+            --inference-here)     INFERENCE_HERE=true ;;
             --images-from)        IMAGES_FROM="${2:?--images-from needs the folder ut-get --prepare wrote}"; DO_PULL=false; shift ;;
             --compute)            COMPUTE_ADDRESS="${2:?--compute needs the address the control plane reaches this machine at}"; shift ;;
             --model)              MODEL_ID="${2:?--model needs one of the models in models/}"; shift ;;

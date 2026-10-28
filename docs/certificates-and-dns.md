@@ -314,8 +314,9 @@ On the platform, name the node by the same address:
 sudo ut-install --inference-from <node>
 ```
 
-It takes the inference from the node instead of starting an engine. Then pair
-the two, within 15 minutes:
+It takes the inference from the node instead of starting an engine, and it
+downloads no weights for the model, on this run or later ones: only those of
+`llm`. Then pair the two, within 15 minutes:
 
 ```bash
 # on the compute node
@@ -358,6 +359,22 @@ the platform stays served until Caddy restarts.
 
 A restored box has a new link authority: pair it again with each box it was
 paired with, and forget its old fingerprint there.
+
+### Taking the inference back on the platform
+
+A platform with a GPU of its own can serve its model again:
+
+```bash
+sudo ut-install --inference-here
+```
+
+It takes the relay and the settings `--inference-from` wrote out of
+`local.env`, starts the engine, and downloads the model's weights. It is refused
+when the GPU does not answer `nvidia-smi`, and with `--inference-from`,
+`--no-gpu`, `--compute` or `--arbiter`. Later runs keep the role.
+
+What `ut-pair` recorded stays, and serves nothing: forget it on both machines,
+as above, the platform's link on the node and the node's on the platform.
 
 ## Changing the address later
 

@@ -272,6 +272,15 @@ state_setup() {
         # Face that serves the files of two small pinned lists, one of them altered.
         weights_from_the_network)
             echo 'rm -f /var/lib/understandtech/weights-placed.txt && cp /w/weights/lists/*.txt /usr/share/understandtech/models/weights/ && cp /w/weights/curl /stub/curl' ;;
+        # A platform paired with a compute node, as an update finds it, with the
+        # same stand-in for Hugging Face.
+        # The preflight reads the settings an earlier run rendered, as on an update.
+        relay_platform_on_a_smaller_disk|relay_platform_taking_it_back_on_a_smaller_disk)
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'COMPOSE_FILE="compose.yaml:compose.remote-inference.yaml"\nCOMPOSE_PROFILES=""\nVLLM_LLM_BASE_URL="http://caddy:8445/v1"\n'"'"' > /etc/understandtech/local.env && cp /etc/understandtech/local.env /etc/understandtech/.env' ;;
+        relay_platform_updated|relay_platform_given_its_inference_back)
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'COMPOSE_FILE="compose.yaml:compose.remote-inference.yaml"\nCOMPOSE_PROFILES=""\nVLLM_LLM_BASE_URL="http://caddy:8445/v1"\nVLLM_VLM_BASE_URL="http://caddy:8445/v1"\nUT_LINKED_NODE_FILE="/etc/understandtech/linked-node.caddy"\n'"'"' > /etc/understandtech/local.env && : > /etc/understandtech/linked-node.caddy && printf '"'"'{"links": [{"address": "node.example.test:8444"}]}\n'"'"' > /etc/understandtech/links.json && rm -f /var/lib/understandtech/weights-placed.txt && cp /w/weights/lists/*.txt /usr/share/understandtech/models/weights/ && cp /w/weights/curl /stub/curl' ;;
+        relay_platform_without_its_gpu)
+            echo 'rm -f /stub/nvidia-smi && install -d -m 750 /etc/understandtech && printf '"'"'COMPOSE_FILE="compose.yaml:compose.remote-inference.yaml"\nCOMPOSE_PROFILES=""\nVLLM_LLM_BASE_URL="http://caddy:8445/v1"\nVLLM_VLM_BASE_URL="http://caddy:8445/v1"\nUT_LINKED_NODE_FILE="/etc/understandtech/linked-node.caddy"\n'"'"' > /etc/understandtech/local.env && : > /etc/understandtech/linked-node.caddy && printf '"'"'{"links": [{"address": "node.example.test:8444"}]}\n'"'"' > /etc/understandtech/links.json' ;;
         weights_altered_on_the_way)
             echo 'rm -f /var/lib/understandtech/weights-placed.txt && cp /w/weights/lists/*.txt /usr/share/understandtech/models/weights/ && cp /w/weights/curl /stub/curl && sed -i "s/^[0-9a-f]* /0000000000000000000000000000000000000000000000000000000000000000 /" /usr/share/understandtech/models/weights/platform.txt' ;;
         orphan_volume) echo ': # the volume is asserted through the stub' ;;
@@ -814,6 +823,53 @@ a_weight_that_is_not_the_listed_file_stops_the_install() {
     grep -q 'is not the file this release lists' <<< "$output" && ! grep -q '^EXIT=0$' <<< "$output" \
         && ! grep -q 'HF_HUB_OFFLINE="1"' <<< "$(of_state weights_altered_on_the_way local-env)" && return 0
     tail -5 <<< "$output"
+    return 1
+}
+
+a_platform_downloads_none_of_the_model_weights() {
+    local output
+    output=$(output_of relay_platform_updated)
+    grep -q 'Downloading nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f32.gguf' <<< "$output" \
+        && ! grep -q 'Downloading Inferact/' <<< "$output" \
+        && [[ "$(grep -c . <<< "$(of_state relay_platform_updated weights-placed)")" == 1 ]] && return 0
+    grep -E '^\[fail\]|Downloading|^EXIT=' <<< "$output" | tail -5
+    return 1
+}
+
+the_inference_comes_back_with_the_option() {
+    local state=relay_platform_given_its_inference_back output settings rendered
+    output=$(output_of "$state")
+    settings=$(of_state "$state" local-env)
+    rendered=$(settings_of "$state")
+    grep -q '^COMPOSE_FILE=' <<< "$settings" && ! grep -q 'compose.remote-inference.yaml' <<< "$settings" \
+        && ! grep -qE '^(COMPOSE_PROFILES|VLLM_LLM_BASE_URL|VLLM_VLM_BASE_URL|UT_LINKED_NODE_FILE)=' <<< "$settings" \
+        && grep -qx 'COMPOSE_PROFILES="nim"' <<< "$rendered" \
+        && grep -qx 'VLLM_LLM_BASE_URL="http://nim-llm:8000/v1"' <<< "$rendered" \
+        && grep -q 'Downloading Inferact/Qwen3.8-27B-NVFP4/config.json' <<< "$output" \
+        && grep -q 'link to the compute node at node.example.test:8444' <<< "$output" \
+        && grep -q 'ut-pair forget' <<< "$output" && return 0
+    grep -E '^\[(fail|warn)\]|Downloading|^EXIT=' <<< "$output" | tail -6
+    grep -E 'COMPOSE|VLLM|LINKED' <<< "$settings"
+    return 1
+}
+
+the_inference_is_not_taken_back_without_a_gpu() {
+    local output
+    output=$(output_of relay_platform_without_its_gpu)
+    grep -q 'no GPU answers here' <<< "$output" && ! grep -q '^EXIT=0$' <<< "$output" \
+        && grep -q 'compose.remote-inference.yaml' <<< "$(of_state relay_platform_without_its_gpu local-env)" && return 0
+    tail -5 <<< "$output"
+    return 1
+}
+
+# 91 GB holds a platform, not a model: the floor is the role the run ends in.
+the_disk_floor_follows_where_the_inference_runs() {
+    local kept taken
+    kept=$(output_of relay_platform_on_a_smaller_disk)
+    taken=$(output_of relay_platform_taking_it_back_on_a_smaller_disk)
+    grep -q 'Disk: 91 GB free' <<< "$kept" && ! grep -q 'GB needed' <<< "$kept" \
+        && grep -q 'Disk: 91 GB free on .* — 250 GB needed' <<< "$taken" && ! grep -q '^EXIT=0$' <<< "$taken" && return 0
+    grep -E '^\[(fail|ok)\] Disk|^EXIT=' <<< "$kept"$'\n'"$taken"
     return 1
 }
 
@@ -1527,6 +1583,13 @@ PULL_EXIT=0 INSTALL_COMMAND="ut-install --compute 192.0.2.10" \
 INSTALL_COMMAND="ut-install --compute node.local" run_install_from_state compute_named_by_mdns
 PULL_EXIT=0 WALK_IMAGE=$WITH_OPENSSL_IMAGE run_install_from_state weights_from_the_network
 PULL_EXIT=0 WALK_IMAGE=$WITH_OPENSSL_IMAGE run_install_from_state weights_altered_on_the_way
+PULL_EXIT=0 WALK_IMAGE=$WITH_OPENSSL_IMAGE run_install_from_state relay_platform_updated
+PULL_EXIT=0 WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --inference-here" \
+    run_install_from_state relay_platform_given_its_inference_back
+INSTALL_COMMAND="ut-install --inference-here" run_install_from_state relay_platform_without_its_gpu
+DISK_AVAIL_BYTES=$((91 * 1000 * 1000 * 1000)) run_install_from_state relay_platform_on_a_smaller_disk
+DISK_AVAIL_BYTES=$((91 * 1000 * 1000 * 1000)) INSTALL_COMMAND="ut-install --inference-here" \
+    run_install_from_state relay_platform_taking_it_back_on_a_smaller_disk
 INSTALL_COMMAND="ut-install --check --events /w/installed_and_checked/events.jsonl" run_install_from_state installed_and_checked -
 WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --certificate-dir /w/certs/good" run_install_from_state certificate_given
 WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --certificate-dir /w/certs/short" run_install_from_state certificate_short
@@ -1669,6 +1732,14 @@ property "a weight that is not the file the release lists stops the install" \
     a_weight_that_is_not_the_listed_file_stops_the_install
 property "weights already placed are not downloaded again" \
     weights_already_placed_are_not_downloaded_again
+property "a platform that takes its inference elsewhere downloads none of the model's weights" \
+    a_platform_downloads_none_of_the_model_weights
+property "a platform given its inference back by --inference-here starts its engine, and is told the link is left to forget" \
+    the_inference_comes_back_with_the_option
+property "a platform asking for its inference back where no GPU answers is refused, and nothing changes" \
+    the_inference_is_not_taken_back_without_a_gpu
+property "the disk a platform needs follows where its inference runs" \
+    the_disk_floor_follows_where_the_inference_runs
 property "the check says what an installed box runs, and none of its secrets" \
     the_check_says_what_is_installed_and_no_secret
 property "a certificate given to the installer is the one the front door serves" \
