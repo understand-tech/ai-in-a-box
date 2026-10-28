@@ -79,8 +79,15 @@ What it does
   5. Writes the Traefik route (no access gate — the app answers whoever
      reaches its URL, same as a published App Builder app; it is the app's
      job to authenticate its own users, not Traefik's).
-  6. `docker compose -p <project-id> up -d --build`.
-  7. Smoke-tests that the container is healthy, that it can reach the
+  6. Adds https://<project-id>.apps.<UT_DOMAIN> to EXTRA_ALLOWED_ORIGINS in
+     local.env, starting from compose.yaml's default list when local.env
+     sets none, so the platform hands the app a session through single
+     sign-on. The platform reads it at the next `sudo ut-install --skip-pull`
+     followed by `docker compose up -d`. Nothing removes it again: an app
+     taken out of the stack keeps its origin until it is edited out of
+     local.env.
+  7. `docker compose -p <project-id> up -d --build`.
+  8. Smoke-tests that the container is healthy, that it can reach the
      platform, and that its public route answers. It does NOT exercise
      whatever the app actually asks the gateway to do — a contract bug like
      a missing field in a request body only shows up by using the app.
@@ -90,8 +97,63 @@ EOF
 env_get() {
     local file=$1 key=$2 line
     line=$(grep -m1 -E "^${key}=" "$file" 2>/dev/null) || return 1
-    line=${line#*=}; line=${line%\"}; line=${line#\"}
+    line=${line#*=}; line=${line%\"}; line=${line#\"}; line=${line%\'}; line=${line#\'}
     printf '%s' "$line"
+}
+
+settings_directory() {
+    local link=$1
+    if [[ -L "$link" ]]; then
+        dirname "$(readlink "$link")"
+    else
+        dirname "$link"
+    fi
+}
+
+# Rewritten in place, as ut-install does it: local.env keeps its inode and its 0600.
+local_setting_set() {
+    local file=$1 key=$2 value=$3 tmp found=0 line
+    tmp=$(mktemp)
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" =~ ^[[:space:]]*${key}= ]]; then
+            printf '%s="%s"\n' "$key" "$value" >> "$tmp"
+            found=1
+        else
+            printf '%s\n' "$line" >> "$tmp"
+        fi
+    done < "$file"
+    (( found )) || printf '%s="%s"\n' "$key" "$value" >> "$tmp"
+    cat "$tmp" > "$file"
+    rm -f "$tmp"
+}
+
+allowed_origins_by_default() {
+    local compose=$1 domain=$2 line
+    line=$(grep -m1 -F '&url-allowed-origins' "$compose") || return 1
+    line=${line#*'${EXTRA_ALLOWED_ORIGINS:-'}
+    line=${line%'}'}
+    line=${line//'${UT_DOMAIN:-understand.local}'/$domain}
+    [[ "$line" =~ ^https://[^\$[:space:]]+$ ]] || return 1
+    printf '%s' "$line"
+}
+
+declare_the_app_s_origin() {
+    local local_file=$1 compose=$2 domain=$3 origin=$4 origins
+    [[ -f "$local_file" ]] || install -m 600 /dev/null "$local_file"
+    origins=$(env_get "$local_file" EXTRA_ALLOWED_ORIGINS 2>/dev/null || true)
+    if [[ -z "$origins" ]]; then
+        origins=$(allowed_origins_by_default "$compose" "$domain") \
+            || die "$compose gives no default list of allowed origins to add $origin to — set EXTRA_ALLOWED_ORIGINS in $local_file by hand"
+    fi
+    case ",$origins," in
+        *",$origin,"*)
+            log_info "$origin is already an origin the platform admits"
+            return 0
+            ;;
+    esac
+    local_setting_set "$local_file" EXTRA_ALLOWED_ORIGINS "$origins,$origin"
+    log_info "Added $origin to EXTRA_ALLOWED_ORIGINS in $local_file"
+    log_warn "The platform admits it once you run: sudo ut-install --skip-pull, then docker compose up -d in $INSTALL_DIR"
 }
 
 resolve_install_dir() {
@@ -414,6 +476,9 @@ main() {
     local traefik_file
     traefik_file=$(write_traefik_route "$traefik_dir" "$project_id" "$domain" "$port")
     log_info "Wrote $traefik_file — no access gate: the app answers anyone who reaches its URL"
+
+    declare_the_app_s_origin "$(settings_directory "$INSTALL_DIR/.env")/local.env" "$INSTALL_DIR/compose.yaml" \
+        "$domain" "https://$project_id.apps.$domain"
 
     log "Starting the stack…"
     ( cd "$app_dir" && docker compose -p "$project_id" -f "$compose_file" -f "$override" up -d --build )

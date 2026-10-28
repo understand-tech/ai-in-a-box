@@ -512,6 +512,14 @@ check_imported_app_routes_stay_out_of_the_app_builders_hands() {
         "bin/ut-import-app writes its Traefik route under a name the App Builder rewrites at each start: the imported app would answer 502 after the next update"
 }
 
+check_ut_import_app_reads_the_default_origins() {
+    local origins
+    origins=$( source "$REPO_ROOT/bin/ut-import-app" && allowed_origins_by_default "$REPO_ROOT/compose.yaml" invariant.test 2>/dev/null ) \
+        && [[ "$origins" == https://admin.invariant.test,* ]] && return 0
+    report "import-reads-no-default-origins" \
+        "bin/ut-import-app finds no default list of allowed origins in compose.yaml: on a box that sets none, an imported app gets no single sign-on"
+}
+
 check_every_volume_is_mounted() {
     local volume
     while read -r volume; do
@@ -978,6 +986,7 @@ main() {
     check_the_backup_leaves_the_link_authority_out
     check_ut_pair_writes_what_caddy_imports
     check_imported_app_routes_stay_out_of_the_app_builders_hands
+    check_ut_import_app_reads_the_default_origins
     check_the_gateway_trusts_the_app_builder_key
     check_defaults_do_not_diverge
     check_required_variables_appear_in_the_template
