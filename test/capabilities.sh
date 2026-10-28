@@ -2841,10 +2841,42 @@ pull_with_retries() {
     docker pull "$image"
 }
 
+sftp_log_length() {
+    docker exec "$1" sh -c 'wc -l < /config/logs/openssh/current' 2>/dev/null | tr -d ' '
+}
+
+# sftp://backup@host:2222/backups names a path under the account's home.
+sftp_repository_content() {
+    docker exec "$1" sh -c 'ls -A "$(getent passwd backup | cut -d: -f6)/backups" 2>/dev/null'
+}
+
+# A client refuses a host key it was not given before it authenticates: the
+# server sees the connection end [preauth] and never accepts the client's key.
+# ssh's own "Host key verification failed" reaches restic's output only when
+# it is flushed before restic reports the closed session (TICKET-61).
+sftp_refusal_proven() {
+    local server=$1 seen=$2 output=$3 since="" deadline=$((SECONDS + 10))
+    while (( SECONDS < deadline )); do
+        since=$(docker exec "$server" sh -c "tail -n +$((${seen:-0} + 1)) /config/logs/openssh/current" 2>/dev/null)
+        grep -qE '\[preauth\]|Accepted publickey' <<< "$since" && break
+        sleep 1
+    done
+    if grep -q 'Accepted publickey' <<< "$since"; then
+        echo "the server accepted the client's key:"
+        sed 's/^/    sshd: /' <<< "$since"
+        return 1
+    fi
+    grep -qE 'Host key verification failed|HOST IDENTIFICATION HAS CHANGED' <<< "$output" && return 0
+    grep -qE '(Connection closed|Connection reset) by .* \[preauth\]' <<< "$since" && return 0
+    echo "nothing shows the host key refused:"
+    sed 's/^/    sshd: /' <<< "${since:-no line since the attempt}"
+    return 1
+}
+
 the_sftp_destination_has_to_prove_who_it_is() {
     command -v jq >/dev/null || { echo "jq absent"; return 1; }
     local run=cap-sftp-$$ net server ssh_dir="$WORK_DIR/sftp-ssh" source="$WORK_DIR/sftp-source" scanned="" attempt output started verdict=1
-    local repository
+    local repository seen refusal written
     net=$run-net; server=$run-server
     repository="sftp://backup@${server}:2222/backups"
     mkdir -p "$ssh_dir" "$source/app-data"
@@ -2861,15 +2893,23 @@ the_sftp_destination_has_to_prove_who_it_is() {
         echo "the SFTP server could not be started: $(tail -2 <<< "$started" | tr '\n' ' ')"
     elif scanned=$(sftp_server_ready "$server" "$net" "$ssh_dir"); [[ -n "$scanned" ]]; then
         printf '[%s]:2222 %s\n' "$server" "$(cut -d' ' -f1,2 "$WORK_DIR/impostor.pub")" | pin_host_keys "$ssh_dir"
+        seen=$(sftp_log_length "$server")
         if output=$(backup_over_sftp "$source" "$ssh_dir" "$repository" "$net"); then
             echo "a host whose key was not the pinned one was trusted"
-        elif ! grep -qE 'Host key verification failed|HOST IDENTIFICATION HAS CHANGED' <<< "$output"; then
+        elif ! refusal=$(sftp_refusal_proven "$server" "$seen" "$output"); then
             echo "$output"
-            docker exec "$server" tail -n 12 /config/logs/openssh/current 2>&1 | sed 's/^/    sshd: /'
+            echo "$refusal"
+        elif written=$(sftp_repository_content "$server"); [[ -n "$written" ]]; then
+            echo "written under a host key that was not the pinned one: $(tr '\n' ' ' <<< "$written")"
         else
             printf '%s\n' "$scanned" | pin_host_keys "$ssh_dir"
-            output=$(backup_over_sftp "$source" "$ssh_dir" "$repository" "$net") && verdict=0 \
-                || echo "the pinned host was refused: $(tail -3 <<< "$output")"
+            if ! output=$(backup_over_sftp "$source" "$ssh_dir" "$repository" "$net"); then
+                echo "the pinned host was refused: $(tail -3 <<< "$output")"
+            elif [[ -z "$(sftp_repository_content "$server")" ]]; then
+                echo "the pinned host took the backup, yet nothing is where the refused one was looked for"
+            else
+                verdict=0
+            fi
         fi
     else
         echo "the SFTP server never opened a session: $(docker inspect -f 'status={{.State.Status}} exit={{.State.ExitCode}}' "$server" 2>&1); $(docker logs "$server" 2>&1 | tail -3 | tr '\n' ' ')"
