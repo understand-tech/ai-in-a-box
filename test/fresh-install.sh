@@ -135,10 +135,10 @@ set -u
 dpkg -i --force-depends /out/understandtech_${VERSION}_all.deb >/dev/null 2>&1
 install -d /var/lib/understandtech && cat /usr/share/understandtech/models/weights/*.txt | awk '!/^#/ && NF { print \$1 }' > /var/lib/understandtech/weights-placed.txt
 
+$(licensed_by_default "$state")
 $(state_setup "$state")
 
-UT_REGISTRY_TOKEN=${INSTALL_TOKEN-test-token} \\
-    ${INSTALL_COMMAND:-ut-install} $domain_arg > /w/$state/output.txt 2>&1
+${INSTALL_COMMAND:-ut-install} $domain_arg > /w/$state/output.txt 2>&1
 printf 'EXIT=%s\n' "\$?" >> /w/$state/output.txt
 
 cp /etc/understandtech/.env /w/$state/env 2>/dev/null || : > /w/$state/env
@@ -166,7 +166,17 @@ PROBE
         -e NETWORK_CREATE_EXIT="${NETWORK_CREATE_EXIT:-0}" \
         -e PULL_EXIT="${PULL_EXIT:-9}" \
         -e DISK_AVAIL_BYTES="${DISK_AVAIL_BYTES:-}" \
-        "${WALK_IMAGE:-$DEBIAN_IMAGE}" bash /w/walk-$state.sh >/dev/null 2>&1
+        "${WALK_IMAGE:-$WITH_OPENSSL_IMAGE}" bash /w/walk-$state.sh >/dev/null 2>&1
+}
+
+# A machine holds its license key from its first install on: every walk starts
+# from one, like the update it is. The states about licenses bring their own, and
+# the ones about a machine that has none bring nothing.
+licensed_by_default() {
+    case " $LICENSE_STATES checkout_but_no_key installed_before_licenses " in
+        *" $1 "*) ;;
+        *) echo "cp /w/licenses/ut-license /usr/bin/ut-license && install -d -m 750 /etc/understandtech && install -m 600 /w/licenses/keys/active.key /etc/understandtech/license && install -m 600 /w/licenses/files/valid.lic /etc/understandtech/machine.lic" ;;
+    esac
 }
 
 state_setup() {
@@ -312,6 +322,10 @@ state_setup() {
         # What an install made before the relay leaves: the backup on a network of its own.
         backup_on_its_own_network_before_the_relay)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_REPOSITORY="s3:https://s3.example.test/appliance-backups"\nCOMPOSE_FILE="compose.yaml:compose.backup-network.yaml"\n'"'"' > /etc/understandtech/local.env' ;;
+        # An install made before the license key was required: its settings, the
+        # registry login it kept, the token it was handed, and no license key.
+        installed_before_licenses)
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'UT_DOMAIN="box.example.test"\n'"'"' > /etc/understandtech/.env && printf '"'"'UT_DOMAIN="box.example.test"\nUT_REGISTRY_TOKEN="old-registry-token"\n'"'"' > /etc/understandtech/local.env && install -d /root/.docker && printf '"'"'{"auths":{"ghcr.io":{}}}\n'"'"' > /root/.docker/config.json && export UT_REGISTRY_TOKEN=old-registry-token' ;;
         # The stub answers restic's question as restic answers it for AWS: the bucket in front.
         backup_relay_pointed_where_restic_dials)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_REPOSITORY="s3:https://s3.eu-west-3.amazonaws.com/appliance-backups/box"\n'"'"' > /etc/understandtech/local.env && mv /stub/docker /stub/docker-stub && printf "#!/bin/sh\ncase \"\$*\" in \"run --rm --pull never --network none \"*) echo appliance-backups.s3.dualstack.eu-west-3.amazonaws.com ;; *) exec /stub/docker-stub \"\$@\" ;; esac\n" > /stub/docker && chmod +x /stub/docker' ;;
@@ -1223,9 +1237,9 @@ no_secret_reaches_the_log() {
 a_checkout_under_foot_needs_no_token() {
     local output
     output=$(output_of launched_from_a_checkout)
-    if grep -qE 'Registry token for|has to be cloned' <<< "$output"; then
+    if grep -q 'has to be cloned' <<< "$output"; then
         echo "it set out to clone the release it was already standing in"
-        grep -E 'Registry token|has to be cloned' <<< "$output" | head -2
+        grep 'has to be cloned' <<< "$output" | head -2
         return 1
     fi
     grep -q '/srv/clone' <<< "$output" && return 0
@@ -1530,12 +1544,19 @@ a_license_naming_no_registry_leaves_the_images_where_they_are() {
     return 1
 }
 
-a_token_alone_still_installs_and_says_so() {
-    reached_the_pull bare \
-        && grep -q 'accepted by this version only' <<< "$(output_of bare)" && return 0
-    echo "a token on its own was refused, or nothing said a license key will be needed"
-    output_of bare | grep -i -E 'token|license' | head -3
-    return 1
+a_machine_installed_without_a_license_stops_before_changing_anything() {
+    local state=installed_before_licenses output
+    output=$(output_of "$state")
+    refused_with "$state" 'installed without a license key' || return 1
+    grep -q 'Nothing was changed on this machine' <<< "$output" && grep -q 'UT_REGISTRY_TOKEN is not read' <<< "$output" \
+        || { echo "it did not say the token is not read, or that nothing changed:"; tail -5 <<< "$output"; return 1; }
+    never_logged_in "$state" || return 1
+    if grep -q '^pull ' <<< "$(of_state "$state" docker-calls)"; then echo "it pulled"; return 1; fi
+    [[ "$(of_state "$state" local-env)" == $'UT_DOMAIN="box.example.test"\nUT_REGISTRY_TOKEN="old-registry-token"' ]] \
+        || { echo "local.env changed:"; of_state "$state" local-env; return 1; }
+    [[ "$(settings_of "$state")" == 'UT_DOMAIN="box.example.test"' ]] \
+        || { echo ".env changed:"; settings_of "$state"; return 1; }
+    if grep -q 'old-registry-token' <<< "$output"; then echo "the token appears in the output"; return 1; fi
 }
 
 printf '%sWalking a fresh install%s %s(the installer, from a machine in a known state)%s\n\n' \
@@ -1551,11 +1572,12 @@ prepare_a_vllm_entry
 run_install_from_state bare
 PULL_EXIT=0 run_install_from_state install_runs_through
 PULL_EXIT=0 run_install_from_state compute_node_runs_through
-INSTALL_TOKEN= INSTALL_COMMAND=/srv/clone/bin/ut-install \
+INSTALL_COMMAND=/srv/clone/bin/ut-install \
     run_install_from_state launched_from_a_checkout
-INSTALL_TOKEN= INSTALL_COMMAND=/srv/clone/bin/ut-install \
+INSTALL_COMMAND=/srv/clone/bin/ut-install \
     run_install_from_state checkout_but_no_key
 run_install_from_state empty_settings
+run_install_from_state installed_before_licenses
 run_install_from_state openai_key_given
 run_install_from_state engine_key_left_empty
 run_install_from_state origins_on_an_old_domain
@@ -1607,7 +1629,9 @@ run_install_from_state vision_engine_gone
 INSTALL_COMMAND="ut-install --images-from /w/folder_for_another_role/folder" run_install_from_state folder_for_another_role
 run_install_from_state installed_from_a_folder_before
 run_install_from_state already_set
-run_install_from_state no_settings_dir
+# The license key went with the settings directory: the operator hands it back.
+INSTALL_COMMAND="ut-install --license-file /w/licenses/keys/active.key --machine-file /w/licenses/files/valid.lic" \
+    run_install_from_state no_settings_dir
 MONGO_VOLUME_EXISTS=yes run_install_from_state orphan_volume
 MONGO_VOLUME_EXISTS=yes run_install_from_state volume_with_shipped_password -
 NETWORK_CREATE_EXIT=1 run_install_from_state pools_full
@@ -1622,29 +1646,29 @@ DISK_AVAIL_BYTES=$((91 * 1000 * 1000 * 1000)) \
     run_install_from_state no_accelerator_on_a_smaller_disk
 INSTALL_COMMAND="ut-install --no-gpu" run_install_from_state no_accelerator_by_flag
 INSTALL_COMMAND="ut-install --no-gpu" run_install_from_state no_accelerator_pointed_at_a_real_machine
-WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --license-file /w/licenses/keys/fresh.key" \
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --license-file /w/licenses/keys/fresh.key" \
     run_install_from_state licensed
-WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --license-file /w/licenses/keys/ended.key" \
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --license-file /w/licenses/keys/ended.key" \
     run_install_from_state license_ended
-WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --license-file /w/licenses/keys/elsewhere.key" \
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --license-file /w/licenses/keys/elsewhere.key" \
     run_install_from_state license_taken
-WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --license-file /w/licenses/keys/registry.key" \
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --license-file /w/licenses/keys/registry.key" \
     run_install_from_state licensed_elsewhere
-WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= run_install_from_state license_stored
-WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= run_install_from_state license_tampered
-WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= run_install_from_state license_renewed
-WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --license-file /w/licenses/keys/fresh.key" \
+WALK_IMAGE=$WITH_OPENSSL_IMAGE run_install_from_state license_stored
+WALK_IMAGE=$WITH_OPENSSL_IMAGE run_install_from_state license_tampered
+WALK_IMAGE=$WITH_OPENSSL_IMAGE run_install_from_state license_renewed
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --license-file /w/licenses/keys/fresh.key" \
     run_install_from_state license_with_no_network
-WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --license-file /w/licenses/keys/active.key --machine-file /w/licenses/files/valid.lic --skip-pull --health-timeout 5" \
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --license-file /w/licenses/keys/active.key --machine-file /w/licenses/files/valid.lic --skip-pull --health-timeout 5" \
     run_install_from_state licensed_by_file
-WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --license-file /w/licenses/keys/active.key --machine-file /w/licenses/files/tampered.lic --skip-pull" \
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --license-file /w/licenses/keys/active.key --machine-file /w/licenses/files/tampered.lic --skip-pull" \
     run_install_from_state licensed_by_an_altered_file
-WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= run_install_from_state license_from_another_machine
-WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --skip-pull --health-timeout 5" \
+WALK_IMAGE=$WITH_OPENSSL_IMAGE run_install_from_state license_from_another_machine
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --skip-pull --health-timeout 5" \
     run_install_from_state licensed_offline
-WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= run_install_from_state license_of_the_old_format
-WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= run_install_from_state licensed_without_a_token
-WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_TOKEN= INSTALL_COMMAND="ut-install --skip-pull --health-timeout 5" \
+WALK_IMAGE=$WITH_OPENSSL_IMAGE run_install_from_state license_of_the_old_format
+WALK_IMAGE=$WITH_OPENSSL_IMAGE run_install_from_state licensed_without_a_token
+WALK_IMAGE=$WITH_OPENSSL_IMAGE INSTALL_COMMAND="ut-install --skip-pull --health-timeout 5" \
     run_install_from_state licensed_without_a_token_pulling_nothing
 run_install_from_state backup_destination_mounted
 run_install_from_state backup_destination_not_mounted
@@ -1878,8 +1902,8 @@ property "a license key of the old format is refused, and says what to ask for" 
     a_license_of_the_old_format_says_what_to_ask_for
 property "a license with no registry token is refused to pull, and taken when nothing is pulled" \
     a_license_with_no_registry_token_is_refused_only_to_pull
-property "a registry token alone still installs, and says a license will be needed" \
-    a_token_alone_still_installs_and_says_so
+property "a machine installed without a license key stops, asks for one, and changes nothing" \
+    a_machine_installed_without_a_license_stops_before_changing_anything
 
 printf '\n%sLaunched from a checkout%s\n' "$BOLD" "$NC"
 property "it takes the checkout it is standing in, and asks for no token" \

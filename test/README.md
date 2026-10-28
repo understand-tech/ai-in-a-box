@@ -247,7 +247,6 @@ Capabilities, seen failing
   ✔ an upgrade that empties the customer's settings
   ✔ a removal that takes the settings and the data with it
   ✔ the installed command cloning over its own release
-  ✔ the registry token asked for on every run
   ✔ a dependency nobody calls
   ✔ a verification that refuses what the release signed
   ✔ a verification that accepts anything

@@ -409,6 +409,16 @@ check_the_backup_leaves_through_its_relay_alone() {
         "the relay in compose.backup-relay.yaml does not send to BACKUP_RELAY_HOST, the name files-backup resolves to it: the backup goes somewhere it did not ask for"
 }
 
+check_the_installers_take_registry_access_from_the_license_alone() {
+    local file lines
+    for file in "$REPO_ROOT/bin/ut-install" "$REPO_ROOT/bin/ut-get"; do
+        lines=$(grep -nE '(^|[^A-Z_])TOKEN_FILE=|REGISTRY_TOKEN=[^ ]*UT_REGISTRY_TOKEN' "$file" | cut -d: -f1 | tr '\n' ' ' || true)
+        [[ -z "$lines" ]] && continue
+        report "registry-token-outside-the-license:$(basename "$file")" \
+            "$(basename "$file") takes a registry token of its own (lines ${lines% }): the registry access comes with the license key, and a machine without one is asked for it"
+    done
+}
+
 check_only_its_clients_reach_redis() {
     local service network
     while read -r service network; do
@@ -979,6 +989,7 @@ main() {
     check_every_volume_is_mounted
     check_only_its_clients_reach_redis
     check_the_backup_leaves_through_its_relay_alone
+    check_the_installers_take_registry_access_from_the_license_alone
     check_no_client_auth_without_the_admitted_list
     check_the_relay_checks_its_token_inside_its_route
     check_the_relay_trusts_its_node_alone
