@@ -95,3 +95,5 @@ jobs:
         with:
           fetch-depth: 0
       - run: ./test/migration.sh
+      - name: from the last version of the package
+        run: MIGRATION_FROM="$(git describe --tags --abbrev=0 --match 'v*')" ./test/migration.sh
