@@ -471,6 +471,7 @@ the_bill_says_which_role_runs_each_image() {
     grep -q '"purl": "pkg:oci/ut-api-customer@[^"]*&roles=appliance+control-plane"' <<< "$bill" \
         && grep -q '"purl": "pkg:oci/model-free-nim@[^"]*&roles=appliance+compute"' <<< "$bill" \
         && grep -q '"purl": "pkg:oci/caddy@[^"]*&roles=appliance+compute+control-plane"' <<< "$bill" \
+        && grep -q '"purl": "pkg:oci/socat@[^"]*&roles=appliance+control-plane"' <<< "$bill" \
         && grep -q 'weights=platform[^#]*&roles=appliance+control-plane#' <<< "$bill" \
         && grep -q 'weights=qwen3.8-27b-nvfp4[^#]*&roles=appliance+compute#' <<< "$bill" && return 0
     grep -oE '"pkg:oci/[a-z-]+@[^"]*roles=[^"]*"' <<< "$bill" | sed 's/@sha256:[^?]*//' | head -6
@@ -2782,7 +2783,7 @@ the_network_destination_gets_a_way_out_of_its_own() {
 backup_over_sftp() {
     local source=$1 ssh_dir=$2 repository=$3 network=$4 config target
     config=$( cd "$WORK_DIR" && BACKUP_FILES_REPOSITORY="$repository" BACKUP_FILES_SSH_DIR="$ssh_dir" \
-        docker compose -f compose.yaml -f compose.backup-network.yaml config --format json 2>/dev/null )
+        docker compose -f compose.yaml -f compose.backup-relay.yaml config --format json 2>/dev/null )
     target=$(jq -r --arg d "$ssh_dir" '.services["files-backup"].volumes[]? | select(.source == $d) | .target' <<< "$config")
     [[ -n "$target" ]] || { echo "the SSH directory is not handed to files-backup"; return 1; }
     docker run --rm --network "$network" -v "$source":/data:ro -v "$ssh_dir":"$target":ro \
@@ -2896,6 +2897,254 @@ a_password_that_does_not_open_the_repository_is_named() {
         -e RESTIC_REPOSITORY=/r/restic -e RESTIC_PASSWORD=this-machine \
         --entrypoint /usr/local/bin/backup-files "$RESTIC_IMAGE" 2>&1) && { echo "the backup reported success"; return 1; }
     grep -q 'BACKUP_FILES_PASSWORD does not open the repository at /r/restic' <<< "$output" || { echo "$output"; return 1; }
+}
+
+with_a_backend_the_relay_does_not_carry() {
+    BACKUP_FILES_REPOSITORY="b2:appliance-backups:box" BACKUP_FILES_SSH_DIR="$WORK_DIR/backup-ssh" "$@"
+}
+
+ut_install_answers() {
+    local probe="$WORK_DIR/ut-install-functions"
+    mkdir -p "$probe"
+    (
+        set +u; UT_INSTALL_DIR="$probe" source "$REPO_ROOT/bin/ut-install" >/dev/null 2>&1
+        set +eE; trap - ERR
+        "$@"
+    )
+}
+
+the_relay_destinations_written_in() {
+    local repository expected got
+    while IFS='|' read -r repository expected; do
+        got=$(backup_destination_written_in "$repository")
+        [[ "$got" == "$expected" ]] || echo "${repository}: ${got:-nothing}, not ${expected}"
+    done <<'WRITTEN'
+s3:https://s3.eu-west-3.amazonaws.com/appliance-backups/box|s3.eu-west-3.amazonaws.com 443
+s3:http://minio.example.test:9000/appliance-backups|minio.example.test 9000
+s3:http://minio.example.test/appliance-backups|minio.example.test 80
+s3:s3.amazonaws.com/appliance-backups|s3.amazonaws.com 443
+sftp:backup@nas.example.test:/appliance|nas.example.test 22
+sftp://backup@nas.example.test:2222/appliance|nas.example.test 2222
+rest:https://user:secret@rest.example.test:8000/box|rest.example.test 8000
+WRITTEN
+    while read -r subnet expected; do
+        got=$(address_the_relay_takes_in "$subnet")
+        [[ "$got" == "$expected" ]] || echo "${subnet}: the relay at ${got:-nothing}, not ${expected}"
+    done <<'SUBNETS'
+198.18.255.248/29 198.18.255.250
+198.19.255.249/29 198.19.255.250
+10.20.30.0/24 10.20.30.2
+SUBNETS
+    address_the_relay_takes_in 198.18.255.248/30 >/dev/null && echo "a /30, with no room left for files-backup, was taken"
+}
+
+the_relay_reads_its_destination_from_the_repository() {
+    local failures
+    failures=$(ut_install_answers the_relay_destinations_written_in 2>&1)
+    [[ -z "$failures" ]] || { echo "$failures"; return 1; }
+}
+
+# Asked as ut-install asks it, with no network at all. A restic that dials
+# another name, or says it in other words, turns this red before a box sends
+# its backup to a host its relay does not stand for.
+the_hosts_restic_dials() {
+    local repository expected got
+    while IFS='|' read -r repository expected; do
+        got=$(the_host_restic_dials "$RESTIC_IMAGE" "$repository" "")
+        [[ "$got" == "$expected" ]] || echo "${repository}: restic dials ${got:-nothing}, not ${expected}"
+    done <<'DIALED'
+s3:https://s3.eu-west-3.amazonaws.com/appliance-backups/box|appliance-backups.s3.dualstack.eu-west-3.amazonaws.com
+s3:s3.amazonaws.com/appliance-backups|appliance-backups.s3.amazonaws.com
+s3:https://storage.googleapis.com/appliance-backups/box|appliance-backups.storage.googleapis.com
+s3:https://s3.fr-par.scw.cloud/appliance-backups/box|s3.fr-par.scw.cloud
+sftp:backup@nas.example.test:/appliance|nas.example.test
+rest:https://rest.example.test:8000/box|rest.example.test
+DIALED
+}
+
+restic_names_the_host_the_backup_dials() {
+    local failures
+    docker image inspect "$RESTIC_IMAGE" >/dev/null 2>&1 || docker pull -q "$RESTIC_IMAGE" >/dev/null
+    failures=$(ut_install_answers the_hosts_restic_dials 2>&1)
+    [[ -z "$failures" ]] || { echo "$failures"; return 1; }
+}
+
+the_relay_alone_reaches_out_for_the_backup() {
+    command -v jq >/dev/null || { echo "jq absent"; return 1; }
+    local config open sharing inside
+    config=$( cd "$WORK_DIR" && docker compose "$@" config --format json 2>/dev/null )
+    [[ -n "$config" ]] || { echo "the stack does not render with the relay"; return 1; }
+    open=$(jq -r '.networks as $declared
+        | .services["backup-relay"].networks // {} | keys[]
+        | select($declared[.].internal != true)' <<< "$config")
+    [[ $(grep -c . <<< "$open") == 1 ]] || { echo "the relay's networks with a way out: $(tr '\n' ' ' <<< "$open")"; return 1; }
+    sharing=$(jq -r --arg net "$open" '.services | to_entries[]
+        | select(.key != "backup-relay" and ((.value.networks // {}) | has($net))) | .key' <<< "$config")
+    [[ -z "$sharing" ]] || { echo "${open} is shared with: $(tr '\n' ' ' <<< "$sharing")"; return 1; }
+    inside=$(jq -r --arg open "$open" '.services["backup-relay"].networks | keys[] | select(. != $open)' <<< "$config")
+    sharing=$(jq -r --arg net "$inside" '.services | to_entries[]
+        | select((.value.networks // {}) | has($net)) | .key' <<< "$config" | sort | tr '\n' ' ')
+    [[ "$sharing" == "backup-relay files-backup " ]] || { echo "${inside} holds: ${sharing}"; return 1; }
+}
+
+RELAY_TEST_SUBNET="198.19.255.248/29"
+RELAY_TEST_ADDRESS="198.19.255.250"
+
+# files-backup and the relay as the stack runs them, from compose.yaml and an
+# overlay, under a project, networks and containers named for one run.
+#
+# compose run keeps the service's health check, whose restic snapshots every
+# 30 s holds a lock that the prune of backup-files refuses to run beside.
+relayed_compose() {
+    local project=$1; shift
+    cp "$REPO_ROOT/backup-files.sh" "$WORK_DIR/backup-files.sh"
+    printf 'services:\n  files-backup:\n    healthcheck:\n      disable: true\n' > "$WORK_DIR/no-backup-health-check.yaml"
+    ( cd "$WORK_DIR" && COMPOSE_PROJECT_NAME="$project" RESOURCE_PREFIX="$project" CONTAINER_PREFIX="$project" \
+        FILES_BACKUP_IMAGE="$RESTIC_IMAGE" BACKUP_RELAY_IMAGE="$RELAY_IMAGE" \
+        BACKUP_RELAY_SUBNET="$RELAY_TEST_SUBNET" BACKUP_RELAY_ADDRESS="$RELAY_TEST_ADDRESS" \
+        docker compose "$@" )
+}
+
+tree_sum() {
+    ( cd "$1" && find . -type f | sort | while read -r f; do
+        printf '%s %s\n' "$f" "$(cksum < "$f" | cut -d' ' -f1)"; done | cksum | cut -d' ' -f1 )
+}
+
+# The destination is a Caddy in front of an S3 store, under an authority of its
+# own: the backup trusts that authority alone, as it would a customer's.
+the_backup_reaches_s3_through_the_relay_alone() {
+    local run=cap-relay-s3-$$ work="$WORK_DIR/relay-s3" outside store front attempt ready=1 address output verdict=1
+    local source="$WORK_DIR/relay-s3/data" restored="$WORK_DIR/relay-s3/out" ca="$WORK_DIR/relay-s3/ca"
+    outside=$run-backup-network; store=$run-store; front=$run-front
+    mkdir -p "$source/app-data" "$restored" "$ca"
+    head -c 200000 /dev/urandom > "$source/app-data/document.bin"
+    echo "customer notes" > "$source/app-data/notes.txt"
+    printf '{\n\tlocal_certs\n\tskip_install_trust\n\tadmin off\n}\nhttps://s3.relay.test:9443 {\n\treverse_proxy %s:9000\n}\n' \
+        "$store" > "$work/Caddyfile"
+
+    stack() {
+        BACKUP_FILES_REPOSITORY="s3:https://s3.relay.test:9443/appliance-backups" \
+        BACKUP_RELAY_HOST=s3.relay.test BACKUP_RELAY_PORT=9443 DATA_ROOT="$source" \
+        BACKUP_FILES_S3_KEY_ID=capability-key BACKUP_FILES_S3_SECRET=capability-secret-value \
+            relayed_compose "$run" -f compose.yaml -f compose.backup-relay.yaml -f no-backup-health-check.yaml "$@"
+    }
+    inside_the_backup() { stack run --rm --no-deps -v "$restored":/out -v "$ca":/ca:ro --entrypoint sh files-backup -c "$1" 2>&1; }
+
+    if ! output=$(stack up -d backup-relay 2>&1); then
+        echo "the relay did not start: $(tail -2 <<< "$output" | tr '\n' ' ')"
+    else
+        docker run -d --name "$store" --network "$outside" --tmpfs /data "$OBJECT_STORE_IMAGE" \
+            serve s3 /data --auth-key capability-key,capability-secret-value --addr :9000 >/dev/null 2>&1
+        docker run -d --name "$front" --network "$outside" --network-alias s3.relay.test \
+            -v "$work/Caddyfile":/etc/caddy/Caddyfile:ro "$CADDY_IMAGE" >/dev/null 2>&1
+        for attempt in $(seq 1 30); do
+            if [[ "$(docker run --rm --network "$outside" "$CURL_IMAGE" -sk -m 5 -o /dev/null -w '%{http_code}' \
+                https://s3.relay.test:9443/ 2>/dev/null)" =~ ^[1-5][0-9][0-9]$ ]]; then
+                ready=0; break
+            fi
+            sleep 2
+        done
+        docker exec "$store" mkdir -p /data/appliance-backups >/dev/null 2>&1
+        docker exec "$front" cat /data/caddy/pki/authorities/local/root.crt > "$ca/root.crt" 2>/dev/null
+        address=$(docker inspect -f "{{(index .NetworkSettings.Networks \"$outside\").IPAddress}}" "$store" 2>/dev/null)
+
+        if (( ready )) || [[ ! -s "$ca/root.crt" ]]; then
+            echo "the destination never answered"
+        elif ! output=$(inside_the_backup "export RESTIC_CACERT=/ca/root.crt; timeout 90 /usr/local/bin/backup-files && timeout 90 restic restore latest --target /out"); then
+            echo "the backup did not go through the relay: $(tail -3 <<< "$output" | tr '\n' ' ')"
+        elif [[ "$(tree_sum "$source")" != "$(tree_sum "$restored/data")" ]]; then
+            echo "what came back differs from what was sent"
+        elif output=$(inside_the_backup "timeout 30 restic snapshots"); then
+            echo "trusting the system's authorities alone, the backup still reached the destination"
+        elif ! grep -q 'x509' <<< "$output"; then
+            echo "refused, but not for the destination's certificate: $(tail -2 <<< "$output" | tr '\n' ' ')"
+        elif inside_the_backup "wget -q -T 5 -O /dev/null http://${store}:9000/" >/dev/null; then
+            echo "the backup reached the store behind the destination by its name"
+        elif [[ -z "$address" ]] || inside_the_backup "wget -q -T 5 -O /dev/null http://${address}:9000/" >/dev/null; then
+            echo "the backup reached the store behind the destination by its address (${address:-unknown})"
+        elif ! stack stop backup-relay >/dev/null 2>&1 \
+                || inside_the_backup "export RESTIC_CACERT=/ca/root.crt; timeout 30 restic snapshots" >/dev/null; then
+            echo "with the relay stopped, the backup still reached the destination"
+        else
+            verdict=0
+        fi
+    fi
+
+    docker rm -f "$store" "$front" >/dev/null 2>&1
+    stack down -v --remove-orphans >/dev/null 2>&1
+    return "$verdict"
+}
+
+the_backup_reaches_sftp_through_the_relay() {
+    local run=cap-relay-sftp-$$ outside server scanned started output verdict=1
+    local ssh_dir="$WORK_DIR/relay-sftp/ssh" source="$WORK_DIR/relay-sftp/data" restored="$WORK_DIR/relay-sftp/out"
+    outside=$run-backup-network; server=$run-nas
+    mkdir -p "$ssh_dir" "$source/app-data" "$restored"
+    head -c 200000 /dev/urandom > "$source/app-data/document.bin"
+    echo "customer notes" > "$source/app-data/notes.txt"
+    docker run --rm -v "$ssh_dir":/k --entrypoint ssh-keygen "$RESTIC_IMAGE" \
+        -q -t ed25519 -N '' -f /k/id_ed25519 -C capability >/dev/null 2>&1
+
+    stack() {
+        BACKUP_FILES_REPOSITORY="sftp://backup@nas.relay.test:2222/backups" \
+        BACKUP_RELAY_HOST=nas.relay.test BACKUP_RELAY_PORT=2222 DATA_ROOT="$source" BACKUP_FILES_SSH_DIR="$ssh_dir" \
+            relayed_compose "$run" -f compose.yaml -f compose.backup-relay.yaml -f no-backup-health-check.yaml "$@"
+    }
+
+    if ! output=$(stack up -d backup-relay 2>&1); then
+        echo "the relay did not start: $(tail -2 <<< "$output" | tr '\n' ' ')"
+    elif ! started=$(pull_with_retries "$SFTP_SERVER_IMAGE" 2>&1 \
+            && docker run -d --name "$server" --network "$outside" --network-alias nas.relay.test -e USER_NAME=backup \
+                -e PUBLIC_KEY="$(cat "$ssh_dir/id_ed25519.pub")" "$SFTP_SERVER_IMAGE" 2>&1); then
+        echo "the SFTP server could not be started: $(tail -2 <<< "$started" | tr '\n' ' ')"
+    elif ! scanned=$(sftp_server_ready "$server" "$outside" "$ssh_dir") || [[ -z "$scanned" ]]; then
+        echo "the SFTP server never opened a session"
+    else
+        sed "s/^\[${server}\]/[nas.relay.test]/" <<< "$scanned" | pin_host_keys "$ssh_dir"
+        if ! output=$(stack run --rm --no-deps -v "$restored":/out --entrypoint sh files-backup \
+                -c "timeout 90 /usr/local/bin/backup-files && timeout 90 restic restore latest --target /out" 2>&1); then
+            echo "the backup did not go through the relay: $(tail -3 <<< "$output" | tr '\n' ' ')"
+        elif [[ "$(tree_sum "$source")" != "$(tree_sum "$restored/data")" ]]; then
+            echo "what came back differs from what was sent"
+        else
+            verdict=0
+        fi
+    fi
+
+    docker rm -f "$server" >/dev/null 2>&1
+    stack down -v --remove-orphans >/dev/null 2>&1
+    return "$verdict"
+}
+
+# The network an earlier release gave files-backup is the one the relay now
+# takes as its way out: it keeps its name and its settings, so nothing is
+# recreated by hand.
+a_backup_on_its_own_network_moves_to_the_relay_unattended() {
+    local run=cap-relay-move-$$ source="$WORK_DIR/relay-move" output networks relay verdict=1
+    mkdir -p "$source"
+    moving() {
+        BACKUP_FILES_REPOSITORY="s3:https://s3.relay.test/appliance-backups" \
+        BACKUP_RELAY_HOST=s3.relay.test BACKUP_RELAY_PORT=443 DATA_ROOT="$source" \
+            relayed_compose "$run" "$@"
+    }
+    if ! output=$(moving -f compose.yaml -f compose.backup-network.yaml up -d files-backup 2>&1); then
+        echo "the earlier stack did not start: $(tail -2 <<< "$output" | tr '\n' ' ')"
+    elif ! output=$(moving -f compose.yaml -f compose.backup-relay.yaml up -d --remove-orphans files-backup 2>&1); then
+        echo "the update stopped: $(tail -3 <<< "$output" | tr '\n' ' ')"
+    else
+        networks=$(docker inspect -f '{{range $name, $v := .NetworkSettings.Networks}}{{$name}} {{end}}' "$run-files-backup" 2>&1)
+        relay=$(docker inspect -f '{{.State.Running}} {{range $name, $v := .NetworkSettings.Networks}}{{$name}} {{end}}' "$run-backup-relay" 2>&1)
+        if [[ "$networks" != "$run-backend-network $run-backup-relay-network " ]]; then
+            echo "files-backup sits on: ${networks}"
+        elif [[ "$relay" != "true $run-backup-network $run-backup-relay-network " ]]; then
+            echo "the relay: ${relay}"
+        else
+            verdict=0
+        fi
+    fi
+    moving -f compose.yaml -f compose.backup-relay.yaml down -v --remove-orphans >/dev/null 2>&1
+    moving -f compose.yaml -f compose.backup-network.yaml down -v --remove-orphans >/dev/null 2>&1
+    return "$verdict"
 }
 
 # The image starts mongod once to create the root account, stops it, and starts
@@ -3454,8 +3703,22 @@ if [[ -f "$REPO_ROOT/backup-files.sh" ]]; then
         the_https_authority_is_where_the_backup_looks
     capability "that authority is backed up and restores identically" \
         the_https_authority_is_backed_up_and_restores_identically
-    capability "an S3 or SFTP destination gives the backup one way out, its own" \
-        with_a_network_repository the_network_destination_gets_a_way_out_of_its_own -f compose.yaml -f compose.backup-network.yaml
+    capability "a destination the relay does not carry gives the backup one way out, its own" \
+        with_a_backend_the_relay_does_not_carry the_network_destination_gets_a_way_out_of_its_own -f compose.yaml -f compose.backup-network.yaml
+    capability "an S3, SFTP or REST destination leaves the backup no way off the machine but its relay" \
+        with_a_network_repository the_backup_has_no_way_off_the_machine -f compose.yaml -f compose.backup-relay.yaml
+    capability "the relay alone reaches out, and shares its inside network with the backup alone" \
+        with_a_network_repository the_relay_alone_reaches_out_for_the_backup -f compose.yaml -f compose.backup-relay.yaml
+    capability "the relay's host, port and address are read from the repository and its subnet" \
+        the_relay_reads_its_destination_from_the_repository
+    capability "restic names the host the backup dials, the bucket in front on AWS and Google Cloud" \
+        restic_names_the_host_the_backup_dials
+    capability "a backup to S3 over TLS goes through the relay, comes back identical, and reaches nothing else" \
+        the_backup_reaches_s3_through_the_relay_alone
+    capability "a backup to SFTP goes through the relay and comes back identical" \
+        the_backup_reaches_sftp_through_the_relay
+    capability "a box whose backup had a network of its own moves to the relay on update, unattended" \
+        a_backup_on_its_own_network_moves_to_the_relay_unattended
     capability "an SFTP destination is trusted only under the host key pinned for it" \
         the_sftp_destination_has_to_prove_who_it_is
     capability "a destination that does not answer is named, and nothing is written" \

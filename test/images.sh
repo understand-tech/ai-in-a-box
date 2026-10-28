@@ -12,6 +12,7 @@ release_image() {
 CADDY_IMAGE=$(release_image CADDY_IMAGE)
 MONGODB_IMAGE=$(release_image MONGODB_IMAGE)
 RESTIC_IMAGE=$(release_image FILES_BACKUP_IMAGE)
+RELAY_IMAGE=$(release_image BACKUP_RELAY_IMAGE)
 PROMETHEUS_IMAGE=$(release_image PROMETHEUS_IMAGE)
 
 ALPINE_IMAGE="alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6"

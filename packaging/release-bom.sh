@@ -44,11 +44,11 @@ tag_of()        { local r=$1; r=${r%@*}; printf '%s' "${r##*:}"; }
 digest_of()     { local r=$1; printf '%s' "${r#*@}"; }
 name_of()       { local r; r=$(repository_of "$1"); printf '%s' "${r##*/}"; }
 
-# What ut-install writes for each role, App Builder included where it can run:
-# an add-on switched on later must find its images in the folder.
-ROLES="appliance:compose.yaml:compose.appbuilder.yaml:nim
+# What ut-install writes for each role, App Builder and backup relay included
+# where they can run: an add-on switched on later must find its images in the folder.
+ROLES="appliance:compose.yaml:compose.appbuilder.yaml:compose.backup-relay.yaml:nim
 compute:compose.yaml:compose.compute.yaml:nim
-control-plane:compose.yaml:compose.remote-inference.yaml:compose.appbuilder.yaml:"
+control-plane:compose.yaml:compose.remote-inference.yaml:compose.appbuilder.yaml:compose.backup-relay.yaml:"
 
 images_of_the_role() {
     local files=$1 profiles=$2 guards

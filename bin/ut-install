@@ -1509,35 +1509,113 @@ the_backup_repository_is_reached_over_the_network() {
     esac
 }
 
-sftp_host_of() {
-    local address=${1#sftp:}
-    address=${address#//}
-    address=${address#*@}
-    address=${address%%[:/]*}
-    printf '%s' "$address"
+# A relay stands for one host and port: the backends that dial a single one.
+the_relay_carries_the_backup_to() {
+    case "$1" in
+        s3:*|sftp:*|rest:*) return 0 ;;
+        *) return 1 ;;
+    esac
 }
 
-# The overlay gives files-backup a network with a gateway, and Docker cannot
-# narrow it to one destination: it is only added when the repository needs it.
+# As BACKUP_FILES_REPOSITORY writes them: s3:https://host[:port]/bucket,
+# s3:host/bucket, rest:https://user:pass@host[:port]/, sftp:user@host:/path,
+# sftp://user@host[:port]/path.
+backup_destination_written_in() {
+    local address port="" default=443
+    case "$1" in
+        sftp:*)     address=${1#sftp:}; default=22 ;;
+        *:http://*) address=${1#*:http://}; default=80 ;;
+        *)          address=${1#*:}; address=${address#https://} ;;
+    esac
+    address=${address#//}
+    address=${address%%/*}
+    address=${address##*@}
+    [[ "$address" == *:* ]] && port=${address#*:}
+    printf '%s %s\n' "${address%%:*}" "${port:-$default}"
+}
+
+BACKUP_RELAY_SUBNET_DEFAULT="198.18.255.248/29"
+
+# Docker gives the subnet's first address to the gateway; the relay takes the next.
+address_the_relay_takes_in() {
+    local subnet=$1 a b c d bits network
+    [[ "$subnet" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/([0-9]|[12][0-9])$ ]] || return 1
+    IFS=./ read -r a b c d bits <<< "$subnet"
+    network=$(( ((a << 24) | (b << 16) | (c << 8) | d) & (0xFFFFFFFF << (32 - bits)) & 0xFFFFFFFF ))
+    network=$(( network + 2 ))
+    printf '%d.%d.%d.%d\n' $(( network >> 24 & 255 )) $(( network >> 16 & 255 )) $(( network >> 8 & 255 )) $(( network & 255 ))
+}
+
+die_on_a_backup_destination_given_by_its_address() {
+    local host=$1
+    log_error "BACKUP_FILES_REPOSITORY gives the destination by its address, ${host}."
+    log_error ""
+    log_error "The backup reaches it through a relay, under the destination's name, and an"
+    log_error "address is no name. Give a name the network's DNS resolves, in"
+    log_error "$(settings_directory "$INSTALL_DIR/.env")/local.env, then run ut-install again."
+    exit 1
+}
+
+# The host is the one written in the repository until restic's image is on the
+# machine: step_point_the_relay_at_what_restic_dials then puts restic's own in.
+write_the_settings_a_relayed_backup_needs() {
+    local local_file=$1 repository=$2 host port subnet address
+    read -r host port <<< "$(backup_destination_written_in "$repository")"
+    [[ "$host" =~ ^[0-9.]+$ || "$host" == \[* ]] && die_on_a_backup_destination_given_by_its_address "$host"
+    [[ -n "$host" && "$port" =~ ^[0-9]+$ ]] \
+        || die "BACKUP_FILES_REPOSITORY, a ${repository%%:*} repository, names no host and port the backup can reach."
+    subnet=$(env_get "$local_file" BACKUP_RELAY_SUBNET 2>/dev/null || echo "$BACKUP_RELAY_SUBNET_DEFAULT")
+    address=$(address_the_relay_takes_in "$subnet") \
+        || die "BACKUP_RELAY_SUBNET is ${subnet}: it needs a network address and a prefix of /29 or wider."
+    env_set "$local_file" BACKUP_RELAY_HOST "$host"
+    env_set "$local_file" BACKUP_RELAY_PORT "$port"
+    env_set "$local_file" BACKUP_RELAY_ADDRESS "$address"
+}
+
+forget_the_relay() {
+    local local_file=$1 key
+    for key in BACKUP_RELAY_HOST BACKUP_RELAY_PORT BACKUP_RELAY_ADDRESS; do
+        env_drop "$local_file" "$key"
+    done
+}
+
+# An S3, SFTP or REST destination leaves files-backup with no way out but the
+# relay; any other backend keeps a network of its own, as before the relay.
 write_the_settings_a_backup_over_the_network_needs() {
-    local local_file=$1 repository compose_files ssh_dir host
+    local local_file=$1 repository compose_files overlay="" ssh_dir host
 
     repository=$(env_get "$local_file" BACKUP_FILES_REPOSITORY 2>/dev/null || true)
     compose_files=$(env_get "$local_file" COMPOSE_FILE 2>/dev/null || true)
     [[ -n "$compose_files" ]] || compose_files=$(release_declares COMPOSE_FILE || echo "compose.yaml")
 
-    if ! the_backup_repository_is_reached_over_the_network "$repository"; then
+    if the_relay_carries_the_backup_to "$repository"; then
+        overlay=compose.backup-relay.yaml
+    elif the_backup_repository_is_reached_over_the_network "$repository"; then
+        overlay=compose.backup-network.yaml
+    fi
+
+    if [[ -z "$overlay" ]]; then
         case "$compose_files" in
-            *:compose.backup-network.yaml*)
-                env_set "$local_file" COMPOSE_FILE "${compose_files//:compose.backup-network.yaml/}"
+            *:compose.backup-network.yaml*|*:compose.backup-relay.yaml*)
+                compose_files=${compose_files//:compose.backup-network.yaml/}
+                env_set "$local_file" COMPOSE_FILE "${compose_files//:compose.backup-relay.yaml/}"
                 log_info "The backup service has no way off this machine again" ;;
         esac
+        forget_the_relay "$local_file"
         return 0
     fi
 
+    if [[ "$overlay" == compose.backup-relay.yaml ]]; then
+        write_the_settings_a_relayed_backup_needs "$local_file" "$repository"
+    else
+        forget_the_relay "$local_file"
+    fi
     case "$compose_files" in
-        *compose.backup-network.yaml*) ;;
-        *) env_set "$local_file" COMPOSE_FILE "${compose_files}:compose.backup-network.yaml" ;;
+        *":${overlay}"*) ;;
+        *)
+            compose_files=${compose_files//:compose.backup-network.yaml/}
+            compose_files=${compose_files//:compose.backup-relay.yaml/}
+            env_set "$local_file" COMPOSE_FILE "${compose_files}:${overlay}" ;;
     esac
     ssh_dir=$(env_get "$local_file" BACKUP_FILES_SSH_DIR 2>/dev/null || true)
     if [[ -z "$ssh_dir" ]]; then
@@ -1545,10 +1623,13 @@ write_the_settings_a_backup_over_the_network_needs() {
         env_set "$local_file" BACKUP_FILES_SSH_DIR "$ssh_dir"
     fi
     install -d -m 700 "$ssh_dir"
-    log_warn "The backup service can now reach the network, to send to ${repository%%:*}."
+    if [[ "$overlay" == compose.backup-network.yaml ]]; then
+        log_warn "The backup service can reach the whole network, to send to ${repository%%:*}."
+        log_warn "  Only S3, SFTP and a REST server go through a relay that reaches their one host."
+    fi
 
     [[ "$repository" == sftp:* ]] || return 0
-    host=$(sftp_host_of "$repository")
+    read -r host _ <<< "$(backup_destination_written_in "$repository")"
     if [[ ! -s "$ssh_dir/known_hosts" ]] || ! grep -q "$host" "$ssh_dir/known_hosts"; then
         log_warn "  But no host key is pinned for ${host}, so every backup will be refused."
         log_warn "  Check the fingerprint with whoever runs ${host}, then:"
@@ -2326,6 +2407,45 @@ step_pull() {
     log_info "Images present locally"
 }
 
+# What restic dials is not always the host BACKUP_FILES_REPOSITORY names: AWS and
+# Google Cloud put the bucket in front, and AWS adds s3.dualstack. Run with no
+# network at all, restic names that host on its way to failing; anonymous, it
+# needs no key to get there.
+the_host_restic_dials() {
+    local image=$1 repository=$2 ssh_dir=$3 keys=()
+    [[ -d "$ssh_dir" ]] && keys=(-v "$ssh_dir:/root/.ssh:ro")
+    RESTIC_REPOSITORY="$repository" docker run --rm --pull never --network none \
+        -e RESTIC_REPOSITORY -e RESTIC_PASSWORD=unused ${keys[@]+"${keys[@]}"} \
+        --entrypoint sh "$image" -c 'timeout 60 restic -o s3.unsafe-anonymous-auth=true cat config 2>&1 \
+            | sed -n "/lookup /{s/.*lookup \([^ :]*\).*/\1/p;q;}; /Could not resolve hostname /{s/.*Could not resolve hostname \([^ :]*\).*/\1/p;q;}"' \
+        2>/dev/null </dev/null || true
+}
+
+step_point_the_relay_at_what_restic_dials() {
+    local env_file="$INSTALL_DIR/.env" local_file repository image host
+    case "$(env_get "$env_file" COMPOSE_FILE 2>/dev/null || true)" in
+        *compose.backup-relay.yaml*) ;;
+        *) return 0 ;;
+    esac
+    log_step "Asking restic which host the backup reaches"
+    local_file="$(settings_directory "$env_file")/local.env"
+    repository=$(env_get "$env_file" BACKUP_FILES_REPOSITORY)
+    image=$(env_get "$env_file" FILES_BACKUP_IMAGE)
+    host=$(the_host_restic_dials "$image" "$repository" "$(env_get "$env_file" BACKUP_FILES_SSH_DIR 2>/dev/null || true)")
+    if [[ -z "$host" ]]; then
+        log_error "restic names no host for the ${repository%%:*} repository in BACKUP_FILES_REPOSITORY:"
+        log_error "the relay has nowhere to send the backup."
+        log_error ""
+        log_error "Check it in ${local_file}. restic says why when run alone:"
+        log_error "  sudo bash -c 'set -a; . ${local_file}; RESTIC_REPOSITORY=\$BACKUP_FILES_REPOSITORY RESTIC_PASSWORD=x \\"
+        log_error "    docker run --rm --network none -e RESTIC_REPOSITORY -e RESTIC_PASSWORD ${image} -o s3.unsafe-anonymous-auth=true cat config'"
+        exit 1
+    fi
+    env_set "$local_file" BACKUP_RELAY_HOST "$host"
+    render_settings "$env_file" "$local_file"
+    log_info "The backup leaves through a relay to ${host}:$(env_get "$env_file" BACKUP_RELAY_PORT), and reaches nothing else"
+}
+
 # As the boot service does: a service the release stopped declaring is removed,
 # rather than left holding the GPU memory its replacement now asks for.
 step_start() {
@@ -2747,6 +2867,7 @@ main() {
     step_images_from_a_folder
     step_weights_from_a_folder
     step_pull
+    step_point_the_relay_at_what_restic_dials
     step_weights_from_the_network
     step_start
     step_wait_healthy

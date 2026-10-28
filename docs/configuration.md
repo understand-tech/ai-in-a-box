@@ -343,12 +343,29 @@ sudo ut-install --skip-pull
 docker compose up -d
 ```
 
-**This gives the backup service a way off the machine.** It is the one service
-that reads every document, and Docker cannot narrow its network to the
-destination: it can reach whatever the host can. The installer adds that network
-only when the repository is S3 or SFTP, and takes it away when it is not. A disk
-the host mounts, above, needs none. Name one destination only: given both, the
-installer stops.
+**The backup service still gets no way off the machine.** It is the one service
+that reads every document, so it reaches the destination through a relay, the
+`backup-relay` container, which forwards to that one host and port and to
+nothing else. The service resolves the destination's name to the relay, and
+TLS and the SSH host key are checked against the destination itself, end to
+end. The installer asks `restic` which host it dials — on AWS and Google Cloud
+that is the bucket's own name, not the one in the address — and points the
+relay at it; changing the destination means running the installer again.
+
+- **Give the destination by name.** An address such as `s3:https://192.0.2.10/…`
+  is refused: the relay is reached under the destination's name.
+- **On AWS, give the region's endpoint**, as in the example above. The relay
+  stands for one host; a request that AWS redirects to another region fails.
+- **Two appliances on one Docker host** need two networks for their relays: set
+  `BACKUP_RELAY_SUBNET` (default `198.18.255.248/29`, a /29 or wider) in
+  `local.env` on one of them.
+
+A REST server (`rest:https://…`) goes through the relay too. Any other backend
+`restic` knows — `b2:`, `azure:`, `gs:`, `swift:`, `rclone:` — does not: the
+installer gives the backup service a network of its own instead, from which it
+can reach whatever the host can, and says so.
+A disk the host mounts, above, needs none of this. Name one destination only:
+given both, the installer stops.
 
 **SFTP needs two files**, in `/etc/understandtech/backup-ssh`, which the
 service reads as root's `.ssh`. The installer makes the key, `id_ed25519`,

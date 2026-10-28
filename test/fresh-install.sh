@@ -296,6 +296,20 @@ state_setup() {
         # The destination already knows this key: an install must not replace it.
         backup_over_sftp_with_its_key)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_REPOSITORY="sftp:backup@nas.example.test:/appliance"\n'"'"' > /etc/understandtech/local.env && install -d -m 700 /etc/understandtech/backup-ssh && echo the-key-the-nas-knows > /etc/understandtech/backup-ssh/id_ed25519 && chmod 600 /etc/understandtech/backup-ssh/id_ed25519' ;;
+        backup_over_b2)
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_REPOSITORY="b2:appliance-backups:box"\n'"'"' > /etc/understandtech/local.env' ;;
+        backup_to_an_address)
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_REPOSITORY="s3:https://192.0.2.10:9000/appliance-backups"\n'"'"' > /etc/understandtech/local.env' ;;
+        # What an install made before the relay leaves: the backup on a network of its own.
+        backup_on_its_own_network_before_the_relay)
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_REPOSITORY="s3:https://s3.example.test/appliance-backups"\nCOMPOSE_FILE="compose.yaml:compose.backup-network.yaml"\n'"'"' > /etc/understandtech/local.env' ;;
+        # The stub answers restic's question as restic answers it for AWS: the bucket in front.
+        backup_relay_pointed_where_restic_dials)
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_REPOSITORY="s3:https://s3.eu-west-3.amazonaws.com/appliance-backups/box"\n'"'"' > /etc/understandtech/local.env && mv /stub/docker /stub/docker-stub && printf "#!/bin/sh\ncase \"\$*\" in \"run --rm --pull never --network none \"*) echo appliance-backups.s3.dualstack.eu-west-3.amazonaws.com ;; *) exec /stub/docker-stub \"\$@\" ;; esac\n" > /stub/docker && chmod +x /stub/docker' ;;
+        backup_relay_restic_names_nothing)
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_REPOSITORY="s3:https://s3.example.test/appliance-backups"\n'"'"' > /etc/understandtech/local.env' ;;
+        backup_relay_on_another_subnet)
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_REPOSITORY="s3:https://s3.example.test/appliance-backups"\nBACKUP_RELAY_SUBNET="198.19.0.0/24"\n'"'"' > /etc/understandtech/local.env' ;;
         backup_in_two_places)
             echo 'install -d /w/backup_in_two_places/nas && install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_DESTINATION="/w/backup_in_two_places/nas"\nBACKUP_FILES_REPOSITORY="s3:https://s3.example.test/appliance"\n'"'"' > /etc/understandtech/local.env' ;;
         *)             echo ': ' ;;
@@ -912,16 +926,59 @@ a_destination_on_the_machine_s_own_disk_stops_the_install() {
     return 1
 }
 
-a_network_destination_gets_its_way_out_and_names_the_key_it_lacks() {
-    local settings output
-    settings=$(settings_of backup_over_sftp)
+goes_through_the_relay_to() {
+    local settings=$1 host=$2 port=$3 address=$4
+    grep -qE '^COMPOSE_FILE=.*compose\.backup-relay\.yaml' <<< "$settings" \
+        && ! grep -qE '^COMPOSE_FILE=.*compose\.backup-network\.yaml' <<< "$settings" \
+        && grep -qx "BACKUP_RELAY_HOST=\"${host}\"" <<< "$settings" \
+        && grep -qx "BACKUP_RELAY_PORT=\"${port}\"" <<< "$settings" \
+        && grep -qx "BACKUP_RELAY_ADDRESS=\"${address}\"" <<< "$settings" && return 0
+    grep -E '^(COMPOSE_FILE|BACKUP_RELAY_)' <<< "$settings"
+    return 1
+}
+
+a_network_destination_goes_through_a_relay_and_names_the_key_it_lacks() {
+    local output
     output=$(output_of backup_over_sftp)
-    grep -qE '^COMPOSE_FILE=.*compose\.backup-network\.yaml' <<< "$settings" \
+    goes_through_the_relay_to "$(settings_of backup_over_sftp)" nas.example.test 22 198.18.255.250 \
         && grep -q 'no host key is pinned for nas.example.test' <<< "$output" \
         && grep -q 'Downloading images' <<< "$output" && return 0
-    grep -E '^COMPOSE_FILE' <<< "$settings"
     echo "$output"
     return 1
+}
+
+a_backend_the_relay_does_not_carry_keeps_a_network_of_its_own_and_says_so() {
+    local settings output
+    settings=$(settings_of backup_over_b2)
+    output=$(output_of backup_over_b2)
+    grep -qE '^COMPOSE_FILE=.*compose\.backup-network\.yaml' <<< "$settings" \
+        && ! grep -qE '^COMPOSE_FILE=.*compose\.backup-relay\.yaml|^BACKUP_RELAY_HOST=' <<< "$settings" \
+        && grep -q 'can reach the whole network, to send to b2' <<< "$output" \
+        && grep -q 'Downloading images' <<< "$output" && return 0
+    grep -E '^(COMPOSE_FILE|BACKUP_RELAY_)' <<< "$settings"
+    echo "$output"
+    return 1
+}
+
+a_destination_given_by_its_address_stops_the_install() {
+    local output
+    output=$(output_of backup_to_an_address)
+    grep -q 'gives the destination by its address, 192.0.2.10' <<< "$output" \
+        && grep -q "a name the network's DNS resolves" <<< "$output" \
+        && ! grep -q 'Downloading images' <<< "$output" && return 0
+    echo "$output"
+    return 1
+}
+
+a_backup_on_its_own_network_moves_to_the_relay() {
+    goes_through_the_relay_to "$(settings_of backup_on_its_own_network_before_the_relay)" s3.example.test 443 198.18.255.250 \
+        && grep -q 'Downloading images' <<< "$(output_of backup_on_its_own_network_before_the_relay)" && return 0
+    output_of backup_on_its_own_network_before_the_relay
+    return 1
+}
+
+the_relay_takes_its_address_in_the_subnet_given() {
+    goes_through_the_relay_to "$(settings_of backup_relay_on_another_subnet)" s3.example.test 443 198.19.0.2
 }
 
 an_sftp_destination_gets_a_key_only_root_reads() {
@@ -945,8 +1002,34 @@ a_key_the_destination_knows_is_never_replaced() {
 }
 
 the_default_destination_adds_no_way_out() {
-    ! grep -q 'compose.backup-network.yaml' <<< "$(settings_of bare)" && return 0
-    grep -E '^COMPOSE_FILE' <<< "$(settings_of bare)"
+    local written
+    written=$(settings_of bare; cat "$WORK_DIR/bare/local-env" 2>/dev/null)
+    ! grep -qE 'compose\.backup-(network|relay)\.yaml|^BACKUP_RELAY_HOST=' <<< "$written" \
+        && grep -q 'Downloading images' <<< "$(output_of bare)" && return 0
+    grep -E '^COMPOSE_FILE' <<< "$written"
+    output_of bare | tail -5
+    return 1
+}
+
+the_relay_is_pointed_where_restic_dials() {
+    local output
+    output=$(output_of backup_relay_pointed_where_restic_dials)
+    goes_through_the_relay_to "$(settings_of backup_relay_pointed_where_restic_dials)" \
+            appliance-backups.s3.dualstack.eu-west-3.amazonaws.com 443 198.18.255.250 \
+        && grep -q 'relay to appliance-backups.s3.dualstack.eu-west-3.amazonaws.com:443, and reaches nothing else' <<< "$output" \
+        && grep -q 'Starting services' <<< "$output" && return 0
+    echo "$output"
+    return 1
+}
+
+a_host_restic_does_not_name_stops_the_install() {
+    local output
+    output=$(output_of backup_relay_restic_names_nothing)
+    grep -q 'restic names no host for the s3 repository in BACKUP_FILES_REPOSITORY' <<< "$output" \
+        && grep -q "cat config" <<< "$output" \
+        && ! grep -q 's3.example.test' <<< "$output" \
+        && ! grep -q 'Starting services' <<< "$output" && return 0
+    echo "$output"
     return 1
 }
 
@@ -1505,6 +1588,12 @@ run_install_from_state backup_destination_not_mounted
 run_install_from_state backup_destination_gone_on_an_update
 WALK_IMAGE=$WITH_OPENSSL_IMAGE run_install_from_state backup_over_sftp
 WALK_IMAGE=$WITH_OPENSSL_IMAGE run_install_from_state backup_over_sftp_with_its_key
+run_install_from_state backup_over_b2
+run_install_from_state backup_to_an_address
+run_install_from_state backup_on_its_own_network_before_the_relay
+run_install_from_state backup_relay_on_another_subnet
+PULL_EXIT=0 run_install_from_state backup_relay_pointed_where_restic_dials
+PULL_EXIT=0 run_install_from_state backup_relay_restic_names_nothing
 run_install_from_state backup_in_two_places
 
 printf '%sA machine with nothing on it%s\n' "$BOLD" "$NC"
@@ -1744,8 +1833,20 @@ property "an SFTP destination gets a key made for it, read by root alone, its pu
     an_sftp_destination_gets_a_key_only_root_reads
 property "a key the SFTP destination already knows is never replaced" \
     a_key_the_destination_knows_is_never_replaced
-property "an S3 or SFTP destination gets its way out, and the missing host key is named" \
-    a_network_destination_gets_its_way_out_and_names_the_key_it_lacks
+property "an S3 or SFTP destination goes through a relay to its one host, and the missing host key is named" \
+    a_network_destination_goes_through_a_relay_and_names_the_key_it_lacks
+property "a b2, azure, gs, swift or rclone destination keeps a network of its own, and the install says so" \
+    a_backend_the_relay_does_not_carry_keeps_a_network_of_its_own_and_says_so
+property "a destination given by its address stops the install, and asks for a name" \
+    a_destination_given_by_its_address_stops_the_install
+property "a box whose backup had a network of its own moves to the relay" \
+    a_backup_on_its_own_network_moves_to_the_relay
+property "the relay takes its address in the subnet given for it" \
+    the_relay_takes_its_address_in_the_subnet_given
+property "the relay is pointed at the host restic dials, not the one written" \
+    the_relay_is_pointed_where_restic_dials
+property "an install restic names no host for stops before starting, and says what to run" \
+    a_host_restic_does_not_name_stops_the_install
 property "the default destination adds no way out" \
     the_default_destination_adds_no_way_out
 property "naming two destinations stops the install, before anything is written" \

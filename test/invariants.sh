@@ -373,6 +373,8 @@ check_every_setting_reaches_something() {
 }
 
 service_networks() {
+    local files=("$@")
+    (( ${#files[@]} )) || files=("$REPO_ROOT"/compose*.yaml)
     awk '/^services:/ { inside = 1; next }
          inside && /^[^[:space:]#]/ { inside = 0 }
          inside && /^  [a-z][a-z0-9-]*:$/ { service = $1; sub(/:$/, "", service); listing = 0; next }
@@ -380,7 +382,31 @@ service_networks() {
          listing && /^    [^ ]/ { listing = 0 }
          listing && /^      - / { network = $2; print service, network; next }
          listing && /^      [a-z][a-z0-9-]*:/ { network = $1; sub(/:.*/, "", network); print service, network }' \
-        "$REPO_ROOT"/compose*.yaml
+        "${files[@]}"
+}
+
+internal_networks() {
+    awk '/^networks:/ { inside = 1; next }
+         inside && /^[^[:space:]#]/ { inside = 0 }
+         inside && /^  [a-z][a-z0-9-]*:/ { network = $1; sub(/:.*/, "", network); next }
+         inside && /^    internal:[[:space:]]*true/ { print network }' "$@"
+}
+
+# files-backup reads every document: with the relay's overlay, its only way out
+# is the relay, which sends to the very host files-backup resolves to it.
+check_the_backup_leaves_through_its_relay_alone() {
+    local overlay="$REPO_ROOT/compose.backup-relay.yaml" internal service network
+    [[ -f "$overlay" ]] || return 0
+    internal=$(internal_networks "$overlay" "$REPO_ROOT/compose.yaml")
+    while read -r service network; do
+        [[ "$service" == files-backup ]] || continue
+        grep -qx "$network" <<< "$internal" && continue
+        report "backup-reaches-out-past-its-relay:${network}" \
+            "files-backup joins ${network} in compose.backup-relay.yaml, a network with a way out: the service that reads every document reaches more than the backup's destination"
+    done <<< "$(service_networks "$overlay")"
+    grep -qF -- '- TCP:${BACKUP_RELAY_HOST:-' "$overlay" && grep -qF -- '- "${BACKUP_RELAY_HOST:-' "$overlay" && return 0
+    report "backup-relay-sends-elsewhere" \
+        "the relay in compose.backup-relay.yaml does not send to BACKUP_RELAY_HOST, the name files-backup resolves to it: the backup goes somewhere it did not ask for"
 }
 
 check_only_its_clients_reach_redis() {
@@ -944,6 +970,7 @@ main() {
     check_every_setting_reaches_something
     check_every_volume_is_mounted
     check_only_its_clients_reach_redis
+    check_the_backup_leaves_through_its_relay_alone
     check_no_client_auth_without_the_admitted_list
     check_the_relay_checks_its_token_inside_its_route
     check_the_relay_trusts_its_node_alone

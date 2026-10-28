@@ -10,7 +10,7 @@ that is what it actually printed.
 
 <!-- Scope: what the two backup services produce, and what a restore reads.
      Not the retention rules. -->
-<!-- Source of truth: compose.yaml:213-298, compose.backup-mount.yaml, compose.backup-network.yaml -->
+<!-- Source of truth: compose.yaml:213-298, compose.backup-mount.yaml, compose.backup-relay.yaml, compose.backup-network.yaml -->
 <!-- Date: 2026-10-13 -->
 <!-- Target: github — status of "flowchart": rendered -->
 
