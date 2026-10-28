@@ -1201,6 +1201,10 @@ capability_discriminates "an SFTP destination without the keys to check it" \
     "trusted only under the host key pinned for it" \
     "sed -i.bak '/\/root\/.ssh:ro/d' compose.backup-relay.yaml"
 
+capability_discriminates "a backup that takes any host key an SFTP destination shows" \
+    "trusted only under the host key pinned for it" \
+    "sed -i.bak 's#^set -eu\$#set -eu; restic() { command restic -o sftp.args=\"-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null\" \"\$@\"; }#' backup-files.sh"
+
 capability_discriminates "a backup that resolves its destination on its own, around the relay" \
     "a backup to S3 over TLS goes through the relay" \
     "sed -i.bak '/^    extra_hosts:\$/d; /BACKUP_RELAY_ADDRESS:-198.18.255.250}\"\$/d' compose.backup-relay.yaml"
