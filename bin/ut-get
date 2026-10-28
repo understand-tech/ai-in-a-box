@@ -22,7 +22,6 @@ PREPARE_DIR=""
 MODEL_ID=""
 FOLDER_ROLE="appliance"
 EXTRA_IMAGES=()
-TOKEN_FILE=""
 LICENSE_FILE=""
 REGISTRY_TOKEN=""
 REGISTRY_USER="${UT_REGISTRY_USER:-dgx-access}"
@@ -61,8 +60,6 @@ ut-get — installs UnderstandTech AI in a Box from a release, then runs ut-inst
                        the license key. With --prepare, the registry access it
                        carries is read from Keygen, never shown; ut-install
                        takes it too.
-  --token-file <file>  with --prepare, a registry token instead of a license
-                       key. Read from the file, never shown.
   --role appliance|control-plane|compute
                        with --prepare, what the box runs: all of it (the default),
                        the platform taking its inference from another machine, or
@@ -95,7 +92,7 @@ parse_arguments() {
         case "$1" in
             --from)    RELEASE_DIR="${2:?--from needs a directory}"; shift ;;
             --prepare) PREPARE_DIR="${2:?--prepare needs a directory}"; shift ;;
-            --token-file) TOKEN_FILE="${2:?--token-file needs a file}"; shift ;;
+            --token-file) fail "--token-file is gone: --prepare reads the registry access from the license key, given with --license-file" ;;
             --image)   EXTRA_IMAGES+=("${2:?--image needs an image pinned by digest}"); shift ;;
             --role)    FOLDER_ROLE="${2:?--role needs appliance, control-plane or compute}"; shift ;;
             --model)   MODEL_ID="${2:?--model needs a model}"; INSTALL_ARGUMENTS+=(--model "$2"); shift ;;
@@ -400,7 +397,7 @@ prepare_a_folder() {
     for image in ${EXTRA_IMAGES[@]+"${EXTRA_IMAGES[@]}"}; do
         [[ "$image" =~ @sha256:[0-9a-f]{64}$ ]] || fail "--image takes an image pinned by digest, name:tag@sha256:..., not ${image}"
     done
-    [[ -r "$LICENSE_FILE" || -r "$TOKEN_FILE" ]] || fail "--prepare needs --license-file: the license key UnderstandTech issued"
+    [[ -r "$LICENSE_FILE" ]] || fail "--prepare needs --license-file: the license key UnderstandTech issued"
     [[ -n "$VERSION" ]] || VERSION=$(latest_version) || exit 1
     is_a_release_version "$VERSION" || fail "${VERSION:-nothing} is not a release version — expected one like 2026.09.1"
 
@@ -414,11 +411,7 @@ prepare_a_folder() {
 
     mark_the_folder_architecture "$folder"
     mark_the_folder_role "$folder"
-    if [[ -r "$LICENSE_FILE" ]]; then
-        read_the_registry_access_of_the_license
-    else
-        REGISTRY_TOKEN=$(tr -d '\r\n' < "$TOKEN_FILE")
-    fi
+    read_the_registry_access_of_the_license
     auth=$(mktemp -d)/auth
     write_registry_auth "$auth" "$REGISTRY_TOKEN"
     log_step "Copying every image the ${FOLDER_ROLE} role of release ${VERSION} runs"
