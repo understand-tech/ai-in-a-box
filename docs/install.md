@@ -349,9 +349,9 @@ anyway. To see what the license file says without installing:
 sudo ut-license check /etc/understandtech/machine.lic
 ```
 
-A registry token on its own, with `--token-file` or `UT_REGISTRY_TOKEN`, is still
-accepted by this version, with a warning. The next version asks for a license
-key.
+Every install and every update needs the license key: the registry access comes
+with it, and nothing else gives it. A machine that has none stops there, says so,
+and changes nothing; with a terminal, the key is asked for.
 
 **Leave `--domain` out and it asks.** Answering nothing on a first install takes
 `understand.local`, which resolves over mDNS on one flat network and nowhere
@@ -469,7 +469,6 @@ reinstallable in a minute.
 | `--certificate-dir DIR` | Serve your own certificate, `fullchain.pem` and `privkey.pem` in `DIR`, checked before anything is written. See [certificates and DNS](certificates-and-dns.md). |
 | `--behind-proxy RANGE` | Your load balancer terminates TLS from `RANGE`. See [certificates and DNS](certificates-and-dns.md). |
 | `--license-file PATH` | Read the license key from a file instead of a prompt. |
-| `--token-file PATH` | A registry token instead of a license key. This version only. |
 | `--machine-file PATH` | The license file UnderstandTech sent for a machine that cannot reach Keygen. Checked with no network, then kept. |
 | `--skip-pull` | Images are already on the machine. The license file this machine keeps is still checked; the registry is not contacted. A first install activates the license through Keygen, or takes `--machine-file`. |
 | `--no-autostart` | Do not install the boot service. |

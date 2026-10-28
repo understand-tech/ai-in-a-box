@@ -87,6 +87,10 @@ discriminates "a page that no longer reads the folder's license" \
     "handover-unread:--machine-file" \
     "sed -i.bak 's/flags.String(\"machine-file\"/flags.String(\"license-from\"/' cmd/ut-setup/main.go"
 
+discriminates "an installer that reads a registry token from the environment" \
+    "registry-token-outside-the-license:ut-install" \
+    "sed -i.bak 's|^REGISTRY_TOKEN=\"\"$|REGISTRY_TOKEN=\"\${UT_REGISTRY_TOKEN:-}\"|' bin/ut-install"
+
 discriminates "a volume declared and mounted by no service" \
     "volume-mounted-nowhere:metrics-data" \
     "sed -i.bak '/- metrics-data:/d' compose.yaml"
@@ -815,10 +819,6 @@ if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
     capability_discriminates "the installed command cloning over its own release" \
         "installed from the package, it clones nothing" \
         "sed -i.bak 's|        INSTALL_DIR=\"\$PACKAGE_SHARE_DIR\"|        INSTALL_DIR=\"\$CHECKOUT_INSTALL_DIR\"|' bin/ut-install"
-
-    capability_discriminates "the registry token asked for on every run" \
-        "a registry login already stored is not asked for a second time" \
-        "sed -i.bak 's|^release_is_present() { checkout_exists .. release_comes_from_the_package_manager; }|release_is_present() { checkout_exists; }|' bin/ut-install"
 
     capability_discriminates "a dependency nobody calls" \
         "every dependency it declares" \
@@ -1575,7 +1575,11 @@ if grep -q 'looks_like_a_checkout' "$REPO_ROOT/bin/ut-install"; then
     # correction that quietly opens the way in is exactly what it must not do.
     install_walk_discriminates "a way in that no longer needs a key" \
         "but a machine with no credentials is still asked for a key" \
-        "sed -i.bak 's|^    release_is_present && registry_credentials_stored && return 1$|    release_is_present \&\& return 1|' bin/ut-install"
+        "sed -i.bak 's|^        ask_for_license$|        return 0|' bin/ut-install"
+
+    install_walk_discriminates "a registry token taken without a license key" \
+        "a machine installed without a license key stops, asks for one, and changes nothing" \
+        "sed -i.bak 's|log_warn \"UT_REGISTRY_TOKEN is not read: the registry access comes with the license key.\"|{ REGISTRY_TOKEN=\$UT_REGISTRY_TOKEN; return 0; }|' bin/ut-install"
 fi
 
     install_walk_discriminates "a database nobody has the password for, accepted" \

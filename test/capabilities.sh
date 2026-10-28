@@ -1148,17 +1148,6 @@ ask_the_installed_command() {
 }
 say INSTALL_DIR_AND_FETCH "$(ask_the_installed_command)"
 
-mkdir -p /root/.docker
-printf '{"auths":{"ghcr.io":{}}}\n' > /root/.docker/config.json
-say TOKEN_ASKED_AGAIN "$(bash -c '
-    set +u
-    source /usr/bin/ut-install >/dev/null 2>&1
-    set +eE
-    trap - ERR
-    resolve_install_dir
-    token_required && echo yes || echo no
-')"
-
 mkdir -p /var/lib/understandtech/app-data
 echo document > /var/lib/understandtech/app-data/one
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> /systemctl-calls\n' > /usr/local/bin/systemctl
@@ -1230,10 +1219,6 @@ an_upgrade_replaces_the_release_and_keeps_the_settings() {
 
 the_installed_command_takes_the_release_that_is_there() {
     reports INSTALL_DIR_AND_FETCH '/usr/share/understandtech skipped'
-}
-
-a_registry_login_already_stored_is_not_asked_for_again() {
-    reports TOKEN_ASKED_AGAIN no
 }
 
 an_upgrade_keeps_the_reporting_timer_and_removal_stops_it() {
@@ -3557,8 +3542,6 @@ if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
         an_upgrade_replaces_the_release_and_keeps_the_settings
     capability "installed from the package, it clones nothing and uses what is there" \
         the_installed_command_takes_the_release_that_is_there
-    capability "a registry login already stored is not asked for a second time" \
-        a_registry_login_already_stored_is_not_asked_for_again
     capability "removing the package leaves the settings and the data behind" \
         removing_the_package_leaves_the_settings_and_the_data
     capability "an upgrade keeps the reporting timer, and removing the package stops it" \
