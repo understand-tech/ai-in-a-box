@@ -4303,6 +4303,101 @@ if grep -q 'ut-status' "$REPO_ROOT/setup-autostart.sh"; then
         removing_the_units_removes_the_status_check
 fi
 
+an_install_to_import_into() {
+    local dir=$1 prefix=$2
+    mkdir -p "$dir/data"
+    cp "$REPO_ROOT/compose.yaml" "$dir/"
+    printf 'UT_DOMAIN="import.test"\nDATA_ROOT="%s/data"\nCONTAINER_PREFIX="%s"\n' "$dir" "$prefix" > "$dir/.env"
+    install -m 600 /dev/null "$dir/local.env"
+}
+
+# One service from an image the release already pulls: nothing to build.
+an_app_to_import() {
+    local dir=$1 more=${2:-}
+    mkdir -p "$dir"
+    cat > "$dir/compose.yaml" <<EOF
+services:
+  web:
+    image: $CADDY_IMAGE
+    command: ["caddy", "respond", "--listen", ":8080", "imported"]
+$more
+EOF
+}
+
+imported_app_down() {
+    local id=$1 made_proxy=$2 containers
+    containers=$(docker ps -aq --filter "label=com.docker.compose.project=$id")
+    [[ -n "$containers" ]] && docker rm -f $containers >/dev/null 2>&1
+    docker network rm "${id}_default" >/dev/null 2>&1
+    [[ "$made_proxy" == true ]] && docker network rm proxy >/dev/null 2>&1
+    return 0
+}
+
+an_imported_app_is_routed_out_of_the_app_builder_s_hands_and_started() {
+    local dir="$WORK_DIR/import-route" id="capimport$$r" made_proxy=false out status state route
+    an_install_to_import_into "$dir" "$id"
+    an_app_to_import "$dir/app"
+    docker network inspect proxy >/dev/null 2>&1 || made_proxy=true
+    out=$(UT_INSTALL_DIR="$dir" "$REPO_ROOT/bin/ut-import-app" "$dir/app" "$id" --service web --port 8080 2>&1)
+    status=$?
+    state=$(docker ps -a --filter "label=com.docker.compose.project=$id" --filter "label=com.docker.compose.service=web" --format '{{.State}}')
+    imported_app_down "$id" "$made_proxy"
+    (( status == 0 )) || { echo "ut-import-app failed: $out"; return 1; }
+    route="$dir/data/appbuilder/traefik-dynamic/_imported-$id.yml"
+    [[ -f "$route" ]] || { echo "no route under traefik-dynamic/_imported-$id.yml"; return 1; }
+    grep -qF "http://$id:8080" "$route" || { echo "the route does not reach $id:8080: $(cat "$route")"; return 1; }
+    [[ ! -e "$dir/data/appbuilder/traefik-dynamic/$id.yml" ]] \
+        || { echo "a route named like an App Builder project, which it rewrites at each start"; return 1; }
+    [[ "$state" == running ]] || { echo "the imported app is ${state:-not started}"; return 1; }
+}
+
+an_imported_app_becomes_an_origin_the_platform_admits_once() {
+    local dir="$WORK_DIR/import-origin" id="capimport$$o" made_proxy=false out status origins
+    an_install_to_import_into "$dir" "$id"
+    an_app_to_import "$dir/app"
+    docker network inspect proxy >/dev/null 2>&1 || made_proxy=true
+    out=$(UT_INSTALL_DIR="$dir" "$REPO_ROOT/bin/ut-import-app" "$dir/app" "$id" --service web --port 8080 2>&1)
+    status=$?
+    imported_app_down "$id" "$made_proxy"
+    (( status == 0 )) || { echo "ut-import-app failed: $out"; return 1; }
+    origins=$(sed -n 's/^EXTRA_ALLOWED_ORIGINS="\(.*\)"$/\1/p' "$dir/local.env")
+    [[ "$origins" == "https://admin.import.test,https://llms.import.test,https://assistants.import.test,https://builder.import.test,https://$id.apps.import.test" ]] \
+        || { echo "EXTRA_ALLOWED_ORIGINS is '$origins', not compose.yaml's defaults followed by the app"; return 1; }
+    [[ -n "$(find "$dir/local.env" -perm 600)" ]] || { echo "local.env is no longer readable by root alone"; return 1; }
+
+    printf 'EXTRA_ALLOWED_ORIGINS="https://kept.example,https://%s.apps.import.test"\n' "$id" > "$dir/local.env"
+    ( source "$REPO_ROOT/bin/ut-import-app" \
+        && INSTALL_DIR=$dir declare_the_app_s_origin "$dir/local.env" "$dir/compose.yaml" import.test "https://$id.apps.import.test" ) >/dev/null 2>&1
+    origins=$(sed -n 's/^EXTRA_ALLOWED_ORIGINS="\(.*\)"$/\1/p' "$dir/local.env")
+    [[ "$origins" == "https://kept.example,https://$id.apps.import.test" ]] \
+        || { echo "an origin already listed, in a list set by hand, became '$origins'"; return 1; }
+}
+
+an_app_that_mounts_the_docker_socket_is_refused_before_anything_is_written() {
+    local dir="$WORK_DIR/import-socket" id="capimport$$s" made_proxy=false out status started
+    an_install_to_import_into "$dir" "$id"
+    an_app_to_import "$dir/app" '    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock'
+    docker network inspect proxy >/dev/null 2>&1 || made_proxy=true
+    out=$(UT_INSTALL_DIR="$dir" "$REPO_ROOT/bin/ut-import-app" "$dir/app" "$id" --service web --port 8080 2>&1)
+    status=$?
+    started=$(docker ps -aq --filter "label=com.docker.compose.project=$id")
+    imported_app_down "$id" "$made_proxy"
+    (( status != 0 )) || { echo "an app that mounts the Docker socket was imported"; return 1; }
+    grep -q 'mounts the Docker socket' <<< "$out" || { echo "refused, but not for the socket: $out"; return 1; }
+    [[ -z "$started" ]] || { echo "refused, after starting it"; return 1; }
+    [[ ! -e "$dir/data/appbuilder/traefik-dynamic/_imported-$id.yml" ]] || { echo "refused, after writing its route"; return 1; }
+    ! grep -q '^EXTRA_ALLOWED_ORIGINS=' "$dir/local.env" || { echo "refused, after making it an origin the platform admits"; return 1; }
+}
+
+group "Importing an app the App Builder did not build"
+capability "an imported app is routed under a name the App Builder leaves alone, and started" \
+    an_imported_app_is_routed_out_of_the_app_builder_s_hands_and_started
+capability "an imported app becomes an origin the platform admits, listed once" \
+    an_imported_app_becomes_an_origin_the_platform_admits_once
+capability "an app that mounts the Docker socket is refused before anything is written" \
+    an_app_that_mounts_the_docker_socket_is_refused_before_anything_is_written
+
 group "Keeping the history of an install"
 capability "every install run is kept, from its first step" \
     the_installer_keeps_every_run_from_its_first_step

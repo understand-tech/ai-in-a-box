@@ -127,6 +127,10 @@ discriminates "an imported app's route named like an App Builder project" \
     "imported-app-route-rewritten-by-the-app-builder" \
     "sed -i.bak 's|file=\"\$traefik_dynamic_dir/_imported-|file=\"\$traefik_dynamic_dir/|' bin/ut-import-app"
 
+discriminates "the default origins moved out of the anchor ut-import-app reads" \
+    "import-reads-no-default-origins" \
+    "sed -i.bak 's/&url-allowed-origins /\&url-default-origins /; s/\*url-allowed-origins/*url-default-origins/' compose.yaml"
+
 discriminates "the inference engine let into Redis's network" \
     "redis-reachable-by:nim-llm" \
     "sed -i.bak '/^  nim-llm:\$/,/^  [a-z]/ s|^      - ut-backend-network\$|      - ut-backend-network\\n      - ut-redis-network|' compose.yaml"
@@ -1758,6 +1762,22 @@ if [[ -x "$REPO_ROOT/test/ingress.sh" ]]; then
         "the documented OIDC redirect URI reaches the platform API" \
         "sed -i.bak 's|/api/openid/callback|/en/login/openid-auth|' docs/first-run-configuration.md"
 fi
+
+capability_discriminates "an imported app's route written where the App Builder rewrites it" \
+    "an imported app is routed under a name the App Builder leaves alone" \
+    "sed -i.bak 's|file=\"\$traefik_dynamic_dir/_imported-|file=\"\$traefik_dynamic_dir/|' bin/ut-import-app"
+
+capability_discriminates "an imported app never made an origin the platform admits" \
+    "an imported app becomes an origin the platform admits" \
+    "sed -i.bak 's/^declare_the_app_s_origin() {\$/declare_the_app_s_origin() { return 0/' bin/ut-import-app"
+
+capability_discriminates "an imported app's origin added again to a list that has it" \
+    "an imported app becomes an origin the platform admits" \
+    "sed -i.bak '/^    case \",\\\$origins,\" in\$/,/^    esac\$/d' bin/ut-import-app"
+
+capability_discriminates "an app that mounts the Docker socket let in" \
+    "an app that mounts the Docker socket is refused" \
+    "sed -i.bak 's/^mounts_the_docker_socket_or_runs_privileged() {\$/mounts_the_docker_socket_or_runs_privileged() { return 1/' bin/ut-import-app"
 
 printf '\n%sMigration, seen failing%s\n\n' "$BOLD" "$NC"
 
