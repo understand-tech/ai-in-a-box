@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	usageSeries     = `{__name__=~"vllm:.*|ut_inference_.*|caddy_.*"}`
+	usageSeries     = `{__name__=~"vllm:.*|ut_inference_.*|ut_cost_.*|caddy_.*"}`
 	hourMillis      = int64(time.Hour / time.Millisecond)
 	dayMillis       = 24 * hourMillis
 	recorderKeeps   = 35 * dayMillis

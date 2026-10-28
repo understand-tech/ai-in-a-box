@@ -7,10 +7,35 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 )
+
+// usageSeries is `{__name__=~"PATTERN"}` — extracted and tested with the same
+// regexp engine (RE2) Prometheus itself matches series names with, not a
+// hand-rolled approximation of what the selector does.
+func TestUsageSeriesKeepsTheNewCostMetricAlongsideInference(t *testing.T) {
+	start := strings.Index(usageSeries, `"`) + 1
+	end := strings.LastIndex(usageSeries, `"`)
+	pattern := regexp.MustCompile("^(?:" + usageSeries[start:end] + ")$")
+
+	for _, name := range []string{
+		"ut_inference_requests_total",
+		"ut_cost_usd_total",
+		"ut_cost_gpu_seconds_total",
+		"vllm:num_requests_running",
+		"caddy_http_requests_total",
+	} {
+		if !pattern.MatchString(name) {
+			t.Errorf("usageSeries should keep %q, does not", name)
+		}
+	}
+	if pattern.MatchString("some_other_metric") {
+		t.Errorf("usageSeries should not keep an unrelated metric name, does")
+	}
+}
 
 func TestTheCustomersDomainNeverLeavesTheBox(t *testing.T) {
 	cases := map[string]string{
