@@ -22,15 +22,22 @@ fi
 
 PASSED=0
 FAILED=0
+NOT_APPLICABLE=0
 FAILURES=()
+DOES_NOT_APPLY=77
 
 property() {
     local description=$1; shift
-    local output
-    if output=$("$@" 2>&1); then
+    local output status=0
+    output=$("$@" 2>&1) || status=$?
+    if (( status == 0 )); then
         printf '  %s✔%s %s\n' "$GREEN" "$NC" "$description"
         [[ -n "$output" ]] && printf '%s      %s%s\n' "$DIM" "${output//$'\n'/$'\n'      }" "$NC"
         PASSED=$((PASSED + 1))
+    elif (( status == DOES_NOT_APPLY )); then
+        printf '  %s–%s %s %s(does not apply)%s\n' "$DIM" "$NC" "$description" "$DIM" "$NC"
+        printf '%s      %s%s\n' "$DIM" "${output//$'\n'/$'\n'      }" "$NC"
+        NOT_APPLICABLE=$((NOT_APPLICABLE + 1))
     else
         printf '  %s✘%s %s\n' "$RED" "$NC" "$description"
         [[ -n "$output" ]] && printf '%s      %s%s\n' "$DIM" "${output//$'\n'/$'\n'      }" "$NC"
@@ -46,15 +53,61 @@ resolve_starting_point() {
         && FROM_REF=FETCH_HEAD
 }
 
+# A version installed from the package carries no .env.example: its machine
+# holds release.env, the customer's local.env, and the .env ut-install renders.
+the_starting_version_is_a_package() {
+    ! git -C "$HISTORY_ROOT" cat-file -e "$FROM_REF:.env.example" 2>/dev/null \
+        && git -C "$HISTORY_ROOT" cat-file -e "$FROM_REF:release.env" 2>/dev/null
+}
+
+# ut-install sets INSTALL_DIR from UT_INSTALL_DIR as it is read, so the
+# directory is given once its functions are loaded.
+with_the_installer_in() {
+    local dir=$1; shift
+    (
+        set +u
+        source "$dir/bin/ut-install" >/dev/null 2>&1
+        set -u +eE
+        trap - ERR
+        INSTALL_DIR=$dir
+        "$@"
+    ) >/dev/null 2>&1
+}
+
+settings_a_first_install_writes() {
+    local dir=$1
+    env_set "$dir/local.env" UT_DOMAIN "migration.test"
+    render_settings "$dir/.env" "$dir/local.env"
+    generate_database_credentials "$dir/.env" "$dir/local.env"
+    generate_application_secrets "$dir/local.env"
+    render_settings "$dir/.env" "$dir/local.env"
+}
+
+# The older package as a machine runs it: its own installer renders its own
+# release.env and a local.env holding the secrets a first install generates.
+install_the_starting_package() {
+    git -C "$HISTORY_ROOT" archive "$FROM_REF" release.env bin/ut-install bin/ut-install.d \
+        $(git -C "$HISTORY_ROOT" ls-tree --name-only "$FROM_REF" | grep -E '^compose.*\.yaml$') \
+        | tar -x -C "$BEFORE"
+    install -m 600 /dev/null "$BEFORE/local.env"
+    with_the_installer_in "$BEFORE" settings_a_first_install_writes "$BEFORE"
+}
+
 lay_out_both_versions() {
     mkdir -p "$BEFORE" "$AFTER"
+    cp "$REPO_ROOT"/compose*.yaml "$AFTER/"
+    cp "$REPO_ROOT/release.env" "$AFTER/"
+
+    if $FROM_PACKAGE; then
+        install_the_starting_package
+        cp -p "$BEFORE/local.env" "$BEFORE/.env" "$AFTER/"
+        return
+    fi
+
     local file
     for file in compose.yaml compose.appbuilder.yaml .env.example; do
         git -C "$HISTORY_ROOT" show "$FROM_REF:$file" > "$BEFORE/$file" 2>/dev/null
     done
-    cp "$REPO_ROOT"/compose*.yaml "$AFTER/"
-    cp "$REPO_ROOT/release.env" "$AFTER/"
-
     cp "$BEFORE/.env.example" "$BEFORE/.env"
     cp "$BEFORE/.env.example" "$AFTER/.env"
     chmod 600 "$BEFORE/.env" "$AFTER/.env"
@@ -128,19 +181,25 @@ spelled_out_in_the_repository() {
 the_new_stack_refuses_an_untouched_env() {
     local missing
     missing=$(variables_the_install_must_gain | tr '\n' ' ')
-    [[ -n "${missing// /}" ]] || { echo "nothing is missing, so nothing would refuse"; return 1; }
+    if [[ -z "${missing// /}" ]]; then
+        $FROM_PACKAGE || { echo "nothing is missing, so nothing would refuse"; return 1; }
+        echo "this version requires no setting the installed package lacks: there is nothing to refuse"
+        return "$DOES_NOT_APPLY"
+    fi
     rendered "$AFTER" -f compose.yaml >/dev/null 2>&1 && return 1
     echo "compose stops on: ${missing% }"
 }
 
 the_installer_supplies_what_is_missing() {
     local key
-    # The old world first: one flat .env, secrets and all. That is the machine
-    # the upgrade actually finds.
-    INSTALL_DIR="$BEFORE"
-    generate_application_secrets "$BEFORE/.env" >/dev/null 2>&1
-    generate_database_credentials "$BEFORE/.env" "$BEFORE/.env" >/dev/null 2>&1
-    cp "$BEFORE/.env" "$AFTER/.env"
+    # From main, the old world first: one flat .env, secrets and all. That is
+    # the machine the upgrade actually finds. A package already left its own.
+    if ! $FROM_PACKAGE; then
+        INSTALL_DIR="$BEFORE"
+        generate_application_secrets "$BEFORE/.env" >/dev/null 2>&1
+        generate_database_credentials "$BEFORE/.env" "$BEFORE/.env" >/dev/null 2>&1
+        cp "$BEFORE/.env" "$AFTER/.env"
+    fi
 
     INSTALL_DIR="$AFTER"
     migrate_existing_settings_into_local "$AFTER/.env" "$AFTER/local.env" >/dev/null 2>&1
@@ -236,7 +295,15 @@ the_previous_version_renders_what_this_one_wrote() {
     local dir="$WORK_DIR/rollback"
     rm -rf "$dir"; mkdir -p "$dir"
     cp "$BEFORE"/compose*.yaml "$dir/" 2>/dev/null
-    cp "$AFTER/.env" "$dir/.env"
+    # The older package, put back, renders its own release with the local.env
+    # this version leaves.
+    if $FROM_PACKAGE; then
+        cp -R "$BEFORE/bin" "$BEFORE/release.env" "$dir/"
+        cp -p "$AFTER/local.env" "$dir/local.env"
+        with_the_installer_in "$dir" render_settings "$dir/.env" "$dir/local.env"
+    else
+        cp "$AFTER/.env" "$dir/.env"
+    fi
     rendered "$dir" -f compose.yaml >/dev/null 2>&1 && return 0
     echo "the previous version refuses the settings this one produced"
     rendered "$dir" -f compose.yaml 2>&1 | head -3
@@ -316,11 +383,14 @@ EOF
 }
 
 resolve_starting_point || { echo "cannot resolve $FROM_REF"; exit 1; }
+FROM_PACKAGE=false
+the_starting_version_is_a_package && FROM_PACKAGE=true
 lay_out_both_versions
 load_installer
 
-printf '%sMigrating an existing install%s %sfrom %s%s\n' \
-    "$BOLD" "$NC" "$DIM" "$(git -C "$HISTORY_ROOT" rev-parse --short "$FROM_REF")" "$NC"
+printf '%sMigrating an existing install%s %sfrom %s%s%s\n' \
+    "$BOLD" "$NC" "$DIM" "$(git -C "$HISTORY_ROOT" rev-parse --short "$FROM_REF^{commit}")" \
+    "$($FROM_PACKAGE && echo ', installed from the package')" "$NC"
 echo
 
 property "an untouched environment file is refused, and says which variable" \
@@ -361,6 +431,7 @@ property "and it renders the stack from those settings" \
 
 echo
 printf '%s%d verified%s' "$GREEN" "$PASSED" "$NC"
+(( NOT_APPLICABLE )) && printf ', %s%d not applying to this starting point%s' "$DIM" "$NOT_APPLICABLE" "$NC"
 if (( FAILED )); then
     printf ', %s%d failing%s\n' "$RED" "$FAILED" "$NC"
     printf '\nNot working:\n'

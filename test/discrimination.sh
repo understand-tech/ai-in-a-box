@@ -347,13 +347,13 @@ install_walk_discriminates() {
 }
 
 migration_discriminates() {
-    local description=$1 expected=$2 mutation=$3
+    local description=$1 expected=$2 mutation=$3 from=${4:-}
     fresh_copy
     ( cd "$COPY" && eval "$mutation" ) >/dev/null 2>&1
     find "$COPY" -name '*.bak' -delete 2>/dev/null
 
     local output
-    output=$( cd "$COPY" && MIGRATION_HISTORY="$REPO_ROOT" ./test/migration.sh 2>&1 )
+    output=$( cd "$COPY" && MIGRATION_HISTORY="$REPO_ROOT" MIGRATION_FROM="$from" ./test/migration.sh 2>&1 )
 
     if grep '✘' <<< "$output" | grep -qF "$expected"; then
         printf '  %s✔%s %s\n' "$GREEN" "$NC" "$description"
@@ -1808,6 +1808,16 @@ printf '\n%sMigration, seen failing%s\n\n' "$BOLD" "$NC"
 migration_discriminates "a volume renamed beside the one retired on purpose" \
     "every volume and network keeps its name" \
     "sed -i.bak 's|-mongodb-data$|-mongodb-data-renamed|' compose.yaml"
+
+migration_discriminates "from a package version, a volume renamed on the way" \
+    "every volume and network keeps its name" \
+    "sed -i.bak 's|-mongodb-data$|-mongodb-data-renamed|' compose.yaml" \
+    v2026.10.0-rc17
+
+migration_discriminates "from a package version, a database user that changes on the way" \
+    "the database keeps its credentials" \
+    "sed -i.bak 's|MONGO_INITDB_ROOT_USERNAME: \${MONGODB_USERNAME|MONGO_INITDB_ROOT_USERNAME: renamed-\${MONGODB_USERNAME|' compose.yaml" \
+    v2026.10.0-rc17
 
 printf '\n%s%d discriminate%s' "$GREEN" "$PASSED" "$NC"
 if (( FAILED )); then
