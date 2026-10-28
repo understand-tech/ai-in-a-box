@@ -1380,6 +1380,26 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
         "a platform linked by key before moves to its relay" \
         "sed -i.bak '/env_drop \"\$local_file\" UT_INFERENCE_CA_BUNDLE/d' bin/ut-install.d/remote-inference.sh"
 
+    install_walk_discriminates "a platform whose update downloads the model it does not serve" \
+        "a platform that takes its inference elsewhere downloads none of the model's weights" \
+        "sed -i.bak '/^    this_machine_relays_to_a_compute_node\$/d' bin/ut-install"
+
+    install_walk_discriminates "a platform given its inference back that keeps its relay" \
+        "a platform given its inference back by --inference-here starts its engine" \
+        "sed -i.bak '/env_set \"\$local_file\" COMPOSE_FILE \"\${compose_files\/\/:compose.no-gpu.yaml\/}\"/d' bin/ut-install.d/remote-inference.sh"
+
+    install_walk_discriminates "a platform given its inference back with its engine still switched off" \
+        "a platform given its inference back by --inference-here starts its engine" \
+        "sed -i.bak 's/for key in COMPOSE_PROFILES VLLM_LLM_BASE_URL/for key in VLLM_LLM_BASE_URL/' bin/ut-install.d/remote-inference.sh"
+
+    install_walk_discriminates "a platform given its inference back where no GPU answers" \
+        "a platform asking for its inference back where no GPU answers is refused" \
+        "sed -i.bak 's/^    elif ! an_accelerator_answers; then\$/    elif false; then/' bin/ut-install.d/remote-inference.sh"
+
+    install_walk_discriminates "a platform taking its inference back measured as a platform" \
+        "the disk a platform needs follows where its inference runs" \
+        "sed -i.bak '/^    \$INFERENCE_HERE && return 1\$/d' bin/ut-install"
+
     install_walk_discriminates "a node given as a URL taken as given" \
         "a node given as a URL is refused before anything is written" \
         "sed -i.bak 's|^    if \\[\\[ ! \"\$INFERENCE_FROM\" =~ .*|    if false; then|' bin/ut-install.d/remote-inference.sh"
