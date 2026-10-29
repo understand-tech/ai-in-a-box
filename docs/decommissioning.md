@@ -87,13 +87,19 @@ sudo docker logout ghcr.io
 `ut-install` stores it under `root`, so logging out as your own user leaves it
 in place.
 
-If the App Builder was enabled, its generated applications ran as their own
-compose projects with their own volumes, which none of the above touches:
+If the App Builder was enabled, its generated applications ran in their own
+Docker: their images, containers and volumes are in one volume, and its profile
+stays loaded until removed:
 
 ```bash
-docker volume ls
+docker volume rm ut-app-builder-docker-data
 docker network rm proxy
+sudo apparmor_parser -R /etc/apparmor.d/ut-app-builder-docker
+sudo rm -f /etc/apparmor.d/ut-app-builder-docker
 ```
+
+On this machine's Docker (`APP_BUILDER_DOCKER="host"`), they ran as their own
+compose projects with their own volumes, which `docker volume ls` lists.
 
 ## 5 · The copies that are not on this machine
 
