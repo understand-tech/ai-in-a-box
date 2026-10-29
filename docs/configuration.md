@@ -434,10 +434,12 @@ times the per-key limit when empty, `0` to lift it.
 LOG_LEVEL="INFO"
 ```
 
-`DEBUG` puts document content in the logs. It was the shipped default for a
-long time — if this appliance was installed before that changed, it is still
-`DEBUG` in your file and no update touches it, because an explicit value always
-wins.
+`DEBUG` puts document content in the logs. It was `.env.example`'s default for
+every `git clone` install before the installer existed — nobody chose it. An
+update from such a checkout now drops it and starts the box at `INFO` instead;
+see [what an update does to your settings](update.md#what-an-update-does-to-your-settings).
+Set `LOG_LEVEL="DEBUG"` yourself in `local.env` and it stays, explicit values
+always win — useful for the length of a support session.
 
 ## When the first install is slow to download
 

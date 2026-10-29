@@ -115,6 +115,18 @@ separate, deliberate edit to `local.env`. An image or an engine setting of your
 own is not carried over: its old value stays in `env.before-split`; set it again
 in `local.env` if you need it.
 
+**One more value is left to this release, for a different reason: `LOG_LEVEL="DEBUG"`.**
+Every `.env.example` shipped it before the installer existed, so a checkout that
+still has it never chose it — it inherited a default nobody picked. The
+installer drops it the same way and says so, and the box logs at `INFO` instead:
+
+```
+[ ok ] LOG_LEVEL was DEBUG, which the old checkout shipped by default rather than by choice: the box now logs at INFO — set LOG_LEVEL="DEBUG" in local.env yourself for the length of a support session
+```
+
+Any other value of `LOG_LEVEL` — `WARNING`, or `DEBUG` you set yourself after
+this split — is carried over like any other setting of yours.
+
 New versions also make variables mandatory, and the stack refuses to start
 rather than run misconfigured. The installer generates each one and prints it
 once. **Write down the backup password** — without it no snapshot can be read,
