@@ -113,6 +113,12 @@ docker exec ut-mongodb mongorestore --gzip --archive=/tmp/restore.gz \
 `--drop` replaces each collection as it is restored. Without it, restoring onto
 a database that still holds documents merges the two.
 
+**An archive taken before the database password last changed** — by
+`ut-install --rotate-database-password` — carries the old password, and
+restored whole puts it back: every service is locked out at its next start.
+Leave its accounts out with `--nsExclude 'admin.*'`, as when
+[restoring on another machine](#on-another-machine).
+
 **To restore one database only**, rather than all of them:
 
 ```bash
