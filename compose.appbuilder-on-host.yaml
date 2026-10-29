@@ -60,6 +60,19 @@ services:
         reservations:
           memory: 128M
 
+  # Coming back here, ut-install starts the apps' own Docker once more to take
+  # them out of it, and copies their volumes with its tools: declared here, its
+  # image comes onto this machine with the others.
+  app-builder-docker-image:
+    labels:
+      ut.role: "control-plane"
+    image: ${APP_BUILDER_DOCKER_IMAGE:-docker:29.6.2-dind-rootless@sha256:212a9e782c7119fd6a212beaab6b7665a29b663d894d0f6201710c89575ad0ae}
+    container_name: ${CONTAINER_PREFIX:-ut}-app-builder-docker-image
+    restart: "no"
+    entrypoint: ["true"]
+    network_mode: none
+    logging: *default-logging
+
 networks:
   proxy:
     name: proxy

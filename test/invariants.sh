@@ -455,13 +455,19 @@ check_the_apps_docker_stays_off_the_platform_networks() {
 
 check_the_apps_docker_runs_unprivileged() {
     local service profile="$REPO_ROOT/appbuilder/apparmor/ut-app-builder-docker"
+    local seccomp="$REPO_ROOT/appbuilder/seccomp/ut-app-builder-docker.json"
     [[ -f "$APPS_DOCKER_OVERLAY" ]] || return 0
     service=$(apps_docker_service)
     grep -qE 'privileged:|cap_add:|SYS_ADMIN' <<< "$service" \
         && report "apps-docker-privileged" \
             "the App Builder's Docker is given privileges: a privileged container it starts would reach this machine's disks"
+    grep -qF -- '- seccomp=./appbuilder/seccomp/ut-app-builder-docker.json' <<< "$service" \
+        && ! grep -qF 'seccomp=unconfined' <<< "$service" \
+        && grep -qF '"defaultAction": "SCMP_ACT_ERRNO"' "$seccomp" 2>/dev/null \
+        || report "apps-docker-without-its-seccomp-profile" \
+            "the App Builder's Docker does not run under appbuilder/seccomp/ut-app-builder-docker.json, Docker's default profile with namespaces allowed: every system call this machine's kernel has is open to it"
     grep -qF -- '- apparmor=ut-app-builder-docker' <<< "$service" \
-        && grep -qE '^profile ut-app-builder-docker flags=\(unconfined\) \{' "$profile" 2>/dev/null \
+        && grep -qE '^profile ut-app-builder-docker( flags=\([^)]*\))? \{' "$profile" 2>/dev/null \
         && grep -qE '^[[:space:]]*userns,$' "$profile" && return 0
     report "apps-docker-without-its-profile" \
         "the App Builder's Docker does not run under appbuilder/apparmor/ut-app-builder-docker, the profile that grants it a user namespace: on Ubuntu 24.04 it does not start"
@@ -480,6 +486,17 @@ check_the_apps_docker_ids_agree() {
         grep -qF "$expected" "$APPS_DOCKER_OVERLAY" && continue
         report "apps-docker-ids-disagree:${expected//[^A-Za-z0-9_=:-]/}" \
             "compose.appbuilder-nested.yaml lacks '${expected}', which the uid ${uid} and the range from ${start} in bin/ut-install.d/app-builder-docker.sh imply: the daemon or the apps' databases would not open their own files"
+    done
+}
+
+check_the_apps_docker_has_a_ceiling() {
+    local service bound
+    [[ -f "$APPS_DOCKER_OVERLAY" ]] || return 0
+    service=$(apps_docker_service)
+    for bound in 'pids: ${APP_BUILDER_DOCKER_PIDS:-' 'memory: ${APP_BUILDER_DOCKER_MEMORY:-' 'cpus: ${APP_BUILDER_DOCKER_CPUS:-'; do
+        grep -qF "$bound" <<< "$service" && continue
+        report "apps-docker-without-a-ceiling:${bound%%:*}" \
+            "the App Builder's Docker in compose.appbuilder-nested.yaml has no ${bound%%:*} bound: one generated app takes this machine's ${bound%%:*} from the platform and its models"
     done
 }
 
@@ -1076,6 +1093,7 @@ main() {
     check_the_apps_docker_stays_off_the_platform_networks
     check_the_apps_docker_runs_unprivileged
     check_the_apps_docker_ids_agree
+    check_the_apps_docker_has_a_ceiling
     check_the_apps_traefik_calls_no_one
     check_no_client_auth_without_the_admitted_list
     check_the_relay_checks_its_token_inside_its_route

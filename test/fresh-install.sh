@@ -159,6 +159,8 @@ stat -c '%a %U' /etc/understandtech/license > /w/$state/license-mode 2>/dev/null
 stat -c '%a %U' /etc/understandtech/machine.lic > /w/$state/machine-mode 2>/dev/null || : > /w/$state/machine-mode
 stat -c '%n %u' /var/lib/understandtech/appbuilder/workspaces/*/mongo-data > /w/$state/app-databases 2>/dev/null || : > /w/$state/app-databases
 cat /etc/understandtech/app-builder-docker/subuid > /w/$state/apps-docker-subuid 2>/dev/null || : > /w/$state/apps-docker-subuid
+ls /etc/understandtech/app-builder-docker/holds-the-apps > /w/$state/apps-marker 2>/dev/null || : > /w/$state/apps-marker
+awk '/^MemTotal:/ { print \$2 }' /proc/meminfo > /w/$state/memory-kb; nproc > /w/$state/cores
 chmod -R a+rw /w/$state
 PROBE
 
@@ -343,11 +345,14 @@ state_setup() {
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_REPOSITORY="s3:https://s3.example.test/appliance-backups"\nBACKUP_RELAY_SUBNET="198.19.0.0/24"\n'"'"' > /etc/understandtech/local.env' ;;
         backup_in_two_places)
             echo 'install -d /w/backup_in_two_places/nas && install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_DESTINATION="/w/backup_in_two_places/nas"\nBACKUP_FILES_REPOSITORY="s3:https://s3.example.test/appliance"\n'"'"' > /etc/understandtech/local.env' ;;
-        # The App Builder enabled, with two apps on this machine's Docker: app-a
-        # running, app-b archived (images, no container). The stub answers for
-        # both Dockers; /w/apps/docker says how.
-        app_builder_moved_to_its_docker|app_builder_already_moved|app_builder_move_fails|app_builder_too_big_to_move)
-            echo "bash /w/apps/on-this-machine-s-docker.sh $1" ;;
+        # The App Builder enabled, with two apps: app-a running, with a volume,
+        # app-b archived (images, no container). They start on this machine's
+        # Docker, or in the apps' own for the states that bring them back; the
+        # stub answers for both, /w/apps/docker says how.
+        app_builder_moved_to_its_docker|app_builder_already_moved|app_builder_move_fails|app_builder_too_big_to_move| \
+        app_builder_volume_taken|app_builder_start_fails_after_the_move|app_builder_brought_back| \
+        app_builder_brought_back_fails|app_builder_apps_docker_down)
+            echo "bash /w/apps/two-dockers.sh $1" ;;
         app_builder_on_this_machine_s_docker)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'COMPOSE_FILE="compose.yaml:compose.appbuilder.yaml"\nAPP_BUILDER_DOCKER="host"\n'"'"' > /etc/understandtech/local.env' ;;
         app_builder_uid_taken)
@@ -1373,20 +1378,37 @@ calls_of() { cat "$WORK_DIR/$1/docker-calls" 2>/dev/null; }
 local_settings_of() { cat "$WORK_DIR/$1/local-env" 2>/dev/null; }
 databases_of() { cat "$WORK_DIR/$1/app-databases" 2>/dev/null; }
 
+marker_of() { cat "$WORK_DIR/$1/apps-marker" 2>/dev/null; }
+line_of() { grep -n -m1 -xF -- "$2" <<< "$1" | cut -d: -f1; }
+
 the_apps_move_to_their_docker_archived_ones_too() {
-    local state=app_builder_moved_to_its_docker calls settings
+    local state=app_builder_moved_to_its_docker calls settings started
     calls=$(calls_of "$state"); settings=$(local_settings_of "$state")
+    started=$(line_of "$calls" 'compose up -d --remove-orphans')
     grep -q '^COMPOSE_FILE="compose.yaml:compose.appbuilder.yaml:compose.appbuilder-nested.yaml"$' <<< "$settings" \
         && grep -q '^APPS_MONGO_UID="237500998"$' <<< "$settings" \
         && grep -qx 'abuilder:237500000:65536' "$WORK_DIR/$state/apps-docker-subuid" \
         && grep -qx 'save app-a-backend:latest app-a-frontend:latest app-b-frontend:latest mongo:7' <<< "$calls" \
-        && [[ "$(grep -n -m1 '^compose stop app-builder$' <<< "$calls" | cut -d: -f1)" -lt "$(grep -n -m1 '^save ' <<< "$calls" | cut -d: -f1)" ]] \
-        && grep -qx 'stop c0ffee' <<< "$calls" && grep -qx 'rm c0ffee' <<< "$calls" \
-        && grep -qx 'image rm app-a-backend:latest app-a-frontend:latest app-b-frontend:latest' <<< "$calls" \
-        && [[ "$(grep -c ' 237500998$' <<< "$(databases_of "$state")")" == 2 ]] && return 0
-    echo "--- local.env"; echo "$settings"; echo "--- databases"; databases_of "$state"
+        && [[ "$(line_of "$calls" 'compose stop app-builder')" -lt "$(line_of "$calls" 'save app-a-backend:latest app-a-frontend:latest app-b-frontend:latest mongo:7')" ]] \
+        && grep -qx 'stop c0ffee' <<< "$calls" \
+        && [[ "$(grep -c ' 237500998$' <<< "$(databases_of "$state")")" == 2 ]] \
+        && [[ -n "$(marker_of "$state")" && -n "$started" ]] \
+        && [[ "$(line_of "$calls" 'rm -f c0ffee')" -gt "$started" ]] \
+        && [[ "$(line_of "$calls" 'image rm app-a-backend:latest app-a-frontend:latest app-b-frontend:latest')" -gt "$started" ]] && return 0
+    echo "--- local.env"; echo "$settings"; echo "--- databases"; databases_of "$state"; echo "--- marker: $(marker_of "$state")"
     echo "--- docker"; grep -vE '^(version|compose version|info --format)' <<< "$calls" | tail -15
     output_of "$state" | grep -iE 'move|docker of their own|fail' | tail -5
+    return 1
+}
+
+the_apps_volumes_go_with_them() {
+    local state=app_builder_moved_to_its_docker calls started
+    calls=$(calls_of "$state")
+    started=$(line_of "$calls" 'compose up -d --remove-orphans')
+    grep -qx 'compose exec -T app-builder-docker docker volume create --label=com.docker.compose.project=app-a --label=com.docker.compose.volume=frontend-node-modules app-a_frontend-node-modules' <<< "$calls" \
+        && grep -qx 'volume filled in theirs' <<< "$calls" \
+        && [[ "$(line_of "$calls" 'volume rm app-a_frontend-node-modules')" -gt "${started:-99999}" ]] && return 0
+    grep -E 'volume|filled' <<< "$calls"
     return 1
 }
 
@@ -1409,9 +1431,10 @@ a_move_that_fails_puts_every_app_back() {
     calls=$(calls_of "$state"); settings=$(local_settings_of "$state")
     grep -qx 'stop c0ffee' <<< "$calls" && grep -qx 'start c0ffee' <<< "$calls" \
         && grep -qx 'compose start app-builder' <<< "$calls" \
-        && ! grep -qE '^(rm c0ffee|image rm )' <<< "$calls" \
+        && ! grep -qE '^(rm -f c0ffee|image rm )' <<< "$calls" \
         && [[ "$(grep -c ' 999$' <<< "$(databases_of "$state")")" == 2 ]] \
         && grep -q 'lacks app-b-frontend:latest' <<< "$(output_of "$state")" \
+        && [[ -z "$(marker_of "$state")" ]] \
         && grep -q '^APP_BUILDER_DOCKER="host"$' <<< "$settings" && return 0
     echo "--- local.env"; echo "$settings"; echo "--- databases"; databases_of "$state"
     grep -E '^(save |stop |start |rm |image rm |compose (stop|start))' <<< "$calls"
@@ -1419,14 +1442,87 @@ a_move_that_fails_puts_every_app_back() {
     return 1
 }
 
+a_volume_both_dockers_hold_stops_the_move() {
+    local state=app_builder_volume_taken calls
+    calls=$(calls_of "$state")
+    grep -q "app-a's volume app-a_frontend-node-modules has files in the apps' Docker already: nothing was moved" <<< "$(output_of "$state")" \
+        && ! grep -qE '^(save |stop c0ffee|compose stop app-builder|.*volume create)' <<< "$calls" \
+        && [[ "$(grep -c ' 999$' <<< "$(databases_of "$state")")" == 2 ]] \
+        && grep -q '^APP_BUILDER_DOCKER="host"$' <<< "$(local_settings_of "$state")" && return 0
+    output_of "$state" | grep -iE 'volume|move' | tail -5
+    grep -E '^(save |stop |.*volume )' <<< "$calls"
+    return 1
+}
+
+a_start_that_fails_after_the_move_puts_every_app_back() {
+    local state=app_builder_start_fails_after_the_move calls first second
+    calls=$(calls_of "$state")
+    first=$(line_of "$calls" 'compose up -d --remove-orphans')
+    second=$(grep -n -xF 'compose up -d --remove-orphans' <<< "$calls" | sed -n 2p | cut -d: -f1)
+    [[ -n "$first" && -n "$second" ]] \
+        && [[ "$(line_of "$calls" 'start c0ffee')" -gt "$first" && "$(line_of "$calls" 'start c0ffee')" -lt "$second" ]] \
+        && grep -qx 'compose exec -T app-builder-docker docker volume rm app-a_frontend-node-modules' <<< "$calls" \
+        && ! grep -qE '^(rm -f c0ffee|image rm |volume rm )' <<< "$calls" \
+        && [[ "$(grep -c ' 999$' <<< "$(databases_of "$state")")" == 2 ]] \
+        && [[ -z "$(marker_of "$state")" ]] \
+        && grep -q '^APP_BUILDER_DOCKER="host"$' <<< "$(local_settings_of "$state")" && return 0
+    echo "--- databases"; databases_of "$state"; echo "--- marker: $(marker_of "$state")"
+    grep -E '^(compose up|start |rm |image rm |volume rm |compose exec -T app-builder-docker docker (image|volume) rm)' <<< "$calls"
+    output_of "$state" | tail -6
+    return 1
+}
+
 a_second_install_finds_nothing_left_to_move() {
     local state=app_builder_already_moved calls
     calls=$(calls_of "$state")
-    grep -q 'nothing to move' <<< "$(output_of "$state")" \
-        && ! grep -qE '^(save |stop c0ffee|compose stop app-builder)' <<< "$calls" \
+    ! grep -qE '^(save |stop c0ffee|compose stop app-builder|rm -f c0ffee)' <<< "$calls" \
+        && [[ -n "$(marker_of "$state")" ]] \
         && grep -q '^COMPOSE_FILE="compose.yaml:compose.appbuilder.yaml:compose.appbuilder-nested.yaml"$' <<< "$(local_settings_of "$state")" && return 0
     output_of "$state" | grep -iE 'move|docker' | tail -5
-    grep -E '^(save |stop )' <<< "$calls"
+    grep -E '^(save |stop |rm )' <<< "$calls"
+    return 1
+}
+
+the_way_back_brings_every_app_back_to_this_machine_s_docker() {
+    local state=app_builder_brought_back calls settings
+    calls=$(calls_of "$state"); settings=$(local_settings_of "$state")
+    grep -qx 'compose up -d app-builder-docker with compose.yaml:compose.appbuilder.yaml:compose.appbuilder-nested.yaml' <<< "$calls" \
+        && grep -qx 'compose exec -T app-builder-docker docker save app-a-backend:latest app-a-frontend:latest app-b-frontend:latest' <<< "$calls" \
+        && grep -qx 'load -q' <<< "$calls" \
+        && grep -qx 'volume create --label=com.docker.compose.project=app-a --label=com.docker.compose.volume=frontend-node-modules app-a_frontend-node-modules' <<< "$calls" \
+        && grep -qx 'volume filled in here' <<< "$calls" \
+        && grep -qx 'compose exec -T app-builder-docker docker image rm app-a-backend:latest app-a-frontend:latest app-b-frontend:latest' <<< "$calls" \
+        && grep -qx 'compose exec -T app-builder-docker docker volume rm app-a_frontend-node-modules' <<< "$calls" \
+        && [[ "$(grep -c ' 999$' <<< "$(databases_of "$state")")" == 2 ]] \
+        && [[ -z "$(marker_of "$state")" ]] \
+        && grep -q '^COMPOSE_FILE="compose.yaml:compose.appbuilder.yaml:compose.appbuilder-on-host.yaml"$' <<< "$settings" && return 0
+    echo "--- local.env"; echo "$settings"; echo "--- databases"; databases_of "$state"; echo "--- marker: $(marker_of "$state")"
+    grep -vE '^(version|compose version|info --format)' <<< "$calls" | grep -E 'save|load|volume|rm |up -d' | tail -12
+    output_of "$state" | grep -iE 'back|move|fail' | tail -5
+    return 1
+}
+
+a_way_back_that_fails_leaves_the_apps_in_their_docker() {
+    local state=app_builder_brought_back_fails settings
+    settings=$(local_settings_of "$state")
+    grep -q 'lacks app-b-frontend:latest' <<< "$(output_of "$state")" \
+        && grep -q '^APP_BUILDER_DOCKER="nested"$' <<< "$settings" \
+        && grep -q '^COMPOSE_FILE="compose.yaml:compose.appbuilder.yaml:compose.appbuilder-nested.yaml"$' <<< "$settings" \
+        && [[ "$(grep -c ' 237500998$' <<< "$(databases_of "$state")")" == 2 ]] \
+        && [[ -n "$(marker_of "$state")" ]] \
+        && ! grep -qE 'docker (image|volume) rm' <<< "$(calls_of "$state")" && return 0
+    echo "--- local.env"; echo "$settings"; echo "--- databases"; databases_of "$state"; echo "--- marker: $(marker_of "$state")"
+    output_of "$state" | tail -6
+    return 1
+}
+
+an_apps_docker_that_holds_the_apps_and_does_not_start_stops_the_install() {
+    local state=app_builder_apps_docker_down
+    grep -q "The generated apps live in the App Builder's Docker, which did not start" <<< "$(output_of "$state")" \
+        && grep -q '^EXIT=1$' <<< "$(output_of "$state")" \
+        && ! grep -q '^APP_BUILDER_DOCKER="host"$' <<< "$(local_settings_of "$state")" \
+        && [[ -n "$(marker_of "$state")" ]] && return 0
+    output_of "$state" | tail -5; local_settings_of "$state"
     return 1
 }
 
@@ -1447,6 +1543,34 @@ the_way_back_keeps_the_app_builder_on_this_machine_s_docker() {
         && ! grep -q 'up -d app-builder-docker' <<< "$(calls_of "$state")" \
         && grep -q 'whoever reaches it is root here' <<< "$(output_of "$state")" && return 0
     echo "$settings"; output_of "$state" | tail -5
+    return 1
+}
+
+# The walk runs on whatever memory and cores its machine has: the share is
+# checked against them, the stub's GPU being a GB10.
+the_apps_ceiling_is_computed_for_the_machine_into_env_alone() {
+    local state=app_builder_moved_to_its_docker memory_kb cores memory cpus env
+    memory_kb=$(cat "$WORK_DIR/$state/memory-kb"); cores=$(cat "$WORK_DIR/$state/cores")
+    memory=$(( memory_kb / 1024 * 125 / 1000 )); (( memory >= 8192 )) || memory=8192
+    cpus=$(( cores * 20 / 100 )); (( cpus >= 2 )) || cpus=2
+    env=$(cat "$WORK_DIR/$state/env" 2>/dev/null)
+    grep -qx "APP_BUILDER_DOCKER_MEMORY=\"${memory}M\"" <<< "$env" \
+        && grep -qx "APP_BUILDER_DOCKER_CPUS=\"${cpus}\"" <<< "$env" \
+        && grep -qx 'APP_BUILDER_DOCKER_PIDS="4096"' <<< "$env" \
+        && ! grep -q '^APP_BUILDER_DOCKER_\(MEMORY\|CPUS\|PIDS\)=' <<< "$(local_settings_of "$state")" \
+        && grep -q "may take ${memory}M of memory, ${cpus} CPUs and 4096 processes between them, as computed for a machine whose GPU shares its memory" <<< "$(output_of "$state")" && return 0
+    echo "expected ${memory}M and ${cpus} for ${memory_kb} kB and ${cores} cores"; grep '^APP_BUILDER_DOCKER_' <<< "$env"
+    output_of "$state" | grep 'may take'
+    return 1
+}
+
+a_ceiling_set_in_local_env_wins() {
+    local state=app_builder_already_moved env
+    env=$(cat "$WORK_DIR/$state/env" 2>/dev/null)
+    [[ "$(grep -c '^APP_BUILDER_DOCKER_MEMORY=' <<< "$env")" == 1 ]] \
+        && grep -qx 'APP_BUILDER_DOCKER_MEMORY="6144M"' <<< "$env" \
+        && grep -q "may take 6144M of memory.*; set in local.env: APP_BUILDER_DOCKER_MEMORY" <<< "$(output_of "$state")" && return 0
+    grep '^APP_BUILDER_DOCKER_' <<< "$env"; output_of "$state" | grep 'may take'
     return 1
 }
 
@@ -1496,43 +1620,105 @@ CURL
 prepare_apps_on_this_machine_s_docker() {
     local work="$WORK_DIR/apps"
     mkdir -p "$work"
-    cat > "$work/on-this-machine-s-docker.sh" <<'SETUP'
+    cat > "$work/two-dockers.sh" <<'SETUP'
+state=$1 owner=999
 install -d -m 750 /etc/understandtech
 printf 'COMPOSE_FILE="compose.yaml:compose.appbuilder.yaml"\n' > /etc/understandtech/local.env
+case "$state" in
+    app_builder_brought_back*) printf 'APP_BUILDER_DOCKER="host"\n' >> /etc/understandtech/local.env ;;
+    app_builder_already_moved) printf 'APP_BUILDER_DOCKER_MEMORY="6144M"\n' >> /etc/understandtech/local.env ;;
+esac
+case "$state" in
+    app_builder_already_moved|app_builder_brought_back*|app_builder_apps_docker_down)
+        install -d -m 755 /etc/understandtech/app-builder-docker
+        echo 2026-10-29T00:00:00Z > /etc/understandtech/app-builder-docker/holds-the-apps
+        owner=237500998 ;;
+esac
 for app in app-a app-b; do
     install -d "/var/lib/understandtech/appbuilder/workspaces/$app/mongo-data"
     printf 'services:\n  mongo:\n    image: mongo:7\n' > "/var/lib/understandtech/appbuilder/workspaces/$app/docker-compose.yml"
     echo "the $app database" > "/var/lib/understandtech/appbuilder/workspaces/$app/mongo-data/collection.wt"
-    chown -R 999:999 "/var/lib/understandtech/appbuilder/workspaces/$app/mongo-data"
+    chown -R "$owner:$owner" "/var/lib/understandtech/appbuilder/workspaces/$app/mongo-data"
 done
-echo "$1" > /stub/apps-state
+echo "$state" > /stub/apps-state
 mv /stub/docker /stub/docker-stub && cp /w/apps/docker /stub/docker && chmod +x /stub/docker
 SETUP
     cat > "$work/docker" <<'DOCKER'
 #!/bin/sh
 state=$(cat /stub/apps-state)
-moved() { [ "$state" = app_builder_already_moved ]; }
+record() { printf '%s\n' "$*" >> /stub/docker-calls; }
+last() { shift $(($# - 1)); printf '%s' "$1"; }
+on_this_machine() {
+    case "$state" in
+        app_builder_moved_to_its_docker|app_builder_move_fails|app_builder_too_big_to_move|app_builder_volume_taken|app_builder_start_fails_after_the_move) return 0 ;;
+    esac
+    return 1
+}
+in_their_docker() {
+    case "$state" in app_builder_brought_back*) return 0 ;; esac
+    [ -f /stub/loaded-into-their-docker ]
+}
+size=300000000
+[ "$state" = app_builder_too_big_to_move ] && size=600000000000
+id_of() { case "$1" in app-a-*) echo sha256:img-a ;; app-b-*) echo sha256:img-b ;; mongo:7) echo sha256:mongo ;; esac; }
+built() { echo "app-a sha256:img-a $size app-a-backend:latest app-a-frontend:latest"; echo "app-b sha256:img-b $size app-b-frontend:latest"; }
+labels() { printf -- '--label=com.docker.compose.project=app-a\n--label=com.docker.compose.volume=frontend-node-modules\n'; }
+in_a_volume() {
+    side=$1; shift
+    case "$*" in
+        *"find . | wc -l"*) if [ "$side" = theirs ] && [ "$state" = app_builder_volume_taken ]; then echo 5; else echo 3; fi ;;
+        *" -sk ."*) printf '1000\t.\n' ;;
+        *" -cf - "*) echo files ;;
+        *" -xf - "*) record "volume filled in $side"; cat > /dev/null ;;
+    esac
+}
 case "$*" in
     "info --format {{json .SecurityOptions}}") echo '["name=seccomp,profile=builtin"]' ;;
+    "compose up -d app-builder-docker")
+        record "$* with $COMPOSE_FILE"; [ "$state" != app_builder_apps_docker_down ] ;;
+    "compose up -d --remove-orphans")
+        record "$*"
+        if [ "$state" = app_builder_start_fails_after_the_move ] && [ ! -f /stub/started-once ]; then touch /stub/started-once; exit 1; fi ;;
     "ps -a --filter label=com.docker.compose.project --format"*working_dir*)
-        moved || echo "app-a /var/lib/understandtech/appbuilder/workspaces/app-a" ;;
-    "ps -a --filter label=com.docker.compose.project --format"*)
-        moved || echo "c0ffee running app-a" ;;
-    "image ls -q --filter label=com.docker.compose.project")
-        moved || printf 'img-a\nimg-b\n' ;;
-    "image inspect --format {{index .Config.Labels"*)
-        size=300000000
-        [ "$state" = app_builder_too_big_to_move ] && size=600000000000
-        echo "app-a $size app-a-backend:latest app-a-frontend:latest"
-        echo "app-b $size app-b-frontend:latest" ;;
-    "image inspect --format {{.Size}} mongo:7 mongo:7") echo "100000000 mongo:7" ;;
+        on_this_machine && echo "app-a /var/lib/understandtech/appbuilder/workspaces/app-a" ;;
+    "ps -a --filter label=com.docker.compose.project --format"*) on_this_machine && echo "c0ffee running app-a" ;;
+    "image ls -q --filter label=com.docker.compose.project") on_this_machine && printf 'img-a\nimg-b\n' ;;
+    "image inspect --format {{index .Config.Labels"*) on_this_machine && built ;;
+    "image inspect --format mongo:7 {{.Id}} {{.Size}} mongo:7") echo "mongo:7 sha256:mongo 100000000" ;;
+    "image inspect --format {{.Id}} app-"*|"image inspect --format {{.Id}} mongo:7")
+        ref=$(last "$@")
+        if on_this_machine || [ "$ref" = mongo:7 ]; then id_of "$ref"
+        elif [ -f /stub/loaded-here ] && ! { [ "$state" = app_builder_brought_back_fails ] && [ "$ref" = app-b-frontend:latest ]; }; then id_of "$ref"
+        else exit 1; fi ;;
     "image inspect --format {{.Id}} "*) echo "sha256:the-release-traefik" ;;
-    "compose exec -T app-builder-docker docker image inspect --format {{.Id}} "*) echo "sha256:the-release-traefik" ;;
-    "compose exec -T app-builder-docker docker load"*)
-        printf '%s\n' "$*" >> /stub/docker-calls; cat > /dev/null ;;
-    "compose exec -T app-builder-docker docker image inspect app-b-frontend:latest")
-        printf '%s\n' "$*" >> /stub/docker-calls; [ "$state" != app_builder_move_fails ] ;;
-    "save "*) printf '%s\n' "$*" >> /stub/docker-calls; echo "images" ;;
+    "volume ls --filter label=com.docker.compose.project --format"*) on_this_machine && echo "app-a_frontend-node-modules app-a" ;;
+    "volume inspect --format {{range"*) labels ;;
+    "volume inspect app-a_frontend-node-modules") on_this_machine || [ -f /stub/volume-here ] ;;
+    "volume create "*) record "$*"; touch /stub/volume-here ;;
+    "run --rm -i --user 0 --network none -v "*) in_a_volume here "$@" ;;
+    "save "*) record "$*"; echo images ;;
+    "load -q") record "$*"; cat > /dev/null; touch /stub/loaded-here ;;
+    "compose exec -T app-builder-docker docker image inspect --format {{.Id}} ut-app-builder-traefik:local") echo "sha256:the-release-traefik" ;;
+    "compose exec -T app-builder-docker docker image inspect --format {{.Id}} "*)
+        ref=$(last "$@")
+        in_their_docker || exit 1
+        [ "$state" = app_builder_move_fails ] && [ "$ref" = app-b-frontend:latest ] && exit 1
+        id_of "$ref" ;;
+    "compose exec -T app-builder-docker docker load -q") record "$*"; cat > /dev/null; touch /stub/loaded-into-their-docker ;;
+    "compose exec -T app-builder-docker docker ps -a --filter"*) ;;
+    "compose exec -T app-builder-docker docker image ls -q --filter label=com.docker.compose.project") in_their_docker && printf 'img-a\nimg-b\n' ;;
+    "compose exec -T app-builder-docker docker image inspect --format {{index .Config.Labels"*) in_their_docker && built ;;
+    "compose exec -T app-builder-docker docker image inspect --format mongo:7 {{.Id}} {{.Size}} mongo:7") in_their_docker && echo "mongo:7 sha256:mongo 100000000" ;;
+    "compose exec -T app-builder-docker docker volume ls --filter"*) in_their_docker && echo "app-a_frontend-node-modules app-a" ;;
+    "compose exec -T app-builder-docker docker volume inspect --format {{.Mountpoint}} "*) echo /home/abuilder/.local/share/docker/volumes/app-a_frontend-node-modules/_data ;;
+    "compose exec -T app-builder-docker docker volume inspect --format {{range"*) labels ;;
+    "compose exec -T app-builder-docker docker volume inspect app-a_frontend-node-modules")
+        case "$state" in app_builder_brought_back*|app_builder_volume_taken) exit 0 ;; esac
+        [ -f /stub/volume-in-their-docker ] ;;
+    "compose exec -T app-builder-docker docker volume create "*) record "$*"; touch /stub/volume-in-their-docker ;;
+    "compose exec -T app-builder-docker docker save "*) record "$*"; echo images ;;
+    "compose exec -T -w "*) in_a_volume theirs "$@" ;;
+    "compose exec -T app-builder-docker docker rm "*|"compose exec -T app-builder-docker docker image rm "*|"compose exec -T app-builder-docker docker volume rm "*) record "$*" ;;
     *) exec /stub/docker-stub "$@" ;;
 esac
 DOCKER
@@ -1884,6 +2070,11 @@ PULL_EXIT=0 run_install_from_state app_builder_moved_to_its_docker
 PULL_EXIT=0 run_install_from_state app_builder_already_moved
 PULL_EXIT=0 run_install_from_state app_builder_move_fails
 PULL_EXIT=0 run_install_from_state app_builder_too_big_to_move
+PULL_EXIT=0 run_install_from_state app_builder_volume_taken
+PULL_EXIT=0 run_install_from_state app_builder_start_fails_after_the_move
+PULL_EXIT=0 run_install_from_state app_builder_brought_back
+PULL_EXIT=0 run_install_from_state app_builder_brought_back_fails
+PULL_EXIT=0 run_install_from_state app_builder_apps_docker_down
 PULL_EXIT=0 run_install_from_state app_builder_on_this_machine_s_docker
 PULL_EXIT=0 run_install_from_state app_builder_uid_taken
 
@@ -2168,12 +2359,28 @@ property "apps too big for the disk are not moved, and the App Builder keeps thi
     apps_too_big_for_the_disk_stay_and_the_app_builder_keeps_this_machine_s_docker
 property "a move that fails puts every app back where it ran" \
     a_move_that_fails_puts_every_app_back
+property "their named volumes go with them, and leave this machine's Docker once the platform runs" \
+    the_apps_volumes_go_with_them
+property "a volume that both Dockers hold stops the move, naming its app" \
+    a_volume_both_dockers_hold_stops_the_move
+property "a start that fails after the move puts every app back where it ran" \
+    a_start_that_fails_after_the_move_puts_every_app_back
 property "a second install finds nothing left to move" \
     a_second_install_finds_nothing_left_to_move
+property "the way back brings every app, its images, volume and database, back to this machine's Docker" \
+    the_way_back_brings_every_app_back_to_this_machine_s_docker
+property "a way back that fails leaves the apps in their own Docker" \
+    a_way_back_that_fails_leaves_the_apps_in_their_docker
+property "an apps' Docker that holds the apps and does not start stops the install" \
+    an_apps_docker_that_holds_the_apps_and_does_not_start_stops_the_install
 property "an account on the daemon's uid stops the install before anything starts" \
     an_account_on_the_daemon_s_uid_stops_the_install_before_anything_starts
-property "the way back keeps the App Builder on this machine's Docker" \
+property "the way back with no app to bring keeps the App Builder on this machine's Docker" \
     the_way_back_keeps_the_app_builder_on_this_machine_s_docker
+property "what the apps may take is computed for this machine, into .env alone" \
+    the_apps_ceiling_is_computed_for_the_machine_into_env_alone
+property "what the apps may take, set in local.env, wins" \
+    a_ceiling_set_in_local_env_wins
 
 printf '\n%sA database whose password happens to look shipped%s\n' "$BOLD" "$NC"
 property "the install carries on, because that password is the right one" \
