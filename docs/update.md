@@ -7,6 +7,39 @@ to the settings you have, and how to get back if it goes wrong.
 An update is the operation that can cost a customer their data, so it is worth
 doing in the order below rather than the order that seems quicker.
 
+<!-- Scope: the order of the steps below, as one sequence. Not what each step
+     checks internally — that is the rest of this page. -->
+<!-- Source of truth: this page's own numbered sections -->
+<!-- Date: 2026-10-29 -->
+<!-- Target: portal — status of "flowchart": not verified, no rendering engine
+     installed here. -->
+
+```mermaid
+flowchart LR
+    BACKUP["back up now, and verify the backup"]
+    FETCH["get and verify the new package"]
+    INSTALL["apt-get install - replaces /usr/share/understandtech only"]
+    RUN["ut-install, no flags needed"]
+    SPLIT["split .env into release.env + local.env"]
+    RESTART["restart what changed, remove retired containers"]
+    VERIFY["docker compose ps - every service healthy"]
+    BACKUP --> FETCH --> INSTALL --> RUN --> SPLIT --> RESTART --> VERIFY
+```
+
+**Description** — Each step below is this diagram's box, in the same order:
+back up and verify first, since an update is the one operation that can cost a
+customer their data; then get and verify the new package exactly as an install
+does; `apt-get install` replaces the release directory only, never `/etc` or
+`/var/lib`; `ut-install` then rebuilds `.env` from the release's own
+`release.env` and the operator's `local.env`, restarts whatever a new value or
+a removed service requires, and the operator verifies every service is
+healthy.
+
+**Gaps** — Not drawn: what each step does when it finds the work already done,
+or what [an update does to your settings](#what-an-update-does-to-your-settings)
+in detail. Not verified: not seen rendered — no Mermaid engine is installed
+here.
+
 ## 1 · Back up first, and check the backup
 
 Not the scheduled one — a fresh one, now.

@@ -5,6 +5,50 @@ The box can measure it; we cannot, since we have no access to it. This page is
 for the operator asked to send us reports, and for whoever has to approve what
 leaves the network.
 
+## The path to Fleet monitoring
+
+<!-- Scope: how a report moves from the services that measure it to the
+     receiver. Not what each field holds, and not the receiver's own storage
+     or dashboards, which this repository does not own. -->
+<!-- Source of truth: README.md's description of ut-send and ut-report,
+     this page's "Sending them on their own" and "Writing one by hand" -->
+<!-- Date: 2026-10-29 -->
+<!-- Target: portal — status of "flowchart": not verified, no rendering engine
+     installed here. -->
+
+```mermaid
+flowchart LR
+    METRICS["metrics service - engine, gateway and front-door counters"]
+    REPORT["health and tool-usage report, once an hour"]
+    TIMER["ut-send.timer - every 15 minutes, or as --every says"]
+    COLLECT["ut-send collect - puts both in line"]
+    QUEUE["local queue - up to 7 days or 200 MB"]
+    SEND["ut-send send - HTTPS, trusting only the receiver's certificate"]
+    FLEET["Fleet monitoring - our usage-report receiver"]
+    TIMER --> COLLECT
+    METRICS --> COLLECT
+    REPORT --> COLLECT
+    COLLECT --> QUEUE
+    QUEUE --> SEND
+    SEND --> FLEET
+    FLEET -.->|not accepted, tried again next pass| QUEUE
+```
+
+**Description** — `ut-send.timer` drives the whole path; nothing here polls or
+pushes on its own schedule. Every pass, `ut-send collect` puts in line what the
+`metrics` service recorded since the last pass, and, once an hour, the report
+described below. `ut-send send` then tries to deliver everything in the queue
+over HTTPS, trusting only the certificate it was given for the receiver — no
+public certificate authority is consulted. What Fleet monitoring does not
+accept stays queued and is retried on the next pass, for up to 7 days or
+200 MB, oldest first.
+
+**Gaps** — What Fleet monitoring does with a report once accepted — storage,
+retention, the dashboards built from it — is outside this repository; see
+[how AI in a Box works](https://github.com/understand-tech/internal-docs/blob/main/docs/on-prem-appliance/README.md)
+for the product-level picture. Not verified: not seen rendered — no Mermaid
+engine is installed here.
+
 ## Sending them on their own
 
 Nothing leaves the machine until someone answers yes. `ut-install` asks once,
