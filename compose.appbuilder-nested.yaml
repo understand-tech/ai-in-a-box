@@ -4,8 +4,9 @@ name: ${COMPOSE_PROJECT_NAME:-understandtech}
 # which the App Builder alone reaches, through a socket. ut-install adds this
 # file after compose.appbuilder.yaml, writes the identities it mounts, loads
 # its AppArmor profile, and starts the Traefik that serves the apps inside it.
-# The daemon listens on no port: an app, or anything on these networks, cannot
-# drive it.
+# The daemon listens on no port: nothing on these networks drives it. An app
+# would by mounting its socket, which the App Builder refuses to start; between
+# apps, that refusal is the boundary, not this Docker.
 
 x-logging: &default-logging
   driver: json-file
@@ -44,10 +45,14 @@ services:
       HOME: /home/abuilder
       XDG_RUNTIME_DIR: /run/app-builder-docker
       DOCKER_HOST: unix:///run/app-builder-docker/docker.sock
-    # Rootless needs a user namespace, which Ubuntu 24.04 refuses to a process
-    # AppArmor does not confine: this profile grants that and nothing else.
+    # Rootless creates namespaces and mounts inside them: its seccomp profile is
+    # Docker's default, which keeps those calls for a container with the system
+    # administration capability, with them allowed outright. /proc and /sys stay
+    # unmasked, or its containers cannot mount their own. The AppArmor profile
+    # confines nothing: it is how Ubuntu 24.04 grants a user namespace. What
+    # holds the daemon is its uid, 2375, with no capability on this machine.
     security_opt:
-      - seccomp=unconfined
+      - seccomp=./appbuilder/seccomp/ut-app-builder-docker.json
       - systempaths=unconfined
       - apparmor=ut-app-builder-docker
     devices:
@@ -75,6 +80,15 @@ services:
       retries: 3
       start_period: 60s
     logging: *default-logging
+    # Every generated app runs inside this one container, and the caps an app's
+    # compose file sets are not applied there: these bound them all together.
+    # ut-install computes them for this machine; the defaults are their floors.
+    deploy:
+      resources:
+        limits:
+          memory: ${APP_BUILDER_DOCKER_MEMORY:-8192M}
+          cpus: ${APP_BUILDER_DOCKER_CPUS:-2}
+          pids: ${APP_BUILDER_DOCKER_PIDS:-4096}
 
   # A named volume starts owned by root; the daemon runs as 2375.
   app-builder-docker-home:
@@ -90,9 +104,9 @@ services:
       - app-builder-docker-data:/home/abuilder
     logging: *default-logging
 
-  # Traefik runs inside the apps' Docker, which reaches no registry: declared
-  # here, its image comes onto this machine with the others, and ut-install
-  # hands it over.
+  # Traefik runs inside the apps' Docker, which holds none of this machine's
+  # images and pulls nothing on a box with no network: declared here, its image
+  # comes onto this machine with the others, and ut-install hands it over.
   app-builder-traefik-image:
     labels:
       ut.role: "control-plane"
@@ -115,12 +129,13 @@ services:
 
 networks:
   # Caddy, the App Builder, the API its apps call and their Docker: the apps
-  # reach these by name, and nothing of the rest of the platform.
+  # reach these by name, and nothing else of the platform.
   ut-app-builder-network:
     name: ${RESOURCE_PREFIX:-ut}-app-builder-network
     driver: bridge
     internal: true
-  # Shared with the apps ut-import-app runs on this machine's Docker.
+  # Shared with the apps ut-import-app runs on this machine's Docker. Not
+  # internal: through it the apps reach whatever this machine routes to.
   proxy:
     name: proxy
     external: true
