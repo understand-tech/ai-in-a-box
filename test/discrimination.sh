@@ -1546,6 +1546,10 @@ if grep -q 'checkouts_holding_settings' "$REPO_ROOT/bin/ut-install"; then
         "the installer names the settings it leaves to the release" \
         "sed -i.bak 's/^        log_info \"\${left} left to this release, which decides them: \${left_names}\"\$/        :/' bin/ut-install"
 
+    install_walk_discriminates "a checkout's old default of LOG_LEVEL=DEBUG carried over again" \
+        "the old default of LOG_LEVEL=DEBUG is not carried over, the release's INFO wins" \
+        "sed -i.bak '/if \[\[ \"\$key\" == \"LOG_LEVEL\" \]\] && checkout_logged_in_debug_by_the_old_default/,/^        fi\$/d' bin/ut-install"
+
     install_walk_discriminates "a required variable nobody generates" \
         "every variable the stack requires has a value" \
         "sed -i.bak 's| GPU_VM_API_TOKEN\\([ )]\\)|\\1|' bin/ut-install"

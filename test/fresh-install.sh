@@ -298,6 +298,10 @@ state_setup() {
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'MONGODB_USERNAME="mongoadmin"\nMONGODB_PASSWORD="12345678"\n'"'"' > /etc/understandtech/local.env' ;;
         previous_checkout)
             echo 'install -d /opt/understandtech && printf '"'"'UT_DOMAIN="carried.example"\nJWT_SECRET="keptfromthecheckout0123456789abcdef0123456789ab"\nLOG_LEVEL="WARNING"\nAPP_BUILDER_TOKEN_ENCRYPTION_KEY="a2VwdGZyb210aGVjaGVja291dDAxMjM0NTY3ODlhYmM="\n'"'"' > /opt/understandtech/.env' ;;
+        # A checkout of main before 2026-10, which shipped LOG_LEVEL="DEBUG" in
+        # .env.example: nobody chose it, so the release's INFO takes over.
+        checkout_still_logging_in_debug)
+            echo 'install -d /opt/understandtech && printf '"'"'UT_DOMAIN="carried.example"\nJWT_SECRET="keptfromthecheckout0123456789abcdef0123456789ab"\nLOG_LEVEL="DEBUG"\n'"'"' > /opt/understandtech/.env' ;;
         checkout_from_main)
             echo 'install -d /opt/understandtech && cp /w/env.main /opt/understandtech/.env' ;;
         checkout_without_domain)
@@ -404,6 +408,17 @@ the_checkout_settings_are_carried_over() {
     grep -q '^LOG_LEVEL="WARNING"' <<< "$settings" \
         || { echo "a setting the customer had changed was lost"; return 1; }
     return 0
+}
+
+the_checkout_s_shipped_debug_log_level_is_not_carried_over() {
+    local settings output
+    settings=$(settings_of checkout_still_logging_in_debug)
+    grep -q '^LOG_LEVEL="INFO"' <<< "$settings" \
+        || { echo "LOG_LEVEL ended up as $(grep -m1 '^LOG_LEVEL=' <<< "$settings") instead of the release's INFO"; return 1; }
+    output=$(output_of checkout_still_logging_in_debug)
+    grep -qi 'LOG_LEVEL was DEBUG' <<< "$output" && return 0
+    echo "the installer said nothing about dropping it: $output"
+    return 1
 }
 
 the_address_comes_from_the_checkout() {
@@ -1679,6 +1694,7 @@ NETWORK_CREATE_EXIT=1 run_install_from_state pools_full
 DISK_AVAIL_BYTES=$((91 * 1000 * 1000 * 1000)) run_install_from_state disk_too_small
 run_install_from_state clock_before_the_release
 run_install_from_state previous_checkout -
+run_install_from_state checkout_still_logging_in_debug -
 cp "$REPO_ROOT/test/env.main-34a7b28" "$WORK_DIR/env.main"
 run_install_from_state checkout_from_main -
 run_install_from_state checkout_without_domain -
@@ -1893,6 +1909,8 @@ property "it stays quiet when the address already names another machine" \
 printf '\n%sAn install that still lives in a git checkout%s\n' "$BOLD" "$NC"
 property "its settings are carried over, not regenerated" \
     the_checkout_settings_are_carried_over
+property "the old default of LOG_LEVEL=DEBUG is not carried over, the release's INFO wins" \
+    the_checkout_s_shipped_debug_log_level_is_not_carried_over
 property "the address it already answers on is kept" \
     the_address_comes_from_the_checkout
 property "the checkout itself is left untouched" \
