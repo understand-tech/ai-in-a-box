@@ -1094,10 +1094,20 @@ the_release_decides() {
     grep -qE "^${key}=" "$release" 2>/dev/null
 }
 
+# main's .env.example ships LOG_LEVEL="DEBUG", so a checkout that carries it
+# never chose DEBUG — it inherited a default nobody picked.
+checkout_logged_in_debug_by_the_old_default() {
+    local line=$1 value
+    value=${line#LOG_LEVEL=}
+    value=${value%\"}; value=${value#\"}
+    value=${value%\'}; value=${value#\'}
+    [[ "$(printf '%s' "$value" | tr '[:lower:]' '[:upper:]')" == DEBUG ]]
+}
+
 # Lines are carried over verbatim, never re-quoted: GATEWAY_MODELS holds JSON
 # inside single quotes, which env_set would rewrite as KEY="value" and corrupt.
 migrate_existing_settings_into_local() {
-    local env_file=$1 local_file=$2 release line key kept=0 diverged=0 left=0 left_names=""
+    local env_file=$1 local_file=$2 release line key kept=0 diverged=0 left=0 left_names="" debug_log_level_left_behind=0
     release="$INSTALL_DIR/release.env"
 
     [[ -s "$env_file" ]] || return 0
@@ -1111,6 +1121,10 @@ migrate_existing_settings_into_local() {
             [A-Za-z_]*=*) key=${line%%=*} ;;
             *) continue ;;
         esac
+        if [[ "$key" == "LOG_LEVEL" ]] && checkout_logged_in_debug_by_the_old_default "$line"; then
+            debug_log_level_left_behind=1
+            continue
+        fi
         if grep -qxF "$line" "$release" 2>/dev/null; then continue; fi
         if the_release_decides "$key" "$release"; then
             left=$((left + 1))
@@ -1126,6 +1140,9 @@ migrate_existing_settings_into_local() {
     if (( left > 0 )); then
         log_info "${left} left to this release, which decides them: ${left_names}"
         log_info "  An image or an engine setting of your own is not carried over: set it again in local.env if you need it"
+    fi
+    if (( debug_log_level_left_behind )); then
+        log_info "LOG_LEVEL was DEBUG, which the old checkout shipped by default rather than by choice: the box now logs at INFO — set LOG_LEVEL=\"DEBUG\" in local.env yourself for the length of a support session"
     fi
     log_info "The file as it was: ${local_file%/*}/env.before-split"
 }
