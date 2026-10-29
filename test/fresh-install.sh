@@ -298,6 +298,8 @@ state_setup() {
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'MONGODB_USERNAME="mongoadmin"\nMONGODB_PASSWORD="12345678"\n'"'"' > /etc/understandtech/local.env' ;;
         previous_checkout)
             echo 'install -d /opt/understandtech && printf '"'"'UT_DOMAIN="carried.example"\nJWT_SECRET="keptfromthecheckout0123456789abcdef0123456789ab"\nLOG_LEVEL="WARNING"\nAPP_BUILDER_TOKEN_ENCRYPTION_KEY="a2VwdGZyb210aGVjaGVja291dDAxMjM0NTY3ODlhYmM="\n'"'"' > /opt/understandtech/.env' ;;
+        checkout_from_main)
+            echo 'install -d /opt/understandtech && cp /w/env.main /opt/understandtech/.env' ;;
         checkout_without_domain)
             echo 'install -d /opt/understandtech && printf '"'"'PUBLIC_BASE_URL="https://named.by.the.urls"\nBACKEND_URL="https://named.by.the.urls/api"\nJWT_SECRET="keptfromthecheckout0123456789abcdef0123456789ab"\n'"'"' > /opt/understandtech/.env' ;;
         # /w is bind-mounted from the host, so a directory under it sits on another
@@ -423,6 +425,45 @@ the_address_is_read_from_the_urls() {
 the_checkout_is_left_alone() {
     grep -q 'keptfromthecheckout' <<< "$(checkout_of previous_checkout)" && return 0
     echo "the checkout's own .env was changed or removed"
+    return 1
+}
+
+images_main_named_by_tag() {
+    grep -oE '^[A-Z0-9_]+_IMAGE=' "$REPO_ROOT/test/env.main-34a7b28" | tr -d '=' | while read -r key; do
+        grep -q "^${key}=" "$REPO_ROOT/release.env" && echo "$key"
+    done
+}
+
+the_release_pins_every_image_main_named() {
+    local settings key wrong=""
+    settings=$(settings_of checkout_from_main)
+    [[ -n "$settings" ]] || { echo "no settings rendered"; output_of checkout_from_main | tail -5; return 1; }
+    for key in $(images_main_named_by_tag); do
+        [[ "$(grep -m1 "^${key}=" <<< "$settings")" == "$(grep -m1 "^${key}=" "$REPO_ROOT/release.env")" ]] \
+            || wrong="${wrong} ${key}"
+    done
+    [[ -z "$wrong" ]] && return 0
+    echo "not the release's image:${wrong}"
+    return 1
+}
+
+the_operator_s_choices_from_main_stay() {
+    local settings
+    settings=$(settings_of checkout_from_main)
+    grep -qx 'UT_DOMAIN="understand.local"' <<< "$settings" \
+        && grep -qx "$(grep -m1 '^GATEWAY_RPM_PER_KEY=' "$REPO_ROOT/test/env.main-34a7b28")" <<< "$settings" \
+        && return 0
+    echo "lost: $(grep -E '^(UT_DOMAIN|GATEWAY_RPM_PER_KEY)=' <<< "$settings" | tr '\n' ' ')"
+    return 1
+}
+
+the_installer_names_what_it_leaves_to_the_release() {
+    local output said
+    output=$(output_of checkout_from_main)
+    said=$(grep 'left to this release' <<< "$output")
+    grep -q 'API_IMAGE' <<< "$said" && grep -q 'GATEWAY_MODELS' <<< "$said" \
+        && ! grep -q 'ghcr.io' <<< "$said" && return 0
+    echo "it said: ${said:-nothing about the settings left to the release}"
     return 1
 }
 
@@ -1638,6 +1679,8 @@ NETWORK_CREATE_EXIT=1 run_install_from_state pools_full
 DISK_AVAIL_BYTES=$((91 * 1000 * 1000 * 1000)) run_install_from_state disk_too_small
 run_install_from_state clock_before_the_release
 run_install_from_state previous_checkout -
+cp "$REPO_ROOT/test/env.main-34a7b28" "$WORK_DIR/env.main"
+run_install_from_state checkout_from_main -
 run_install_from_state checkout_without_domain -
 run_install_from_state no_accelerator_declared
 run_install_from_state no_accelerator_undeclared
@@ -1858,6 +1901,12 @@ property "the App Builder's token key comes along, so stored GitLab tokens stay 
     the_builder_key_comes_from_the_checkout
 property "an install too old to name its address has it read from its URLs" \
     the_address_is_read_from_the_urls
+property "a checkout of main runs the release's pinned images, not its tags" \
+    the_release_pins_every_image_main_named
+property "a checkout of main keeps the choices that were the operator's" \
+    the_operator_s_choices_from_main_stay
+property "the installer names the settings it leaves to the release" \
+    the_installer_names_what_it_leaves_to_the_release
 
 printf '\n%sAn install with nobody watching%s\n' "$BOLD" "$NC"
 property "it finishes, and says so" \

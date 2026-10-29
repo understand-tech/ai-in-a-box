@@ -1082,10 +1082,22 @@ settings_of_a_previous_install() {
     printf '%s' "$found"
 }
 
+# What an older install wrote for these was its own release's, never the
+# operator's: a git checkout of main named its images by tag and its engine for
+# another model. Carried over, they would win over this release's pinned images.
+the_release_decides() {
+    local key=$1 release=$2
+    case "$key" in
+        *_IMAGE|NIM_LLM_PASSTHROUGH_ARGS|LLM_MAX_CONTEXT_LEN|GATEWAY_MODELS|DOWNLOAD_ONNX_EMBED) ;;
+        *) return 1 ;;
+    esac
+    grep -qE "^${key}=" "$release" 2>/dev/null
+}
+
 # Lines are carried over verbatim, never re-quoted: GATEWAY_MODELS holds JSON
 # inside single quotes, which env_set would rewrite as KEY="value" and corrupt.
 migrate_existing_settings_into_local() {
-    local env_file=$1 local_file=$2 release line key kept=0 diverged=0
+    local env_file=$1 local_file=$2 release line key kept=0 diverged=0 left=0 left_names=""
     release="$INSTALL_DIR/release.env"
 
     [[ -s "$env_file" ]] || return 0
@@ -1100,12 +1112,21 @@ migrate_existing_settings_into_local() {
             *) continue ;;
         esac
         if grep -qxF "$line" "$release" 2>/dev/null; then continue; fi
+        if the_release_decides "$key" "$release"; then
+            left=$((left + 1))
+            left_names="${left_names:+$left_names, }$key"
+            continue
+        fi
         if grep -qE "^${key}=" "$release" 2>/dev/null; then diverged=$((diverged + 1)); fi
         printf '%s\n' "$line" >> "$local_file"
         kept=$((kept + 1))
     done < "$env_file"
 
     log_info "Split the settings: ${kept} kept as yours, ${diverged} of them differing from this release"
+    if (( left > 0 )); then
+        log_info "${left} left to this release, which decides them: ${left_names}"
+        log_info "  An image or an engine setting of your own is not carried over: set it again in local.env if you need it"
+    fi
     log_info "The file as it was: ${local_file%/*}/env.before-split"
 }
 

@@ -95,17 +95,25 @@ which an `.env` written once never allowed.
 
 **Your first update splits the file you already have.** Anything in it that
 matches what this version decides is dropped, because dropping it changes
-nothing. Everything else is kept as yours, and the installer says how many
-values differ from what it would have chosen:
+nothing. The images (`*_IMAGE`) and the engine and model settings
+(`NIM_LLM_PASSTHROUGH_ARGS`, `LLM_MAX_CONTEXT_LEN`, `GATEWAY_MODELS`,
+`DOWNLOAD_ONNX_EMBED`) are left to this version too, whatever they said: the
+values an older install wrote for them were its own release's, and kept, they
+would win over the images this version was tested and signed with. Everything
+else is kept as yours, and the installer says how many values differ from what
+it would have chosen:
 
 ```
-[ ok ] Split the settings: 34 kept as yours, 4 of them differing from this release
+[ ok ] Split the settings: 41 kept as yours, 2 of them differing from this release
+[ ok ] 15 left to this release, which decides them: LLM_IMAGE, API_IMAGE, …
 [ ok ] The file as it was: /etc/understandtech/env.before-split
 ```
 
-**Those four are not changed.** An update is the wrong moment to move a service,
+**Those two are not changed.** An update is the wrong moment to move a service,
 so a setting that differs is reported, never resolved. Aligning one is a
-separate, deliberate edit to `local.env`.
+separate, deliberate edit to `local.env`. An image or an engine setting of your
+own is not carried over: its old value stays in `env.before-split`; set it again
+in `local.env` if you need it.
 
 New versions also make variables mandatory, and the stack refuses to start
 rather than run misconfigured. The installer generates each one and prints it
