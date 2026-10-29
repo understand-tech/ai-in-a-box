@@ -1538,6 +1538,14 @@ if grep -q 'checkouts_holding_settings' "$REPO_ROOT/bin/ut-install"; then
         "the checkout itself is left untouched" \
         "sed -i.bak 's|migrate_existing_settings_into_local \"\$source_settings\" \"\$local_file\"|& \&\& rm -f \"\$source_settings\"|' bin/ut-install"
 
+    install_walk_discriminates "a checkout's images carried over again" \
+        "a checkout of main runs the release's pinned images, not its tags" \
+        "sed -i.bak 's/^        \\*_IMAGE|NIM_LLM_PASSTHROUGH_ARGS/        NIM_LLM_PASSTHROUGH_ARGS/' bin/ut-install"
+
+    install_walk_discriminates "the settings left to the release kept quiet" \
+        "the installer names the settings it leaves to the release" \
+        "sed -i.bak 's/^        log_info \"\${left} left to this release, which decides them: \${left_names}\"\$/        :/' bin/ut-install"
+
     install_walk_discriminates "a required variable nobody generates" \
         "every variable the stack requires has a value" \
         "sed -i.bak 's| GPU_VM_API_TOKEN\\([ )]\\)|\\1|' bin/ut-install"
