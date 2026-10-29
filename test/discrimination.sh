@@ -177,6 +177,12 @@ discriminates "the App Builder's token key defaulted in its overlay" \
     "compose-secret-default:APP_BUILDER_TOKEN_ENCRYPTION_KEY" \
     "sed -i.bak 's|\${APP_BUILDER_TOKEN_ENCRYPTION_KEY:-}|\${APP_BUILDER_TOKEN_ENCRYPTION_KEY:-shipped-value}|' compose.appbuilder.yaml"
 
+if grep -q 'check_no_healthcheck_carries_a_password' "$REPO_ROOT/test/invariants.sh"; then
+    discriminates "the database's password put back in its healthcheck" \
+        "healthcheck-carries-a-password:compose.yaml:235" \
+        "sed -i.bak 's|ok\"]|ok\", \"-u\", \"\${MONGODB_USERNAME:?ut-install generates it}\", \"-p\", \"\${MONGODB_PASSWORD:?ut-install generates it}\", \"--authenticationDatabase\", \"admin\"]|' compose.yaml"
+fi
+
 if grep -q 'check_no_service_starts_slower_than_the_installer_waits' "$REPO_ROOT/test/invariants.sh"; then
     discriminates "a service given longer to start than the install waits" \
         "start-period-outlasts-the-install:mongodb-backup" \

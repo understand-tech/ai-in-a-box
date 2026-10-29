@@ -232,7 +232,7 @@ services:
     networks:
       - ut-data-network
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok", "-u", "${MONGODB_USERNAME:?ut-install generates it}", "-p", "${MONGODB_PASSWORD:?ut-install generates it}", "--authenticationDatabase", "admin"]
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
       <<: *healthcheck-defaults
       start_period: 30s
     logging: *default-logging
