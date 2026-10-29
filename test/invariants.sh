@@ -123,6 +123,18 @@ check_compose_declares_no_secret_default() {
     done
 }
 
+# Compose interpolates a healthcheck's test straight into the command it runs:
+# a password there sits in docker inspect for anyone in the docker group, and
+# in ps for every account on the host, each time the check runs.
+check_no_healthcheck_carries_a_password() {
+    local file line content
+    while IFS=: read -r file line content; do
+        [[ -n "$file" ]] || continue
+        report "healthcheck-carries-a-password:$(basename "$file"):${line}" \
+            "$(basename "$file"):${line} declares a healthcheck test carrying a password — docker inspect and ps show it to anyone who can read either"
+    done < <(grep -nE '^\s*test:' "$REPO_ROOT"/compose*.yaml | grep -E '"-p"|"--password"|PASSWORD')
+}
+
 seconds_in_duration() {
     local duration=$1 number=${1%[a-z]}
     case "$duration" in
@@ -981,6 +993,7 @@ main() {
     check_ut_setup_reads_what_ut_get_hands_it
     check_release_env_ships_no_secret
     check_compose_declares_no_secret_default
+    check_no_healthcheck_carries_a_password
     check_no_service_starts_slower_than_the_installer_waits
     check_every_service_declares_its_role
     check_every_service_declares_a_healthcheck
