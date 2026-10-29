@@ -1733,6 +1733,24 @@ fi
         "sed -i.bak '/both say where the backup goes/,/exit 1/ s/exit 1/:/' bin/ut-install"
 fi
 
+if grep -q 'step_rotate_a_published_database_password' "$REPO_ROOT/bin/ut-install"; then
+    install_walk_discriminates "a new database password taken on mongosh's word" \
+        "a change the database did not take is never written to local.env" \
+        "sed -i.bak 's/^        \\&\\& database_opens_with .*; then\$/        ; then/' bin/ut-install"
+
+    install_walk_discriminates "a database password changed with no backup first" \
+        "the database is backed up and checked before the change" \
+        "sed -i.bak 's/^    archive=\$(take_a_verified_database_backup) \\\\\$/    archive=none \\\\/' bin/ut-install"
+
+    install_walk_discriminates "a database password handed to mongosh as an argument" \
+        "no database password reaches docker's arguments" \
+        "sed -i.bak 's|mongosh_signed_in; }\$|mongosh_signed_in \"// \$2\"; }|' bin/ut-install"
+
+    install_walk_discriminates "a rotation undone in the database but not in local.env" \
+        "a change a service does not come back from is undone" \
+        "sed -i.bak '/\"\$saved\" > \"\$local_file\"/d' bin/ut-install"
+fi
+
 if [[ -x "$REPO_ROOT/test/ingress.sh" ]]; then
     printf '\n%sThe front door, seen failing%s\n\n' "$BOLD" "$NC"
 

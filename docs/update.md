@@ -112,6 +112,27 @@ keeps it without asking. Passing `--domain` is what changes it, and changing it
 is a move, not an update: see
 [changing the address later](certificates-and-dns.md#changing-the-address-later).
 
+### A database password the repository published
+
+A machine installed from a clone of the repository may still run its database
+with the password `.env.example` held, or the example the installation guide
+gave. Anyone can read either. The installer recognises them and, on a terminal,
+offers to change the password; with no terminal it changes nothing and names
+the command:
+
+```bash
+sudo ut-install --rotate-database-password
+```
+
+The change backs the database up and checks the archive, changes the password
+inside the database, checks that the new one opens it and the old one no longer
+does, writes it to `local.env`, recreates every service that reads it, and backs
+up again with it. If any of that fails, the old password goes back into the
+database and `local.env`, the services restart on it, and the installer says
+so. The new password is never printed: it is in `local.env`.
+
+A password you chose is left alone. The option changes it anyway, on demand.
+
 ## What an update does to your settings
 
 `.env` is not a file you keep any more — it is built, every time the installer

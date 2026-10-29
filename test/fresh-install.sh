@@ -296,6 +296,14 @@ state_setup() {
         orphan_volume) echo ': # the volume is asserted through the stub' ;;
         volume_with_shipped_password)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'MONGODB_USERNAME="mongoadmin"\nMONGODB_PASSWORD="12345678"\n'"'"' > /etc/understandtech/local.env' ;;
+        published_password_on_a_terminal|published_password_without_a_terminal)
+            a_database_holding "$1" 12345678 ;;
+        rotation_a_service_does_not_survive)
+            a_database_holding "$1" 12345678 new-password-breaks-a-service ;;
+        change_the_database_did_not_take)
+            a_database_holding "$1" 12345678 change-does-not-take ;;
+        chosen_password|chosen_password_rotated_on_demand)
+            a_database_holding "$1" chosen-by-the-customer-7d2e ;;
         previous_checkout)
             echo 'install -d /opt/understandtech && printf '"'"'UT_DOMAIN="carried.example"\nJWT_SECRET="keptfromthecheckout0123456789abcdef0123456789ab"\nLOG_LEVEL="WARNING"\nAPP_BUILDER_TOKEN_ENCRYPTION_KEY="a2VwdGZyb210aGVjaGVja291dDAxMjM0NTY3ODlhYmM="\n'"'"' > /opt/understandtech/.env' ;;
         # A checkout of main before 2026-10, which shipped LOG_LEVEL="DEBUG" in
@@ -1350,6 +1358,112 @@ the_way_back_comes_before_the_way_out() {
     return 1
 }
 
+password_in() { grep -m1 '^MONGODB_PASSWORD=' "$WORK_DIR/$1/$2" 2>/dev/null | cut -d= -f2- | tr -d '"'; }
+
+line_of_call() {
+    local line
+    line=$(grep -n -m1 -e "$2" "$WORK_DIR/$1/docker-calls" 2>/dev/null | cut -d: -f1)
+    printf '%s' "${line:-0}"
+}
+
+# The stub's database keeps one password: when it has moved, the new one opens
+# the database and the old one no longer does.
+the_database_and_what_reads_it_have_a_new_password() {
+    local state=$1 now
+    now=$(of_state "$state" database-password)
+    [[ -n "$now" && "$now" != "$(of_state "$state" database-password-before)" ]] \
+        || { echo "the database still opens with the password it had"; tail -8 <<< "$(output_of "$state")"; return 1; }
+    [[ "$(password_in "$state" local-env)" == "$now" ]] || { echo "local.env does not hold the password the database has"; return 1; }
+    [[ "$(password_in "$state" env)" == "$now" ]] || { echo ".env, which every service reads, does not hold it"; return 1; }
+    (( $(line_of_call "$state" changeUserPassword) < $(line_of_call "$state" '^compose up -d$') )) \
+        || { echo "no service was recreated after the change"; return 1; }
+    grep -q '^EXIT=0$' <<< "$(output_of "$state")" && return 0
+    echo "the install reported a failure:"
+    tail -6 <<< "$(output_of "$state")"
+    return 1
+}
+
+a_published_password_is_offered_a_change_that_takes() {
+    grep -q 'Change it now?' <<< "$(output_of published_password_on_a_terminal)" \
+        || { echo "nothing was offered:"; tail -8 <<< "$(output_of published_password_on_a_terminal)"; return 1; }
+    the_database_and_what_reads_it_have_a_new_password published_password_on_a_terminal
+}
+
+the_database_is_backed_up_before_the_change_and_after() {
+    local state=published_password_on_a_terminal first change last checks
+    first=$(line_of_call "$state" '^compose exec -T mongodb-backup backup-now$')
+    change=$(line_of_call "$state" changeUserPassword)
+    last=$(grep -n '^compose exec -T mongodb-backup backup-now$' "$WORK_DIR/$state/docker-calls" | tail -1 | cut -d: -f1)
+    checks=$(grep -c 'md5sum -c' "$WORK_DIR/$state/docker-calls")
+    (( first > 0 && first < change && change < ${last:-0} && checks >= 2 )) && return 0
+    echo "backup at call line ${first}, change at ${change}, last backup at ${last:-none}, ${checks} checksum checks"
+    return 1
+}
+
+no_database_password_reaches_an_argument_or_the_output() {
+    local state secret
+    for state in published_password_on_a_terminal chosen_password_rotated_on_demand rotation_a_service_does_not_survive; do
+        for secret in "$(of_state "$state" database-password-before)" "$(of_state "$state" database-password)"; do
+            [[ -n "$secret" ]] || continue
+            grep -qF -- "$secret" "$WORK_DIR/$state/docker-calls" && { echo "${state}: a database password is among docker's arguments"; return 1; }
+            grep -qF -- "$secret" "$WORK_DIR/$state/output.txt" && { echo "${state}: a database password is in the output"; return 1; }
+        done
+    done
+    return 0
+}
+
+a_password_the_customer_chose_is_offered_nothing() {
+    local output
+    output=$(output_of chosen_password)
+    if grep -qE 'rotate-database-password|The database password' <<< "$output"; then
+        echo "a password the customer chose was offered a change:"
+        grep -E 'rotate-database-password|The database password' <<< "$output"
+        return 1
+    fi
+    grep -qE 'backup-now|changeUserPassword' "$WORK_DIR/chosen_password/docker-calls" && { echo "the database was touched"; return 1; }
+    grep -q 'Installation complete' <<< "$output" && grep -q '^EXIT=0$' <<< "$output" && return 0
+    tail -6 <<< "$output"
+    return 1
+}
+
+without_a_terminal_the_command_that_changes_it_is_named() {
+    local state=published_password_without_a_terminal output
+    output=$(output_of "$state")
+    grep -qF 'sudo ut-install --rotate-database-password' <<< "$output" \
+        || { echo "nothing said how to change it:"; tail -8 <<< "$output"; return 1; }
+    grep -q 'backup-now' "$WORK_DIR/$state/docker-calls" && { echo "it went ahead with nobody to ask"; return 1; }
+    [[ "$(of_state "$state" database-password)" == 12345678 ]] || { echo "the password changed with nobody asked"; return 1; }
+    grep -q '^EXIT=0$' <<< "$output" && return 0
+    tail -6 <<< "$output"
+    return 1
+}
+
+a_change_a_service_does_not_survive_is_undone_everywhere() {
+    local state=rotation_a_service_does_not_survive output before
+    output=$(output_of "$state")
+    before=$(of_state "$state" database-password-before)
+    [[ "$(of_state "$state" database-password)" == "$before" ]] || { echo "the database kept the new password"; return 1; }
+    [[ "$(password_in "$state" local-env)" == "$before" ]] || { echo "local.env kept the new password"; return 1; }
+    [[ "$(password_in "$state" env)" == "$before" ]] || { echo ".env kept the new password"; return 1; }
+    (( $(grep -c '^compose up -d$' "$WORK_DIR/$state/docker-calls") >= 2 )) \
+        || { echo "the services were not restarted on the old password"; return 1; }
+    grep -q 'back on the old one' <<< "$output" && grep -qE '^EXIT=[1-9]' <<< "$output" && return 0
+    echo "it did not say so, or did not fail:"
+    tail -6 <<< "$output"
+    return 1
+}
+
+a_change_the_database_did_not_take_is_not_written_down() {
+    local state=change_the_database_did_not_take output
+    output=$(output_of "$state")
+    [[ "$(password_in "$state" local-env)" == "$(of_state "$state" database-password)" ]] \
+        || { echo "local.env holds a password the database does not take"; return 1; }
+    grep -qE '^EXIT=[1-9]' <<< "$output" && return 0
+    echo "it reported success:"
+    tail -6 <<< "$output"
+    return 1
+}
+
 LICENSE_USER=licensed-user
 LICENSE_TOKEN=license-carried-token-0001
 
@@ -1399,6 +1513,51 @@ source="/w/weights/source/${url#https://huggingface.co/}"
 cp "$source" "$target"
 CURL
     chmod -R a+rx "$work"
+}
+
+# The database and its backup, in front of the machine stub: one password kept in
+# a file, checked and changed from what mongosh reads on stdin; an archive for each
+# backup-now; one service, whose health a state can tie to the password.
+prepare_a_database() {
+    mkdir -p "$WORK_DIR/database"
+    cat > "$WORK_DIR/database/docker" <<'DOCKER'
+#!/bin/sh
+db=/stub/database
+case "$*" in
+    "compose ps -q"*|"compose up -d"|"compose exec -T mongodb"*|"inspect --format"*) printf '%s\n' "$*" >> /stub/docker-calls ;;
+    *) exec /stub/docker-stub "$@" ;;
+esac
+case "$*" in
+    "compose ps -q mongodb") echo mongodb-id ;;
+    "compose ps -q")         echo api-id ;;
+    "inspect --format"*)
+        health=healthy
+        [ -e $db/new-password-breaks-a-service ] && [ "$(cat $db/database-password)" != "$(cat $db/database-password-before)" ] && health=unhealthy
+        echo "/ut-api|running|$health|control-plane" ;;
+    "compose exec -T mongodb mongosh"*changeUserPassword*)
+        read -r user; read -r password; read -r next
+        [ "$password" = "$(cat $db/database-password)" ] || exit 1
+        [ -e $db/change-does-not-take ] || printf '%s' "$next" > $db/database-password ;;
+    "compose exec -T mongodb mongosh"*auth*)
+        read -r user; read -r password
+        [ "$password" = "$(cat $db/database-password)" ] ;;
+    "compose exec -T mongodb-backup backup-now") echo taken >> $db/database-archives ;;
+    "compose exec -T mongodb-backup sh -c ls"*)
+        [ ! -s $db/database-archives ] || echo "/backup/mongo__mongodb_$(wc -l < $db/database-archives).archive.gz" ;;
+esac
+DOCKER
+    chmod -R a+rx "$WORK_DIR/database"
+}
+
+# A machine whose database already holds a password, answered by that stub. A
+# flaw names what goes wrong in it.
+a_database_holding() {
+    local state=$1 password=$2 flaw=${3:-}
+    printf '%s' "install -d -m 750 /etc/understandtech && printf 'MONGODB_USERNAME=\"mongoadmin\"\\nMONGODB_PASSWORD=\"$password\"\\n' > /etc/understandtech/local.env"
+    printf '%s' " && mv /stub/docker /stub/docker-stub && cp /w/database/docker /stub/docker && ln -s /w/$state /stub/database"
+    printf '%s' " && printf %s $password > /w/$state/database-password && cp /w/$state/database-password /w/$state/database-password-before"
+    [[ -z "$flaw" ]] || printf '%s' " && : > /w/$state/$flaw"
+    echo
 }
 
 prepare_certificates() {
@@ -1624,6 +1783,7 @@ prepare_licenses
 prepare_certificates
 prepare_weights
 prepare_a_vllm_entry
+prepare_a_database
 
 run_install_from_state bare
 PULL_EXIT=0 run_install_from_state install_runs_through
@@ -1690,6 +1850,18 @@ INSTALL_COMMAND="ut-install --license-file /w/licenses/keys/active.key --machine
     run_install_from_state no_settings_dir
 MONGO_VOLUME_EXISTS=yes run_install_from_state orphan_volume
 MONGO_VOLUME_EXISTS=yes run_install_from_state volume_with_shipped_password -
+# script gives the run a terminal, which is what makes the question asked.
+MONGO_VOLUME_EXISTS=yes PULL_EXIT=0 \
+    INSTALL_COMMAND="printf 'y\\n' | script -qec 'ut-install --domain box.example.test --reporting no' /dev/null" \
+    run_install_from_state published_password_on_a_terminal -
+MONGO_VOLUME_EXISTS=yes PULL_EXIT=0 run_install_from_state published_password_without_a_terminal
+MONGO_VOLUME_EXISTS=yes PULL_EXIT=0 run_install_from_state chosen_password
+MONGO_VOLUME_EXISTS=yes PULL_EXIT=0 INSTALL_COMMAND="ut-install --rotate-database-password" \
+    run_install_from_state chosen_password_rotated_on_demand
+MONGO_VOLUME_EXISTS=yes PULL_EXIT=0 INSTALL_COMMAND="ut-install --rotate-database-password" \
+    run_install_from_state rotation_a_service_does_not_survive
+MONGO_VOLUME_EXISTS=yes PULL_EXIT=0 INSTALL_COMMAND="ut-install --rotate-database-password" \
+    run_install_from_state change_the_database_did_not_take
 NETWORK_CREATE_EXIT=1 run_install_from_state pools_full
 DISK_AVAIL_BYTES=$((91 * 1000 * 1000 * 1000)) run_install_from_state disk_too_small
 run_install_from_state clock_before_the_release
@@ -2019,6 +2191,24 @@ property "a destination gone during an update holds the update back no more than
 printf '\n%sA database whose password happens to look shipped%s\n' "$BOLD" "$NC"
 property "the install carries on, because that password is the right one" \
     a_shipped_password_is_still_a_password
+
+printf '\n%sA database password the repository published%s\n' "$BOLD" "$NC"
+property "on a terminal, a change is offered, and the database and every service take it" \
+    a_published_password_is_offered_a_change_that_takes
+property "the database is backed up and checked before the change, and again with the new password" \
+    the_database_is_backed_up_before_the_change_and_after
+property "no database password reaches docker's arguments or the output" \
+    no_database_password_reaches_an_argument_or_the_output
+property "with no terminal, nothing changes and the command that would is named" \
+    without_a_terminal_the_command_that_changes_it_is_named
+property "a password the customer chose is offered nothing" \
+    a_password_the_customer_chose_is_offered_nothing
+property "the option --rotate-database-password changes a password nobody published" \
+    the_database_and_what_reads_it_have_a_new_password chosen_password_rotated_on_demand
+property "a change a service does not come back from is undone in the database, local.env and the services" \
+    a_change_a_service_does_not_survive_is_undone_everywhere
+property "a change the database did not take is never written to local.env" \
+    a_change_the_database_did_not_take_is_not_written_down
 
 printf '\n%s%d verified%s' "$GREEN" "$PASSED" "$NC"
 if (( FAILED )); then
