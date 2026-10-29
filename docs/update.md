@@ -117,19 +117,30 @@ is a move, not an update: see
 A machine installed from a clone of the repository may still run its database
 with the password `.env.example` held, or the example the installation guide
 gave. Anyone can read either. The installer recognises them and, on a terminal,
-offers to change the password; with no terminal it changes nothing and names
-the command:
+asks whether to change the password: only an explicit `y` does. With no terminal
+it changes nothing and names the command:
 
 ```bash
 sudo ut-install --rotate-database-password
 ```
+
+It is changed only while every service that reads it is ready: one that is not
+would make the change undo itself, so the installer leaves the password as it is
+and says which service to look at.
 
 The change backs the database up and checks the archive, changes the password
 inside the database, checks that the new one opens it and the old one no longer
 does, writes it to `local.env`, recreates every service that reads it, and backs
 up again with it. If any of that fails, the old password goes back into the
 database and `local.env`, the services restart on it, and the installer says
-so. The new password is never printed: it is in `local.env`.
+so. A run cut off halfway — Ctrl-C, a lost session, a power cut — is finished
+by the next one, which puts `local.env` on the password the database takes. The
+new password is never printed: it is in `local.env`.
+
+Only the stack is told. Anything that reached the database from outside it with
+the old password — a tool on a port an earlier install published, a stack
+Portainer started — needs the new one, from `local.env`. So does the clone's own
+`.env`, if you ever go back to running the clone.
 
 A password you chose is left alone. The option changes it anyway, on demand.
 

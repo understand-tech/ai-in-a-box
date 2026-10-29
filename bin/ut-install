@@ -192,8 +192,9 @@ Options
                        one: a backup first, checked; then the change, checked;
                        then every service that reads it restarted, and a second
                        backup with it. Any step that fails puts the old one back.
-                       Offered on its own when the password is one the
-                       repository or its guide published.
+                       Done only while those services are all ready. Offered on
+                       its own when the password is one the repository or its
+                       guide published.
   --images-from DIR    Take every image from a folder ut-get --prepare wrote on a
                        connected machine, under the digest the release names,
                        and download none. ut-get --from passes it on its own.
@@ -2643,12 +2644,46 @@ password_was_published() {
     return 1
 }
 
+# env_get keeps what Compose drops: blanks or a CR around the value, and after
+# an unquoted one, a " #" comment.
+setting_as_compose_reads_it() {
+    local value
+    value=$(grep -m1 -E "^[[:space:]]*$2=" "$1" 2>/dev/null) || return 1
+    value=${value#*=}
+    value=${value#"${value%%[![:space:]]*}"}
+    case "$value" in
+        \"*) value=${value#\"}; value=${value%%\"*} ;;
+        \'*) value=${value#\'}; value=${value%%\'*} ;;
+        *)   value=${value%%[[:space:]]#*}; value=${value%"${value##*[![:space:]]}"} ;;
+    esac
+    printf '%s' "$value"
+}
+
 the_database_runs_here() { [[ -n "$(compose_in_dir ps -q mongodb 2>/dev/null)" ]]; }
+
+waited_for_services_not_ready() {
+    local name status health role
+    while IFS='|' read -r name status health role; do
+        [[ -n "$name" ]] && role_is_waited_for "$role" || continue
+        [[ "$health" == "healthy" || ( "$health" == "none" && "$status" == "running" ) ]] \
+            || printf ' %s (%s)' "${name#/}" "$health"
+    done < <(container_health_lines)
+}
+
+# A change restarts every service that reads the password and undoes itself when
+# one does not come back: begun beside one already unwell, it would undo itself
+# on every run.
+the_services_that_read_it_are_ready_now() {
+    local not_ready
+    not_ready=$(waited_for_services_not_ready)
+    [[ -z "$not_ready" ]] && return 0
+    log_warn "Left as it is for now: a change would undo itself while a service is not ready:${not_ready}"
+    log_warn "  Once they all are: sudo ut-install --rotate-database-password"
+    return 1
+}
 
 the_operator_wants_the_published_password_changed() {
     local answer=""
-    log_warn "The database password is one the repository or its installation guide"
-    log_warn "  published, so it protects nothing."
     if ! terminal_is_reachable; then
         log_warn "  No terminal to ask on: it stays until you run"
         log_warn "    sudo ut-install --rotate-database-password"
@@ -2656,9 +2691,9 @@ the_operator_wants_the_published_password_changed() {
     fi
     log "  Changing it backs the database up first, restarts the services that read"
     log "  it, and puts the old one back if any step fails."
-    printf '  Change it now? [Y/n]: ' > /dev/tty
+    printf '  Change it now? [y/N]: ' > /dev/tty
     read -r answer < /dev/tty || answer=""
-    [[ "$answer" =~ ^([Yy]([Ee][Ss])?)?$ ]] && return 0
+    [[ "$answer" =~ ^[Yy]([Ee][Ss])?$ ]] && return 0
     log_warn "  Kept. Change it later with: sudo ut-install --rotate-database-password"
     return 1
 }
@@ -2679,15 +2714,16 @@ change_database_password() {
     printf '%s\n%s\n%s\n' "$1" "$2" "$3" | mongosh_signed_in 'admin.changeUserPassword(user, next);'
 }
 
+at_most_two_minutes() { printf '%s' $(( SECONDS + (HEALTH_TIMEOUT < 120 ? HEALTH_TIMEOUT : 120) )); }
+
 the_database_answers() {
-    local _
-    for _ in $(seq 24); do
-        compose_in_dir exec -T mongodb mongosh --quiet --nodb \
-            --eval "new Mongo('mongodb://127.0.0.1:27017').getDB('admin').runCommand({ ping: 1 })" >/dev/null 2>&1 \
-            && return 0
+    local deadline
+    deadline=$(at_most_two_minutes)
+    until compose_in_dir exec -T mongodb mongosh --quiet --nodb \
+        --eval "new Mongo('mongodb://127.0.0.1:27017').getDB('admin').runCommand({ ping: 1 })" >/dev/null 2>&1; do
+        (( SECONDS < deadline )) || return 1
         sleep 5
     done
-    return 1
 }
 
 newest_database_archive() {
@@ -2709,48 +2745,86 @@ take_a_verified_database_backup() {
 
 # Just recreated, the backup container may not take backup-now at once.
 a_verified_database_backup_within_two_minutes() {
-    local _
-    for _ in $(seq 12); do
-        take_a_verified_database_backup && return 0
+    local deadline
+    deadline=$(at_most_two_minutes)
+    until take_a_verified_database_backup; do
+        (( SECONDS < deadline )) || return 1
         sleep 10
     done
-    return 1
 }
 
 # step_wait_healthy only warns when its time runs out; a rotation has to know,
 # to put the old password back. Unhealthy has already exhausted its retries.
 every_waited_for_service_is_ready() {
-    local deadline=$(( SECONDS + HEALTH_TIMEOUT )) name status health role pending=""
-    while (( SECONDS < deadline )); do
-        pending=""
-        while IFS='|' read -r name status health role; do
-            [[ -n "$name" ]] && role_is_waited_for "$role" || continue
-            [[ "$health" == "unhealthy" ]] && { log_error "  ${name#/} is unhealthy"; return 1; }
-            [[ "$health" == "healthy" || ( "$health" == "none" && "$status" == "running" ) ]] || pending+=" ${name#/}"
-        done < <(container_health_lines)
-        [[ -z "$pending" ]] && return 0
+    local deadline=$(( SECONDS + HEALTH_TIMEOUT )) not_ready
+    while not_ready=$(waited_for_services_not_ready) && [[ -n "$not_ready" ]]; do
+        if [[ "$not_ready" == *"(unhealthy)"* ]] || (( SECONDS >= deadline )); then
+            log_error "  Not ready:${not_ready}"
+            return 1
+        fi
         sleep 5
     done
-    log_error "  Still not ready after $((HEALTH_TIMEOUT / 60)) minutes:${pending}"
-    return 1
+}
+
+database_password_change_record() { printf '%s/database-password-change' "$(settings_directory "$INSTALL_DIR/.env")"; }
+
+# On disk before the database changes: a run cut off in between — Ctrl-C, a lost
+# ssh session, a power cut — leaves the next one what it needs to settle local.env.
+record_the_database_password_change() {
+    local record
+    record=$(database_password_change_record)
+    install -m 600 -o root -g root /dev/null "$record"
+    printf '%s\n%s\n' "$1" "$2" > "$record"
+    sync "$record"
+}
+
+# Before step_start: until local.env holds the password the database takes, the
+# mongodb healthcheck fails and compose up stops on every service behind it.
+step_finish_an_interrupted_database_password_change() {
+    local record local_file user old="" new="" password
+    record=$(database_password_change_record)
+    [[ -f "$record" ]] || return 0
+    log_step "Finishing a database password change that was cut off"
+    { read -r old || true; read -r new || true; } < "$record"
+    [[ -n "$new" ]] || { rm -f "$record"; log_info "It was cut off before the database changed: nothing to do"; return 0; }
+    local_file="$(settings_directory "$INSTALL_DIR/.env")/local.env"
+    user=$(setting_as_compose_reads_it "$local_file" MONGODB_USERNAME || true)
+    compose_in_dir up -d --no-deps mongodb >/dev/null 2>&1 || true
+    the_database_answers \
+        || die "The database does not answer, so which password it took is unknown. ${record} keeps both; run ut-install again once it answers."
+    for password in "$new" "$old"; do
+        database_opens_with "$user" "$password" || continue
+        env_set "$local_file" MONGODB_PASSWORD "$password"
+        render_settings "$INSTALL_DIR/.env" "$local_file"
+        rm -f "$record"
+        log_info "${local_file} holds the password the database takes"
+        return 0
+    done
+    die "The database takes neither password it was being moved between. ${record} keeps both."
 }
 
 step_rotate_a_published_database_password() {
     local local_file user old new saved archive after
     local_file="$(settings_directory "$INSTALL_DIR/.env")/local.env"
-    old=$(env_get "$local_file" MONGODB_PASSWORD || true)
+    old=$(setting_as_compose_reads_it "$local_file" MONGODB_PASSWORD || true)
     $ROTATE_DATABASE_PASSWORD || { password_was_published "$old" && the_database_runs_here; } || return 0
 
     log_step "The database password"
-    $ROTATE_DATABASE_PASSWORD || the_operator_wants_the_published_password_changed || return 0
+    $ROTATE_DATABASE_PASSWORD \
+        || log_warn "It is one the repository or its installation guide published, so it protects nothing."
     the_database_runs_here || die "No database runs on this machine, so there is no password to change."
-    user=$(env_get "$local_file" MONGODB_USERNAME || true)
+    the_services_that_read_it_are_ready_now || return 0
+    $ROTATE_DATABASE_PASSWORD || the_operator_wants_the_published_password_changed || return 0
+    user=$(setting_as_compose_reads_it "$local_file" MONGODB_USERNAME || true)
+    database_opens_with "$user" "$old" \
+        || die "The password is unchanged: the one in ${local_file} does not open the database."
     archive=$(take_a_verified_database_backup) \
         || die "The password is unchanged: no backup could be taken and checked before changing it."
     log_info "Database backed up and checked: ${archive##*/}"
 
     new=$(random_alphanumeric 32)
     saved=$(cat "$local_file")
+    record_the_database_password_change "$old" "$new"
     if change_database_password "$user" "$old" "$new" \
         && database_opens_with "$user" "$new" && ! database_opens_with "$user" "$old"; then
         log_info "The database takes the new password and refuses the old one"
@@ -2758,7 +2832,10 @@ step_rotate_a_published_database_password() {
         render_settings "$INSTALL_DIR/.env" "$local_file"
         if compose_in_dir up -d && every_waited_for_service_is_ready \
             && after=$(a_verified_database_backup_within_two_minutes); then
+            rm -f "$(database_password_change_record)"
             log_info "Every service that reads it restarted with it, and a backup made with it checks: ${after##*/}"
+            log_warn "Anything that reached the database from outside this stack with the old password — a tool"
+            log_warn "  on a port an earlier install published, a stack Portainer started — needs the new one, in ${local_file}."
             return 0
         fi
     fi
@@ -2769,9 +2846,10 @@ put_the_old_database_password_back() {
     local user=$1 old=$2 new=$3 local_file=$4 saved=$5 archive=$6
     log_error "Changing the password failed — putting the old one back"
     the_database_answers && { database_opens_with "$user" "$old" || change_database_password "$user" "$new" "$old"; } \
-        || die "The database did not answer, or took neither password: ${local_file} is left as it is. The backup taken before: ${archive}"
+        || die "The database did not answer, or took neither password. Running ut-install again settles ${local_file} on the one it takes, once it answers. The backup taken before: ${archive}"
     printf '%s\n' "$saved" > "$local_file"
     render_settings "$INSTALL_DIR/.env" "$local_file"
+    rm -f "$(database_password_change_record)"
     compose_in_dir up -d && every_waited_for_service_is_ready \
         || die "The database and ${local_file} have the old password again, but not every service came back: cd ${INSTALL_DIR} && docker compose ps"
     die "The database password is unchanged: the database, ${local_file} and every service are back on the old one."
@@ -3071,6 +3149,7 @@ main() {
     step_pull
     step_point_the_relay_at_what_restic_dials
     step_weights_from_the_network
+    step_finish_an_interrupted_database_password_change
     step_start
     step_wait_healthy
     step_rotate_a_published_database_password

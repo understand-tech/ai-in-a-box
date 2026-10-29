@@ -35,9 +35,10 @@ Knowing which kind you are editing matters more than knowing the variable.
 `OPENID_SECRET_KEY`, `ADMIN_SETUP_PASSWORD`, `BACKUP_FILES_PASSWORD`,
 `GPU_VM_API_TOKEN`, `GATEWAY_METRICS_TOKEN`,
 `APP_BUILDER_TOKEN_ENCRYPTION_KEY`, and the MongoDB credentials. Changing one
-after the fact breaks something: rotating `MONGODB_PASSWORD` on a database that
-already exists locks every service out, because the image only reads it when it
-creates the data directory.
+by hand after the fact breaks something: editing `MONGODB_PASSWORD` on a database
+that already exists locks every service out, because the image only reads it when
+it creates the data directory. `ut-install --rotate-database-password` changes it
+in the database as well, then everywhere it is read.
 
 **Required.** Six of them make the stack refuse to start when absent **or
 empty** — rather than start misconfigured: `MONGODB_USERNAME`,
@@ -81,10 +82,14 @@ hexadecimal:
 sed -i "s|^APP_BUILDER_TOKEN_ENCRYPTION_KEY=.*|APP_BUILDER_TOKEN_ENCRYPTION_KEY=\"$(openssl rand -base64 32 | tr '+/' '-_')\"|" /etc/understandtech/local.env
 ```
 
-**Three of them cannot be rotated afterwards.**
+**Three of them cannot be rotated by hand afterwards.**
 
 `MONGODB_PASSWORD` is only read when the database is first created. Changing it
-later changes nothing in the database and stops every service from connecting.
+in `local.env` changes nothing in the database and stops every service from
+connecting. `sudo ut-install --rotate-database-password` changes it in the
+database first, then in `local.env` and every service that reads it, and puts
+the old one back if a step fails — see
+[updating](update.md#a-database-password-the-repository-published).
 
 `BACKUP_FILES_PASSWORD` encrypts the backup repository. Losing it makes every
 snapshot unreadable — including the offsite copies, including the certificate

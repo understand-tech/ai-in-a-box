@@ -1749,6 +1749,22 @@ if grep -q 'step_rotate_a_published_database_password' "$REPO_ROOT/bin/ut-instal
     install_walk_discriminates "a rotation undone in the database but not in local.env" \
         "a change a service does not come back from is undone" \
         "sed -i.bak '/\"\$saved\" > \"\$local_file\"/d' bin/ut-install"
+
+    install_walk_discriminates "a rotation cut off that no later run finishes" \
+        "a rotation cut off after the database changed is finished by the next run" \
+        "sed -i.bak '/^    step_finish_an_interrupted_database_password_change\$/d' bin/ut-install"
+
+    install_walk_discriminates "a record of the change other accounts can read" \
+        "the record of a change in progress is root's alone" \
+        "sed -i.bak 's/install -m 600 -o root -g root/install -m 644 -o root -g root/' bin/ut-install"
+
+    install_walk_discriminates "a rotation begun beside a service already unwell" \
+        "a service not ready yet leaves the password as it is" \
+        "sed -i.bak '/^    the_services_that_read_it_are_ready_now || return 0\$/d' bin/ut-install"
+
+    install_walk_discriminates "a published password read as env_get reads it" \
+        "a box taken over from a checkout has its published password changed" \
+        "sed -i.bak 's/^    old=\$(setting_as_compose_reads_it /    old=\$(env_get /' bin/ut-install"
 fi
 
 if grep -q 'step_retire_the_portainer_the_guide_started' "$REPO_ROOT/bin/ut-install"; then
