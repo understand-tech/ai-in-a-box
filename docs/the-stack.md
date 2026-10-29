@@ -66,7 +66,8 @@ Two more, for the add-on only:
   and nothing else of the platform.
 - **`proxy`** (external, App Builder) — joined by `app-builder-docker` and by the
   apps `ut-import-app` runs, so no single project owns it. `ut-install` and
-  `setup-autostart.sh` create it when the overlay is enabled.
+  `setup-autostart.sh` create it when the overlay is enabled. It is not internal:
+  through it, the generated apps reach whatever this machine routes to.
 
 `ut-frontend-network` is the only one that is not internal. That is what lets
 `caddy` answer from outside; it is also why a service that must never reach the
