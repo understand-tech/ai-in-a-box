@@ -133,6 +133,21 @@ so. The new password is never printed: it is in `local.env`.
 
 A password you chose is left alone. The option changes it anyway, on demand.
 
+### Portainer, from the installation guide
+
+When the package takes over an install that lives in a git checkout, the
+installer stops and removes the Portainer the installation guide had you start:
+a container named `portainer`, from the `portainer/portainer-ce` image. It
+publishes port 9443 to the network and holds the Docker socket, which is the
+whole machine. A container with another name or another image is left alone,
+and so is a machine already installed from the package.
+
+Its data stays in the `portainer_data` volume until you remove it:
+
+```bash
+docker volume rm portainer_data
+```
+
 ## What an update does to your settings
 
 `.env` is not a file you keep any more — it is built, every time the installer

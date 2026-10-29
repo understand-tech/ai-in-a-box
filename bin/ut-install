@@ -37,6 +37,7 @@ DO_UPDATE=false
 DO_AUTOSTART=true
 DO_PULL=true
 ROTATE_DATABASE_PASSWORD=false
+TOOK_OVER_A_CHECKOUT=false
 NO_GPU=false
 REGISTRY_TOKEN=""
 LICENSE_FILE=""
@@ -1802,6 +1803,7 @@ step_configure() {
     local source_settings="$env_file" previous
     if [[ ! -s "$env_file" ]] && previous=$(settings_of_a_previous_install); then
         source_settings="$previous"
+        TOOK_OVER_A_CHECKOUT=true
         log_info "Settings taken from ${previous} — that checkout is left as it is"
     fi
     migrate_existing_settings_into_local "$source_settings" "$local_file"
@@ -2610,6 +2612,28 @@ report_inference_that_failed() {
     return 1
 }
 
+# Step 8 of the installation guide had every box run Portainer outside Compose.
+# Only that container is taken: its name and its image, both as the guide wrote them.
+step_retire_the_portainer_the_guide_started() {
+    local found image volume
+    $TOOK_OVER_A_CHECKOUT || return 0
+    found=$(docker inspect --format '{{.Config.Image}}|{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' portainer 2>/dev/null) \
+        || return 0
+    image=${found%%|*}
+    volume=${found#*|}
+    [[ "$image" =~ ^(docker\.io/)?portainer/portainer-ce([:@].*)?$ ]] || return 0
+
+    log_step "Removing the Portainer the installation guide started"
+    log "  It publishes port 9443 to the network and holds the Docker socket, which"
+    log "  is the whole machine."
+    if ! { docker stop portainer >/dev/null && docker rm portainer >/dev/null; }; then
+        log_warn "Portainer could not be removed. Do it with: docker stop portainer && docker rm portainer"
+        return 0
+    fi
+    log_info "Portainer stopped and removed"
+    [[ -z "$volume" ]] || log_info "Its data stays in the ${volume} volume. Remove it with: docker volume rm ${volume}"
+}
+
 password_was_published() {
     local sum published
     sum=$(printf '%s' "$1" | openssl dgst -sha256 -r | cut -d' ' -f1)
@@ -3038,6 +3062,7 @@ main() {
     step_registry_login
     step_fetch_repo
     step_configure
+    step_retire_the_portainer_the_guide_started
     step_check_resolution
     step_docker_group
     step_networks

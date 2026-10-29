@@ -1751,6 +1751,20 @@ if grep -q 'step_rotate_a_published_database_password' "$REPO_ROOT/bin/ut-instal
         "sed -i.bak '/\"\$saved\" > \"\$local_file\"/d' bin/ut-install"
 fi
 
+if grep -q 'step_retire_the_portainer_the_guide_started' "$REPO_ROOT/bin/ut-install"; then
+    install_walk_discriminates "a container named portainer removed whatever its image" \
+        "a container named portainer from another image is left alone" \
+        "sed -i.bak '/\"\$image\" =~/d' bin/ut-install"
+
+    install_walk_discriminates "a Portainer removed from a machine already on the package" \
+        "a machine already on the package keeps its Portainer" \
+        "sed -i.bak '/^    \\\$TOOK_OVER_A_CHECKOUT || return 0\$/d' bin/ut-install"
+
+    install_walk_discriminates "Portainer's data removed along with it" \
+        "taking over a checkout stops and removes it, keeps its data" \
+        "sed -i.bak 's/docker rm portainer >/docker rm -v portainer >/' bin/ut-install"
+fi
+
 if [[ -x "$REPO_ROOT/test/ingress.sh" ]]; then
     printf '\n%sThe front door, seen failing%s\n\n' "$BOLD" "$NC"
 

@@ -312,6 +312,12 @@ state_setup() {
             echo 'install -d /opt/understandtech && printf '"'"'UT_DOMAIN="carried.example"\nJWT_SECRET="keptfromthecheckout0123456789abcdef0123456789ab"\nLOG_LEVEL="DEBUG"\n'"'"' > /opt/understandtech/.env' ;;
         checkout_from_main)
             echo 'install -d /opt/understandtech && cp /w/env.main /opt/understandtech/.env' ;;
+        checkout_with_portainer)
+            echo "$(state_setup previous_checkout) && $(a_portainer_from portainer/portainer-ce:latest)" ;;
+        checkout_with_a_lookalike_portainer)
+            echo "$(state_setup previous_checkout) && $(a_portainer_from example/portainer-lookalike:1)" ;;
+        package_with_portainer)
+            echo "$(state_setup already_set) && $(a_portainer_from portainer/portainer-ce:latest)" ;;
         checkout_without_domain)
             echo 'install -d /opt/understandtech && printf '"'"'PUBLIC_BASE_URL="https://named.by.the.urls"\nBACKEND_URL="https://named.by.the.urls/api"\nJWT_SECRET="keptfromthecheckout0123456789abcdef0123456789ab"\n'"'"' > /opt/understandtech/.env' ;;
         # /w is bind-mounted from the host, so a directory under it sits on another
@@ -1358,6 +1364,26 @@ the_way_back_comes_before_the_way_out() {
     return 1
 }
 
+a_takeover_retires_the_guide_s_portainer_and_keeps_its_data() {
+    local state=checkout_with_portainer output stop remove
+    output=$(output_of "$state")
+    stop=$(line_of_call "$state" '^stop portainer$')
+    remove=$(line_of_call "$state" '^rm portainer$')
+    (( stop > 0 && stop < remove )) || { echo "portainer was not stopped, then removed:"; tail -8 <<< "$output"; return 1; }
+    grep -qE '^volume rm|^rm -' "$WORK_DIR/$state/docker-calls" && { echo "its data went with it"; return 1; }
+    grep -q '9443' <<< "$output" && grep -q 'Docker socket' <<< "$output" \
+        || { echo "nothing said why it was removed"; return 1; }
+    grep -qF 'docker volume rm portainer_data' <<< "$output" && return 0
+    echo "nothing said where its data is, nor how to remove it"
+    return 1
+}
+
+portainer_is_left_alone() {
+    local state=$1
+    grep -qE '^(stop|rm) ' "$WORK_DIR/$state/docker-calls" && { echo "a container was stopped or removed"; return 1; }
+    reached_the_pull "$state"
+}
+
 password_in() { grep -m1 '^MONGODB_PASSWORD=' "$WORK_DIR/$1/$2" 2>/dev/null | cut -d= -f2- | tr -d '"'; }
 
 line_of_call() {
@@ -1558,6 +1584,25 @@ a_database_holding() {
     printf '%s' " && printf %s $password > /w/$state/database-password && cp /w/$state/database-password /w/$state/database-password-before"
     [[ -z "$flaw" ]] || printf '%s' " && : > /w/$state/$flaw"
     echo
+}
+
+# The Portainer step 8 of the installation guide starts, in front of the machine
+# stub: docker inspect answers for a container named portainer, from the image a
+# state writes.
+prepare_a_portainer() {
+    mkdir -p "$WORK_DIR/portainer"
+    cat > "$WORK_DIR/portainer/docker" <<'DOCKER'
+#!/bin/sh
+case "$*" in
+    "inspect --format "*" portainer") printf '%s|portainer_data\n' "$(cat /stub/portainer-image)" ;;
+    *) exec /stub/docker-stub "$@" ;;
+esac
+DOCKER
+    chmod -R a+rx "$WORK_DIR/portainer"
+}
+
+a_portainer_from() {
+    echo "mv /stub/docker /stub/docker-stub && cp /w/portainer/docker /stub/docker && echo $1 > /stub/portainer-image"
 }
 
 prepare_certificates() {
@@ -1784,6 +1829,7 @@ prepare_certificates
 prepare_weights
 prepare_a_vllm_entry
 prepare_a_database
+prepare_a_portainer
 
 run_install_from_state bare
 PULL_EXIT=0 run_install_from_state install_runs_through
@@ -1870,6 +1916,9 @@ run_install_from_state checkout_still_logging_in_debug -
 cp "$REPO_ROOT/test/env.main-34a7b28" "$WORK_DIR/env.main"
 run_install_from_state checkout_from_main -
 run_install_from_state checkout_without_domain -
+run_install_from_state checkout_with_portainer -
+run_install_from_state checkout_with_a_lookalike_portainer -
+run_install_from_state package_with_portainer
 run_install_from_state no_accelerator_declared
 run_install_from_state no_accelerator_undeclared
 # 91 GB: under the 250 GB an appliance needs, over the 60 GB a control plane does.
@@ -2191,6 +2240,14 @@ property "a destination gone during an update holds the update back no more than
 printf '\n%sA database whose password happens to look shipped%s\n' "$BOLD" "$NC"
 property "the install carries on, because that password is the right one" \
     a_shipped_password_is_still_a_password
+
+printf '\n%sThe Portainer the installation guide started%s\n' "$BOLD" "$NC"
+property "taking over a checkout stops and removes it, keeps its data, and says why and how to remove that" \
+    a_takeover_retires_the_guide_s_portainer_and_keeps_its_data
+property "a container named portainer from another image is left alone" \
+    portainer_is_left_alone checkout_with_a_lookalike_portainer
+property "a machine already on the package keeps its Portainer" \
+    portainer_is_left_alone package_with_portainer
 
 printf '\n%sA database password the repository published%s\n' "$BOLD" "$NC"
 property "on a terminal, a change is offered, and the database and every service take it" \
