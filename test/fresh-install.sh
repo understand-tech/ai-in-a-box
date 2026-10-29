@@ -331,6 +331,10 @@ state_setup() {
             echo 'install -d /opt/understandtech && cp /w/env.main /opt/understandtech/.env' ;;
         checkout_with_portainer)
             echo "$(state_setup previous_checkout) && $(a_portainer_from portainer/portainer-ce:latest)" ;;
+        checkout_with_portainer_by_digest)
+            echo "$(state_setup previous_checkout) && $(a_portainer_from portainer/portainer-ce@sha256:$(printf '%064d' 0))" ;;
+        checkout_with_portainer_from_docker_io)
+            echo "$(state_setup previous_checkout) && $(a_portainer_from docker.io/portainer/portainer-ce:latest)" ;;
         checkout_with_a_lookalike_portainer)
             echo "$(state_setup previous_checkout) && $(a_portainer_from example/portainer-lookalike:1)" ;;
         package_with_portainer)
@@ -1381,12 +1385,25 @@ the_way_back_comes_before_the_way_out() {
     return 1
 }
 
-a_takeover_retires_the_guide_s_portainer_and_keeps_its_data() {
-    local state=checkout_with_portainer output stop remove
-    output=$(output_of "$state")
+portainer_is_retired() {
+    local state=$1 stop remove
     stop=$(line_of_call "$state" '^stop portainer$')
     remove=$(line_of_call "$state" '^rm portainer$')
-    (( stop > 0 && stop < remove )) || { echo "portainer was not stopped, then removed:"; tail -8 <<< "$output"; return 1; }
+    (( stop > 0 && stop < remove )) && return 0
+    echo "portainer was not stopped, then removed:"
+    tail -8 <<< "$(output_of "$state")"
+    return 1
+}
+
+a_portainer_by_digest_or_from_docker_io_is_retired() {
+    portainer_is_retired checkout_with_portainer_by_digest && portainer_is_retired checkout_with_portainer_from_docker_io
+}
+
+a_takeover_retires_the_guide_s_portainer_and_keeps_its_data() {
+    local state=checkout_with_portainer output
+    output=$(output_of "$state")
+    portainer_is_retired "$state" || return 1
+    grep -q '127.0.0.1:9443:9443' <<< "$output" || { echo "nothing said how to run it again for this machine alone"; return 1; }
     grep -qE '^volume rm|^rm -' "$WORK_DIR/$state/docker-calls" && { echo "its data went with it"; return 1; }
     grep -q '9443' <<< "$output" && grep -q 'Docker socket' <<< "$output" \
         || { echo "nothing said why it was removed"; return 1; }
@@ -2066,6 +2083,8 @@ cp "$REPO_ROOT/test/env.main-34a7b28" "$WORK_DIR/env.main"
 run_install_from_state checkout_from_main -
 run_install_from_state checkout_without_domain -
 run_install_from_state checkout_with_portainer -
+run_install_from_state checkout_with_portainer_by_digest -
+run_install_from_state checkout_with_portainer_from_docker_io -
 run_install_from_state checkout_with_a_lookalike_portainer -
 run_install_from_state package_with_portainer
 run_install_from_state no_accelerator_declared
@@ -2393,6 +2412,8 @@ property "the install carries on, because that password is the right one" \
 printf '\n%sThe Portainer the installation guide started%s\n' "$BOLD" "$NC"
 property "taking over a checkout stops and removes it, keeps its data, and says why and how to remove that" \
     a_takeover_retires_the_guide_s_portainer_and_keeps_its_data
+property "one named by digest, or from docker.io, is removed too" \
+    a_portainer_by_digest_or_from_docker_io_is_retired
 property "a container named portainer from another image is left alone" \
     portainer_is_left_alone checkout_with_a_lookalike_portainer
 property "a machine already on the package keeps its Portainer" \

@@ -2633,6 +2633,7 @@ step_retire_the_portainer_the_guide_started() {
     fi
     log_info "Portainer stopped and removed"
     [[ -z "$volume" ]] || log_info "Its data stays in the ${volume} volume. Remove it with: docker volume rm ${volume}"
+    log_info "  To run it for this machine alone: docker run -d --name portainer --restart=always -p 127.0.0.1:9443:9443 -v /var/run/docker.sock:/var/run/docker.sock -v ${volume:-portainer_data}:/data ${image}"
 }
 
 password_was_published() {

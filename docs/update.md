@@ -153,7 +153,9 @@ publishes port 9443 to the network and holds the Docker socket, which is the
 whole machine. A container with another name or another image is left alone,
 and so is a machine already installed from the package.
 
-Its data stays in the `portainer_data` volume until you remove it:
+The installer prints the command that runs it again for this machine alone,
+on `127.0.0.1:9443`. Its data stays in the `portainer_data` volume until you
+remove it:
 
 ```bash
 docker volume rm portainer_data
