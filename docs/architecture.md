@@ -125,6 +125,33 @@ directory is reinstallable in a minute; the model caches cost a download, not
 data. What the two backup services do with all this, and how to put it back, is
 in [restoring](restore.md).
 
+## Where each image comes from
+
+Every surface the diagram above names is built from its own upstream
+repository and published as a customer-facing image on `ghcr.io`; `release.env`
+pins each one by digest — see
+[building and publishing a release](releasing.md#image-pinning).
+
+| Service here | Upstream image | Upstream repository |
+|---|---|---|
+| `api` | `ut-api-customer` | `ut-api` |
+| `api-customer` | `ut-api-rest-customer` | `ut-api` (the partner REST v3 surface) |
+| `frontend` | `ut-frontendv2-customer` | `ut-frontend-v2` |
+| `app-llms` | `ut-app-llms-customer` | `ut-app-llms` |
+| `app-assistants` | `ut-app-assistants-customer` | `ut-app-ai-assistants` |
+| `admin-portal` | `ut-portal-customer` | administration dashboard |
+| `app-builder` | `agentic-app-builder-customer` | `agentic-app-builder` |
+| `llm` | `ut-llm-customers` | `ut-llm` |
+| `nim-llm` | `nim/nvidia/model-free-nim` | re-hosted NVIDIA NIM, not built by UnderstandTech |
+
+**Not verified**: the repository names in the right column are this
+repository's naming for the upstream applications; this repository only
+declares the image references in the left two columns (`release.env`). Where
+an upstream repository's actual name differs, trust the upstream project, not
+this table. `mongodb`, `redis`, `caddy`, `prometheus`, `restic` and the backup
+relay are third-party images, pinned the same way but not UnderstandTech's own
+code.
+
 ## Why it is shaped this way
 
 **One front door.** Every hostname terminates on `caddy`, so there is one place

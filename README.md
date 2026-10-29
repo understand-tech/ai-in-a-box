@@ -6,6 +6,10 @@ Compose.
 Everything runs on the box: the web platform, the satellite apps, the model
 gateway, and GPU inference. Nothing leaves the network.
 
+**Full documentation — installing, configuring, updating, releasing — is in the
+[TechDocs portal](https://portal.tail028136.ts.net/docs/default/component/ai-in-a-box/),
+built from [`docs/`](docs/). This file is a short entry point, not a copy of it.**
+
 ## Architecture
 
 `caddy` is the only container publishing ports 80 and 443, so it is the single
@@ -32,40 +36,17 @@ Per-container detail — ports, volumes, how to act on a service:
 
 ## Installing
 
-The release is a signed Debian package. `ut-get` downloads it, checks the
-signature, installs it, then runs the installer:
-
-```bash
-curl -fsSLO https://github.com/understand-tech/ai-in-a-box/releases/download/v<version>/ut-get
-sudo bash ut-get --version <version> --domain box.example.com
-```
-
-`ut-install` writes `/etc/understandtech/.env`, generates every secret, pulls
-the images, starts the stack, waits for the platform to be healthy and installs
-the boot service. It does not wait for the inference engines, which load their
-weights in the background, nor for the backup: a backup that is not working yet
-is named at the end, with its reason. It is safe to interrupt and safe to re-run.
-
-It prints two secrets **once** at the end — the initial admin password and the
-backup password. Losing the backup password makes every snapshot unreadable,
-with no recovery path.
-
-Full procedure, including how to verify the signature offline:
-[installing](docs/install.md).
+The release is a signed Debian package, installed by `ut-get` in one command
+and safe to re-run. Step by step, including how to verify the signature
+offline and what the installer prints once at the end:
+[installing](docs/install.md). Choosing between the install paths first:
+[choosing how to install](docs/choosing-how-to-install.md).
 
 ## Using it
 
 Every hostname derives from `UT_DOMAIN`, the single setting that names the
-appliance. Change it and all six follow.
-
-| Hostname | What it serves |
-|---|---|
-| `understand.local` | The platform — documents, conversations, the API |
-| `llms.understand.local` | Model catalogue and playground |
-| `assistants.understand.local` | Assistant builder |
-| `admin.understand.local` | Tenant and user administration |
-| `builder.understand.local` | App Builder (add-on) |
-| `<app>.apps.understand.local` | One per generated app |
+appliance. Which six names, and who serves each one:
+[certificates and DNS](docs/certificates-and-dns.md#the-names-to-publish).
 
 - First time on a new box: [first-run configuration](docs/first-run-configuration.md).
 - For the people who will use the platform: [using the platform](docs/using-the-platform.md).
@@ -98,10 +79,20 @@ appliance. Change it and all six follow.
 
 ## Documentation
 
+All of it is published in the
+[TechDocs portal](https://portal.tail028136.ts.net/docs/default/component/ai-in-a-box/),
+built from `docs/` with MkDocs — the links below work the same read directly on
+GitHub.
+
 **For the operator**: [the operator guides](docs/index.md), in the order you
-will need them.
+will need them — including [licensing](docs/license.md) and
+[monitoring and the usage report](docs/usage-report.md).
 
 **For the people who use the platform**:
 [using the platform](docs/using-the-platform.md).
 
-**For anyone changing this repository**: [the checks](test/README.md).
+**For anyone changing this repository**:
+[building and publishing a release](docs/releasing.md), and
+[CI and tests](docs/ci-and-tests.md) for what runs where and how to run it
+yourself — both point to [the checks](test/README.md) for suite-by-suite
+detail.

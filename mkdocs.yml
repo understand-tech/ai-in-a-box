@@ -2,6 +2,25 @@ site_name: AI in a Box
 docs_dir: docs
 plugins:
   - techdocs-core
+nav:
+  - Home: index.md
+  - Architecture: architecture.md
+  - Choosing how to install: choosing-how-to-install.md
+  - Installing: install.md
+  - What a machine looks like before an install: starting-states.md
+  - First-run configuration: first-run-configuration.md
+  - The stack: the-stack.md
+  - Configuring: configuration.md
+  - Licensing: license.md
+  - Certificates and DNS: certificates-and-dns.md
+  - Updating: update.md
+  - Restoring: restore.md
+  - Monitoring and the usage report: usage-report.md
+  - When it breaks: when-it-breaks.md
+  - Decommissioning: decommissioning.md
+  - Building and publishing a release: releasing.md
+  - CI and tests: ci-and-tests.md
+  - Using the platform: using-the-platform.md
 markdown_extensions:
   - toc:
       slugify: !!python/object/apply:pymdownx.slugs.slugify
