@@ -1,0 +1,138 @@
+name: ${COMPOSE_PROJECT_NAME:-understandtech}
+
+# The apps the App Builder generates run in a Docker of their own, rootless,
+# which the App Builder alone reaches, through a socket. ut-install adds this
+# file after compose.appbuilder.yaml, writes the identities it mounts, loads
+# its AppArmor profile, and starts the Traefik that serves the apps inside it.
+# The daemon listens on no port: an app, or anything on these networks, cannot
+# drive it.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
+services:
+
+  app-builder:
+    environment:
+      DOCKER_HOST: unix:///run/app-builder-docker/docker.sock
+      TRAEFIK_URL: http://app-builder-docker:8090
+      UNDERSTAND_API_URL: http://api-customer:8501
+      UT_LLM_BASE_URL: http://app-builder:8001/api/llm/anthropic
+      APPS_MONGO_UID: ${APPS_MONGO_UID:-237500998}
+      APPS_MONGO_GID: ${APPS_MONGO_GID:-237500998}
+    volumes:
+      - app-builder-docker-socket:/run/app-builder-docker
+    networks:
+      - ut-app-builder-network
+    depends_on:
+      app-builder-docker:
+        condition: service_healthy
+
+  app-builder-docker:
+    labels:
+      ut.role: "control-plane"
+    image: ${APP_BUILDER_DOCKER_IMAGE:-docker:29.6.2-dind-rootless@sha256:212a9e782c7119fd6a212beaab6b7665a29b663d894d0f6201710c89575ad0ae}
+    container_name: ${CONTAINER_PREFIX:-ut}-app-builder-docker
+    restart: unless-stopped
+    user: "2375:2375"
+    # Given its own arguments, the image's entrypoint adds no TCP listener.
+    command: ["dockerd", "--host=unix:///run/app-builder-docker/docker.sock"]
+    environment:
+      HOME: /home/abuilder
+      XDG_RUNTIME_DIR: /run/app-builder-docker
+      DOCKER_HOST: unix:///run/app-builder-docker/docker.sock
+    # Rootless needs a user namespace, which Ubuntu 24.04 refuses to a process
+    # AppArmor does not confine: this profile grants that and nothing else.
+    security_opt:
+      - seccomp=unconfined
+      - systempaths=unconfined
+      - apparmor=ut-app-builder-docker
+    devices:
+      - /dev/net/tun
+    volumes:
+      - ${APP_BUILDER_DOCKER_IDS:-/etc/understandtech/app-builder-docker}/passwd:/etc/passwd:ro
+      - ${APP_BUILDER_DOCKER_IDS:-/etc/understandtech/app-builder-docker}/group:/etc/group:ro
+      - ${APP_BUILDER_DOCKER_IDS:-/etc/understandtech/app-builder-docker}/subuid:/etc/subuid:ro
+      - ${APP_BUILDER_DOCKER_IDS:-/etc/understandtech/app-builder-docker}/subgid:/etc/subgid:ro
+      - app-builder-docker-data:/home/abuilder
+      - app-builder-docker-socket:/run/app-builder-docker
+      # The workspaces and routes the App Builder writes, at the paths it names
+      # them by: the daemon resolves its containers' mounts in its own view.
+      - ${DATA_ROOT:-/var/lib/understandtech}/appbuilder:${DATA_ROOT:-/var/lib/understandtech}/appbuilder
+    networks:
+      - ut-app-builder-network
+      - proxy
+    depends_on:
+      app-builder-docker-home:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "docker version >/dev/null && wget -q -O /dev/null http://127.0.0.1:8090/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging: *default-logging
+
+  # A named volume starts owned by root; the daemon runs as 2375.
+  app-builder-docker-home:
+    labels:
+      ut.role: "control-plane"
+    image: ${APP_BUILDER_DOCKER_IMAGE:-docker:29.6.2-dind-rootless@sha256:212a9e782c7119fd6a212beaab6b7665a29b663d894d0f6201710c89575ad0ae}
+    container_name: ${CONTAINER_PREFIX:-ut}-app-builder-docker-home
+    restart: "no"
+    user: "0"
+    entrypoint: ["sh", "-c", "chown 2375:2375 /home/abuilder && chmod 700 /home/abuilder"]
+    network_mode: none
+    volumes:
+      - app-builder-docker-data:/home/abuilder
+    logging: *default-logging
+
+  # Traefik runs inside the apps' Docker, which reaches no registry: declared
+  # here, its image comes onto this machine with the others, and ut-install
+  # hands it over.
+  app-builder-traefik-image:
+    labels:
+      ut.role: "control-plane"
+    image: ${TRAEFIK_IMAGE:-traefik:v3.2@sha256:e561a37f8710d9cf41c78bdf421d822b2c0b48267ec0552e644565fb55466ea9}
+    container_name: ${CONTAINER_PREFIX:-ut}-app-builder-traefik-image
+    restart: "no"
+    command: ["version"]
+    network_mode: none
+    logging: *default-logging
+
+  caddy:
+    environment:
+      APP_BUILDER_APPS_UPSTREAM: app-builder-docker:8090
+    networks:
+      ut-app-builder-network:
+
+  api-customer:
+    networks:
+      - ut-app-builder-network
+
+networks:
+  # Caddy, the App Builder, the API its apps call and their Docker: the apps
+  # reach these by name, and nothing of the rest of the platform.
+  ut-app-builder-network:
+    name: ${RESOURCE_PREFIX:-ut}-app-builder-network
+    driver: bridge
+    internal: true
+  # Shared with the apps ut-import-app runs on this machine's Docker.
+  proxy:
+    name: proxy
+    external: true
+
+volumes:
+  app-builder-docker-data:
+    name: ${RESOURCE_PREFIX:-ut}-app-builder-docker-data
+  # In memory: a socket left by a daemon that stopped is gone at the next boot.
+  app-builder-docker-socket:
+    name: ${RESOURCE_PREFIX:-ut}-app-builder-docker-socket
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "size=16m,uid=2375,gid=2375,mode=0700"

@@ -47,7 +47,7 @@ surface() {
     fi
 }
 
-UPSTREAMS="frontend api api-customer app-llms admin-portal app-assistants app-builder app-builder-traefik nim-llm arbiter"
+UPSTREAMS="frontend api api-customer app-llms admin-portal app-assistants app-builder app-builder-traefik app-builder-docker nim-llm arbiter"
 SURFACES="${DOMAIN} llms.${DOMAIN} admin.${DOMAIN} assistants.${DOMAIN} builder.${DOMAIN} demo.apps.${DOMAIN}"
 
 aliases_for() {
@@ -83,6 +83,9 @@ start_the_upstreams() {
 }
 :8446 {
 	respond "stub 8446" 200
+}
+:8090 {
+	respond "stub 8090" 200
 }
 STUB
     local args=()
@@ -134,6 +137,9 @@ start_the_front_door() {
     while IFS= read -r line; do args+=("$line"); done < <(aliases_for "$SURFACES $ENGINE_ADDRESS caddy")
 
     case "$mode" in
+        apps-docker)
+            ingress=internal
+            extra=(-e APP_BUILDER_APPS_UPSTREAM=app-builder-docker:8090) ;;
         custom)
             write_an_operator_certificate
             extra=(-v "$WORK_DIR/certs":/etc/caddy/certs:ro) ;;
@@ -451,6 +457,8 @@ surface "the administration portal is not the API" \
     a_path_reaches_its_upstream "admin.${DOMAIN}" / "stub 8080"
 surface "the App Builder answers on its own port" \
     a_path_reaches_its_upstream "builder.${DOMAIN}" / "stub 8001"
+surface "a generated application reaches the App Builder's Traefik" \
+    a_path_reaches_its_upstream "demo.apps.${DOMAIN}" / "stub 80 proto=https"
 
 printf '\n%sWhat the documentation tells a customer to register%s\n' "$BOLD" "$NC"
 surface "the documented OIDC redirect URI reaches the platform API" \
@@ -470,6 +478,13 @@ surface "the recorder keeps each request to a surface, exactly once" \
     three_requests_are_recorded_as_three caddy_http_requests_total
 surface "the recorder keeps how long each request to a surface took" \
     three_requests_are_recorded_as_three caddy_http_request_duration_seconds_count
+
+printf '\n%s%s%s\n' "$BOLD" "The App Builder's apps in a Docker of their own" "$NC"
+restart_the_front_door_in apps-docker
+surface "the front door comes up with the apps' Docker named" wait_for_the_front_door
+surface "a generated application reaches the Traefik inside the apps' Docker" \
+    a_path_reaches_its_upstream "demo.apps.${DOMAIN}" / "stub 8090"
+surface "the apex is unchanged" a_path_reaches_its_upstream "$DOMAIN" / "stub 80 proto=https"
 
 printf '\n%sMode custom — the certificate comes from the operator%s\n' "$BOLD" "$NC"
 restart_the_front_door_in custom
