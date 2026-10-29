@@ -96,7 +96,8 @@ appliance. Change it and all six follow.
 | `packaging/pin-images.sh` | Rewrites every image in `release.env` as `name:tag@sha256:…`, so a version names one exact image and not whatever the tag points at today. `--check` reports without changing anything |
 | `packaging/release-bom.sh` | Writes what a release is made of, as CycloneDX: one component per image, named by digest. Reads `release.env` and nothing else — no registry, no pull |
 | `appbuilder/traefik/` | Static routing config for the App Builder's per-app router |
-| `appbuilder/apparmor/` | The AppArmor profile `ut-install` loads for the apps' Docker: a user namespace, and nothing else |
+| `appbuilder/apparmor/` | The AppArmor profile `ut-install` loads for the apps' Docker. It confines nothing: it is how Ubuntu 24.04 grants it a user namespace |
+| `appbuilder/seccomp/` | The apps' Docker's seccomp profile: Docker's default, with the namespace and mount calls rootless needs allowed |
 | `test/` | The checks, and what each one exists to catch — see `test/README.md` |
 
 ## Documentation

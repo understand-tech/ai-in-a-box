@@ -120,23 +120,47 @@ their Docker, below, and creates the `proxy` network they share with the apps
 
 The generated apps run in a Docker of their own, `app-builder-docker`: rootless,
 under the uid `2375`, which has no account on the machine. The App Builder alone
-reaches it, through a socket; it listens on no port. A generated app, or anything
-it runs, gets no access to this machine's Docker, its disks or the platform's
-other containers.
+mounts its socket; it listens on no port.
+
+| What an app reaches | |
+|---|---|
+| This machine | Neither its Docker nor its disks: that Docker is a user with no capability here, and root inside it is root over its own ids only |
+| The platform | By name, `app-builder`, `api-customer` and `caddy`, which it is meant to call, and nothing else. By address, what keeps it from the platform's other networks is this machine's Docker, as for any container |
+| The outside | Whatever this machine routes to, through `proxy`: the LAN, and the internet if the box has it |
+| Other apps and their Docker | Kept apart by the App Builder, which checks each app's compose file before it starts it. That Docker itself would let an app mount its socket, or another app's files |
+| The routes | Nothing: the files Traefik routes the apps by belong to root here, and an app cannot write them |
 
 | | |
 |---|---|
 | The ids it takes | uid `2375`, and `237500000` to `237565535` for what its containers run as. `ut-install` stops if an account or `/etc/subuid` already holds them |
-| AppArmor | `ut-install` installs `/etc/apparmor.d/ut-app-builder-docker`, which grants that Docker a user namespace and nothing else. Ubuntu 24.04 refuses one otherwise |
+| Its profiles | `ut-install` installs `/etc/apparmor.d/ut-app-builder-docker`, which confines nothing: it is how Ubuntu 24.04 grants a user namespace. Its seccomp profile, `appbuilder/seccomp/ut-app-builder-docker.json`, is Docker's default with namespaces and mounts allowed |
 | The apps' databases | owned by `237500998` on this machine, the `999` MongoDB runs as inside |
 | The admin page | lists the generated apps and their volumes, no longer the platform's containers |
-| Memory and CPU caps | the caps an app's compose file sets are not applied: that Docker has no cgroup of its own to apply them in |
+| What the apps take | all of them together, computed at each install: of the memory, 12.5 % beside a GPU that shares it (GB10, GB200, GB300, GH200), 25 % beside a GPU with memory of its own, 50 % on a machine that serves no model; 20 % of the cores; 4096 processes; never less than 8 GiB and 2 CPUs. `ut-install` says what it chose. The caps an app's own compose file sets are not applied |
+| Where the apps are | `/etc/understandtech/app-builder-docker/holds-the-apps` exists while they live in their own Docker: `ut-install` reads it to know which way to move them |
 
-**An update moves the apps that ran on this machine's Docker**, archived ones
-included, so that they restore without the network: their images go across, their
-databases change owner, their volumes stay. It needs the images' size free on the
-disk. If anything fails, every app is put back where it ran, and `ut-install`
-writes `APP_BUILDER_DOCKER="host"` in `local.env` and says why.
+To give the apps another share, in `local.env`, each one on its own:
+
+```bash
+APP_BUILDER_DOCKER_MEMORY="24G"
+APP_BUILDER_DOCKER_CPUS="6"
+APP_BUILDER_DOCKER_PIDS="8192"
+```
+
+then `sudo ut-install`. An install that changes that Docker, its image or its
+share, restarts it: the apps in it stop, and start again when opened in the App
+Builder.
+
+**The first update moves the apps that ran on this machine's Docker**, archived
+ones included, so that they restore without the network: their images and named
+volumes go across, their databases change owner. It needs their size free on the
+disk. A named volume that both Dockers hold already stops the move, naming its
+app: remove the copy that is out of date. The apps that ran stop, and start again
+when opened. This machine's Docker keeps its copies until the platform has
+started with the apps in their own; if anything fails before, every app is put
+back where it ran, and `ut-install` writes `APP_BUILDER_DOCKER="host"` in
+`local.env` and says why. Once that Docker holds the apps, an install where it
+does not start stops there, rather than go back without them.
 
 **The way back, while this proves itself:**
 
@@ -144,9 +168,14 @@ writes `APP_BUILDER_DOCKER="host"` in `local.env` and says why.
 APP_BUILDER_DOCKER="host"
 ```
 
-in `local.env`, then `sudo ut-install`. The App Builder then drives this
-machine's Docker again, which makes it root here. Remove the line to move the
-apps back into their own Docker.
+in `local.env`, then `sudo ut-install`. It starts the apps' Docker once more and
+brings every app back to this machine's, with the same checks as the move: their
+images and named volumes, their databases given back to `999`. Then it removes
+them from the apps' Docker, whose volume `ut-app-builder-docker-data` stays. If
+it cannot, the apps stay in their own Docker, and `ut-install` writes
+`APP_BUILDER_DOCKER="nested"` in `local.env` and says why. The App Builder then
+drives this machine's Docker again, which makes it root here. Remove the line to
+move the apps back into their own Docker.
 
 ### Pushing apps to GitLab
 
