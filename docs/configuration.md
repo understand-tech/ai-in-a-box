@@ -109,13 +109,44 @@ Once the platform is up:
 
 1. In the platform UI, **DEVELOPER → API keys**, create one.
 2. Set `APP_BUILDER_GATEWAY_API_KEY` in `local.env`.
-3. `docker network create proxy`
-4. Uncomment `COMPOSE_FILE`.
-5. `docker compose up -d`
+3. Set `COMPOSE_FILE="compose.yaml:compose.appbuilder.yaml"` in `local.env`.
+4. `sudo ut-install`
 
-Step 3 is not optional. The overlay declares that network `external`, generated
-apps join it from their own compose projects, so no project owns it and compose
-refuses to start without it.
+`ut-install`, not `docker compose up -d`: it is what gives the generated apps
+their Docker, below, and creates the `proxy` network they share with the apps
+`ut-import-app` runs.
+
+### Where the generated apps run
+
+The generated apps run in a Docker of their own, `app-builder-docker`: rootless,
+under the uid `2375`, which has no account on the machine. The App Builder alone
+reaches it, through a socket; it listens on no port. A generated app, or anything
+it runs, gets no access to this machine's Docker, its disks or the platform's
+other containers.
+
+| | |
+|---|---|
+| The ids it takes | uid `2375`, and `237500000` to `237565535` for what its containers run as. `ut-install` stops if an account or `/etc/subuid` already holds them |
+| AppArmor | `ut-install` installs `/etc/apparmor.d/ut-app-builder-docker`, which grants that Docker a user namespace and nothing else. Ubuntu 24.04 refuses one otherwise |
+| The apps' databases | owned by `237500998` on this machine, the `999` MongoDB runs as inside |
+| The admin page | lists the generated apps and their volumes, no longer the platform's containers |
+| Memory and CPU caps | the caps an app's compose file sets are not applied: that Docker has no cgroup of its own to apply them in |
+
+**An update moves the apps that ran on this machine's Docker**, archived ones
+included, so that they restore without the network: their images go across, their
+databases change owner, their volumes stay. It needs the images' size free on the
+disk. If anything fails, every app is put back where it ran, and `ut-install`
+writes `APP_BUILDER_DOCKER="host"` in `local.env` and says why.
+
+**The way back, while this proves itself:**
+
+```bash
+APP_BUILDER_DOCKER="host"
+```
+
+in `local.env`, then `sudo ut-install`. The App Builder then drives this
+machine's Docker again, which makes it root here. Remove the line to move the
+apps back into their own Docker.
 
 ### Pushing apps to GitLab
 

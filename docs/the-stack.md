@@ -37,7 +37,7 @@ follows `COMPOSE_PROJECT_NAME`.
 | `mongodb-backup` | `ut-mongodb-backup` | — | Full-server dump of every database |
 | `files-backup` | `ut-files-backup` | — | Encrypted file snapshots, and the offsite copy |
 | `app-builder` | `ut-app-builder` | 8011 (`APP_BUILDER_HOST_PORT`) | Builds and hosts generated apps (add-on) |
-| `app-builder-traefik` | `ut-app-builder-traefik` | — | Per-app routing for generated apps (add-on) |
+| `app-builder-docker` | `ut-app-builder-docker` | — | Rootless Docker that runs the generated apps and the Traefik routing them; only `app-builder` reaches it, through a socket (add-on) |
 
 `nim-llm` and `metrics` sit behind compose profiles, so they only start when
 `COMPOSE_PROFILES` includes `nim` (or `nim-llm`). A machine that runs no engine
@@ -59,12 +59,14 @@ which means the containers attached only to those have no route off the box.
 | `ut-data-network` | **yes** | `mongodb`, `mongodb-backup`, `api`, `api-customer`, the workers, `app-llms`, `app-assistants`, `llm` |
 | `ut-metrics-network` | **yes** | `caddy`, `metrics` — the recorder reads Caddy's counters on `:2020`, which no compose file publishes |
 
-One more, for the add-on only:
+Two more, for the add-on only:
 
-- **`proxy`** (external, App Builder) — shared with the generated apps' own
-  compose projects, so no single project owns it. Create it once with
-  `docker network create proxy`; `setup-autostart.sh` also creates it if the
-  overlay is enabled.
+- **`ut-app-builder-network`** (internal, App Builder) — `caddy`, `app-builder`,
+  `api-customer` and `app-builder-docker`: what the generated apps reach by name,
+  and nothing else of the platform.
+- **`proxy`** (external, App Builder) — joined by `app-builder-docker` and by the
+  apps `ut-import-app` runs, so no single project owns it. `ut-install` and
+  `setup-autostart.sh` create it when the overlay is enabled.
 
 `ut-frontend-network` is the only one that is not internal. That is what lets
 `caddy` answer from outside; it is also why a service that must never reach the
@@ -123,11 +125,11 @@ Two host paths are bind-mounted rather than kept in volumes:
 | Host path | Mounted by | Purpose |
 |---|---|---|
 | `/var/lib/understandtech/app-data` | `api`, `api-customer`, both worker sets, `app-assistants`, `llm` | Uploaded documents and generated artefacts (`/app/storage`) |
-| `/var/lib/understandtech/appbuilder` | `app-builder`, `app-builder-traefik` | `workspaces/`, `prod-workspaces/`, `traefik-dynamic/` |
+| `/var/lib/understandtech/appbuilder` | `app-builder`, `app-builder-docker` | `workspaces/`, `prod-workspaces/`, `traefik-dynamic/` |
 
 The App Builder's projects live on the host because it starts each generated app
-as its own compose project, and the docker daemon has to be able to resolve
-those paths. `setup-autostart.sh` creates both trees.
+as its own compose project, and the apps' Docker resolves those paths at the
+same place. `setup-autostart.sh` creates both trees.
 
 **`/var/lib/understandtech` is what a backup must cover.** The rest is
 reinstallable in a minute. What the backup services do with it is in
@@ -247,14 +249,8 @@ key — the platform UI issues it under **Developer → API keys**:
 APP_BUILDER_GATEWAY_API_KEY="..."
 ```
 
-The generated apps attach to an external network that no single compose project
-owns, so it has to exist before the stack starts:
-
-```bash
-docker network create proxy
-docker compose up -d
-sudo ./setup-autostart.sh --mdns
-```
+Then `sudo ut-install`: it gives the generated apps their own Docker and creates
+the `proxy` network — see [configuring](configuration.md#where-the-generated-apps-run).
 
 The builder is at `https://builder.<UT_DOMAIN>`; each generated app gets
 `https://<project>.apps.<UT_DOMAIN>` plus `--staging` and `--prod` surfaces.
@@ -263,9 +259,10 @@ app. On a `.local` address the alias service rescans the App Builder's traefik
 directory every 10 seconds, so a new app resolves within about that long; on
 your own domain a single `*.apps.<UT_DOMAIN>` record covers them all.
 
-`APP_BUILDER_HOST_PORT` is published on the host because generated apps run in
-their own compose projects and reach the builder's model proxy at
-`host.docker.internal:<port>` — docker DNS cannot get them there.
+The generated apps reach the builder's model proxy at `app-builder:8001`, on
+`ut-app-builder-network`. `APP_BUILDER_HOST_PORT` stays published for
+`APP_BUILDER_DOCKER="host"`, where they run on this machine's Docker and reach it
+at `host.docker.internal:<port>`.
 
 ## Running two appliances
 
