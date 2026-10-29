@@ -90,7 +90,7 @@ import /etc/caddy/arbiter-link.caddy
 # App Builder generated apps sit two levels below the apex, hence a separate
 # TLS snippet: a *.<domain> wildcard does not cover *.apps.<domain>.
 {$UT_CADDY_SCHEME:https}://*.apps.{$UT_DOMAIN:understand.local} {
-    reverse_proxy app-builder-traefik:80
+    reverse_proxy {$APP_BUILDER_APPS_UPSTREAM:app-builder-traefik:80}
 
     import tls_apps
 }

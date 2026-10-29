@@ -1812,6 +1812,7 @@ step_configure() {
     elif [[ -n "$INFERENCE_FROM" ]]; then
         write_the_settings_a_control_plane_with_an_accelerator_needs "$local_file"
     fi
+    write_the_settings_the_app_builder_s_docker_needs "$local_file"
     die_on_two_backup_destinations "$local_file"
     write_the_settings_a_backup_destination_needs "$local_file"
     write_the_settings_a_backup_over_the_network_needs "$local_file"
@@ -2886,6 +2887,7 @@ main() {
     step_pull
     step_point_the_relay_at_what_restic_dials
     step_weights_from_the_network
+    step_give_the_app_builder_its_docker
     step_start
     step_wait_healthy
     step_autostart

@@ -157,6 +157,8 @@ cat /etc/understandtech/backup-ssh/id_ed25519.pub > /w/$state/backup-key-pub 2>/
 sha256sum /etc/understandtech/backup-ssh/id_ed25519 2>/dev/null | cut -d' ' -f1 > /w/$state/backup-key-sum || : > /w/$state/backup-key-sum
 stat -c '%a %U' /etc/understandtech/license > /w/$state/license-mode 2>/dev/null || : > /w/$state/license-mode
 stat -c '%a %U' /etc/understandtech/machine.lic > /w/$state/machine-mode 2>/dev/null || : > /w/$state/machine-mode
+stat -c '%n %u' /var/lib/understandtech/appbuilder/workspaces/*/mongo-data > /w/$state/app-databases 2>/dev/null || : > /w/$state/app-databases
+cat /etc/understandtech/app-builder-docker/subuid > /w/$state/apps-docker-subuid 2>/dev/null || : > /w/$state/apps-docker-subuid
 chmod -R a+rw /w/$state
 PROBE
 
@@ -341,6 +343,15 @@ state_setup() {
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_REPOSITORY="s3:https://s3.example.test/appliance-backups"\nBACKUP_RELAY_SUBNET="198.19.0.0/24"\n'"'"' > /etc/understandtech/local.env' ;;
         backup_in_two_places)
             echo 'install -d /w/backup_in_two_places/nas && install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_DESTINATION="/w/backup_in_two_places/nas"\nBACKUP_FILES_REPOSITORY="s3:https://s3.example.test/appliance"\n'"'"' > /etc/understandtech/local.env' ;;
+        # The App Builder enabled, with two apps on this machine's Docker: app-a
+        # running, app-b archived (images, no container). The stub answers for
+        # both Dockers; /w/apps/docker says how.
+        app_builder_moved_to_its_docker|app_builder_already_moved|app_builder_move_fails|app_builder_too_big_to_move)
+            echo "bash /w/apps/on-this-machine-s-docker.sh $1" ;;
+        app_builder_on_this_machine_s_docker)
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'COMPOSE_FILE="compose.yaml:compose.appbuilder.yaml"\nAPP_BUILDER_DOCKER="host"\n'"'"' > /etc/understandtech/local.env' ;;
+        app_builder_uid_taken)
+            echo 'useradd -M -u 2375 someone && install -d -m 750 /etc/understandtech && printf '"'"'COMPOSE_FILE="compose.yaml:compose.appbuilder.yaml"\n'"'"' > /etc/understandtech/local.env' ;;
         *)             echo ': ' ;;
     esac
 }
@@ -1358,6 +1369,87 @@ LICENSE_TOKEN=license-carried-token-0001
 # them, nor the fake Keygen without python3.
 WITH_OPENSSL_IMAGE=""
 
+calls_of() { cat "$WORK_DIR/$1/docker-calls" 2>/dev/null; }
+local_settings_of() { cat "$WORK_DIR/$1/local-env" 2>/dev/null; }
+databases_of() { cat "$WORK_DIR/$1/app-databases" 2>/dev/null; }
+
+the_apps_move_to_their_docker_archived_ones_too() {
+    local state=app_builder_moved_to_its_docker calls settings
+    calls=$(calls_of "$state"); settings=$(local_settings_of "$state")
+    grep -q '^COMPOSE_FILE="compose.yaml:compose.appbuilder.yaml:compose.appbuilder-nested.yaml"$' <<< "$settings" \
+        && grep -q '^APPS_MONGO_UID="237500998"$' <<< "$settings" \
+        && grep -qx 'abuilder:237500000:65536' "$WORK_DIR/$state/apps-docker-subuid" \
+        && grep -qx 'save app-a-backend:latest app-a-frontend:latest app-b-frontend:latest mongo:7' <<< "$calls" \
+        && [[ "$(grep -n -m1 '^compose stop app-builder$' <<< "$calls" | cut -d: -f1)" -lt "$(grep -n -m1 '^save ' <<< "$calls" | cut -d: -f1)" ]] \
+        && grep -qx 'stop c0ffee' <<< "$calls" && grep -qx 'rm c0ffee' <<< "$calls" \
+        && grep -qx 'image rm app-a-backend:latest app-a-frontend:latest app-b-frontend:latest' <<< "$calls" \
+        && [[ "$(grep -c ' 237500998$' <<< "$(databases_of "$state")")" == 2 ]] && return 0
+    echo "--- local.env"; echo "$settings"; echo "--- databases"; databases_of "$state"
+    echo "--- docker"; grep -vE '^(version|compose version|info --format)' <<< "$calls" | tail -15
+    output_of "$state" | grep -iE 'move|docker of their own|fail' | tail -5
+    return 1
+}
+
+apps_too_big_for_the_disk_stay_and_the_app_builder_keeps_this_machine_s_docker() {
+    local state=app_builder_too_big_to_move calls settings
+    calls=$(calls_of "$state"); settings=$(local_settings_of "$state")
+    grep -q 'nothing was moved' <<< "$(output_of "$state")" \
+        && ! grep -qE '^(save |stop c0ffee|compose stop app-builder)' <<< "$calls" \
+        && [[ "$(grep -c ' 999$' <<< "$(databases_of "$state")")" == 2 ]] \
+        && grep -q '^APP_BUILDER_DOCKER="host"$' <<< "$settings" \
+        && grep -q '^COMPOSE_FILE="compose.yaml:compose.appbuilder.yaml:compose.appbuilder-on-host.yaml"$' <<< "$settings" && return 0
+    echo "--- local.env"; echo "$settings"; echo "--- databases"; databases_of "$state"
+    grep -E '^(save |stop |compose (stop|start))' <<< "$calls"
+    output_of "$state" | tail -8
+    return 1
+}
+
+a_move_that_fails_puts_every_app_back() {
+    local state=app_builder_move_fails calls settings
+    calls=$(calls_of "$state"); settings=$(local_settings_of "$state")
+    grep -qx 'stop c0ffee' <<< "$calls" && grep -qx 'start c0ffee' <<< "$calls" \
+        && grep -qx 'compose start app-builder' <<< "$calls" \
+        && ! grep -qE '^(rm c0ffee|image rm )' <<< "$calls" \
+        && [[ "$(grep -c ' 999$' <<< "$(databases_of "$state")")" == 2 ]] \
+        && grep -q 'lacks app-b-frontend:latest' <<< "$(output_of "$state")" \
+        && grep -q '^APP_BUILDER_DOCKER="host"$' <<< "$settings" && return 0
+    echo "--- local.env"; echo "$settings"; echo "--- databases"; databases_of "$state"
+    grep -E '^(save |stop |start |rm |image rm |compose (stop|start))' <<< "$calls"
+    output_of "$state" | tail -8
+    return 1
+}
+
+a_second_install_finds_nothing_left_to_move() {
+    local state=app_builder_already_moved calls
+    calls=$(calls_of "$state")
+    grep -q 'nothing to move' <<< "$(output_of "$state")" \
+        && ! grep -qE '^(save |stop c0ffee|compose stop app-builder)' <<< "$calls" \
+        && grep -q '^COMPOSE_FILE="compose.yaml:compose.appbuilder.yaml:compose.appbuilder-nested.yaml"$' <<< "$(local_settings_of "$state")" && return 0
+    output_of "$state" | grep -iE 'move|docker' | tail -5
+    grep -E '^(save |stop )' <<< "$calls"
+    return 1
+}
+
+an_account_on_the_daemon_s_uid_stops_the_install_before_anything_starts() {
+    local state=app_builder_uid_taken
+    grep -q 'The account someone has the uid 2375' <<< "$(output_of "$state")" \
+        && grep -q '^EXIT=1$' <<< "$(output_of "$state")" \
+        && ! grep -q 'up -d' <<< "$(calls_of "$state")" && return 0
+    output_of "$state" | tail -5
+    return 1
+}
+
+the_way_back_keeps_the_app_builder_on_this_machine_s_docker() {
+    local state=app_builder_on_this_machine_s_docker settings
+    settings=$(local_settings_of "$state")
+    grep -q '^COMPOSE_FILE="compose.yaml:compose.appbuilder.yaml:compose.appbuilder-on-host.yaml"$' <<< "$settings" \
+        && ! grep -q '^APPS_MONGO_UID=' <<< "$settings" \
+        && ! grep -q 'up -d app-builder-docker' <<< "$(calls_of "$state")" \
+        && grep -q 'whoever reaches it is root here' <<< "$(output_of "$state")" && return 0
+    echo "$settings"; output_of "$state" | tail -5
+    return 1
+}
+
 prepare_a_vllm_entry() {
     mkdir -p "$WORK_DIR/models"
     cat > "$WORK_DIR/models/test-vllm.env" <<'ENTRY'
@@ -1398,6 +1490,52 @@ source="/w/weights/source/${url#https://huggingface.co/}"
 [ -f "$source" ] || exit 22
 cp "$source" "$target"
 CURL
+    chmod -R a+rx "$work"
+}
+
+prepare_apps_on_this_machine_s_docker() {
+    local work="$WORK_DIR/apps"
+    mkdir -p "$work"
+    cat > "$work/on-this-machine-s-docker.sh" <<'SETUP'
+install -d -m 750 /etc/understandtech
+printf 'COMPOSE_FILE="compose.yaml:compose.appbuilder.yaml"\n' > /etc/understandtech/local.env
+for app in app-a app-b; do
+    install -d "/var/lib/understandtech/appbuilder/workspaces/$app/mongo-data"
+    printf 'services:\n  mongo:\n    image: mongo:7\n' > "/var/lib/understandtech/appbuilder/workspaces/$app/docker-compose.yml"
+    echo "the $app database" > "/var/lib/understandtech/appbuilder/workspaces/$app/mongo-data/collection.wt"
+    chown -R 999:999 "/var/lib/understandtech/appbuilder/workspaces/$app/mongo-data"
+done
+echo "$1" > /stub/apps-state
+mv /stub/docker /stub/docker-stub && cp /w/apps/docker /stub/docker && chmod +x /stub/docker
+SETUP
+    cat > "$work/docker" <<'DOCKER'
+#!/bin/sh
+state=$(cat /stub/apps-state)
+moved() { [ "$state" = app_builder_already_moved ]; }
+case "$*" in
+    "info --format {{json .SecurityOptions}}") echo '["name=seccomp,profile=builtin"]' ;;
+    "ps -a --filter label=com.docker.compose.project --format"*working_dir*)
+        moved || echo "app-a /var/lib/understandtech/appbuilder/workspaces/app-a" ;;
+    "ps -a --filter label=com.docker.compose.project --format"*)
+        moved || echo "c0ffee running app-a" ;;
+    "image ls -q --filter label=com.docker.compose.project")
+        moved || printf 'img-a\nimg-b\n' ;;
+    "image inspect --format {{index .Config.Labels"*)
+        size=300000000
+        [ "$state" = app_builder_too_big_to_move ] && size=600000000000
+        echo "app-a $size app-a-backend:latest app-a-frontend:latest"
+        echo "app-b $size app-b-frontend:latest" ;;
+    "image inspect --format {{.Size}} mongo:7 mongo:7") echo "100000000 mongo:7" ;;
+    "image inspect --format {{.Id}} "*) echo "sha256:the-release-traefik" ;;
+    "compose exec -T app-builder-docker docker image inspect --format {{.Id}} "*) echo "sha256:the-release-traefik" ;;
+    "compose exec -T app-builder-docker docker load"*)
+        printf '%s\n' "$*" >> /stub/docker-calls; cat > /dev/null ;;
+    "compose exec -T app-builder-docker docker image inspect app-b-frontend:latest")
+        printf '%s\n' "$*" >> /stub/docker-calls; [ "$state" != app_builder_move_fails ] ;;
+    "save "*) printf '%s\n' "$*" >> /stub/docker-calls; echo "images" ;;
+    *) exec /stub/docker-stub "$@" ;;
+esac
+DOCKER
     chmod -R a+rx "$work"
 }
 
@@ -1624,6 +1762,7 @@ prepare_licenses
 prepare_certificates
 prepare_weights
 prepare_a_vllm_entry
+prepare_apps_on_this_machine_s_docker
 
 run_install_from_state bare
 PULL_EXIT=0 run_install_from_state install_runs_through
@@ -1741,6 +1880,12 @@ run_install_from_state backup_relay_on_another_subnet
 PULL_EXIT=0 run_install_from_state backup_relay_pointed_where_restic_dials
 PULL_EXIT=0 run_install_from_state backup_relay_restic_names_nothing
 run_install_from_state backup_in_two_places
+PULL_EXIT=0 run_install_from_state app_builder_moved_to_its_docker
+PULL_EXIT=0 run_install_from_state app_builder_already_moved
+PULL_EXIT=0 run_install_from_state app_builder_move_fails
+PULL_EXIT=0 run_install_from_state app_builder_too_big_to_move
+PULL_EXIT=0 run_install_from_state app_builder_on_this_machine_s_docker
+PULL_EXIT=0 run_install_from_state app_builder_uid_taken
 
 printf '%sA machine with nothing on it%s\n' "$BOLD" "$NC"
 property "the install reaches the point where it pulls images" \
@@ -2015,6 +2160,20 @@ property "naming two destinations stops the install, before anything is written"
     two_destinations_stop_the_install
 property "a destination gone during an update holds the update back no more than it says so" \
     a_destination_gone_on_an_update_holds_nothing_back
+
+printf '\n%s%s%s\n' "$BOLD" "The App Builder's apps, given a Docker of their own" "$NC"
+property "an update moves every app to their own Docker, archived ones too, and hands them their databases" \
+    the_apps_move_to_their_docker_archived_ones_too
+property "apps too big for the disk are not moved, and the App Builder keeps this machine's Docker" \
+    apps_too_big_for_the_disk_stay_and_the_app_builder_keeps_this_machine_s_docker
+property "a move that fails puts every app back where it ran" \
+    a_move_that_fails_puts_every_app_back
+property "a second install finds nothing left to move" \
+    a_second_install_finds_nothing_left_to_move
+property "an account on the daemon's uid stops the install before anything starts" \
+    an_account_on_the_daemon_s_uid_stops_the_install_before_anything_starts
+property "the way back keeps the App Builder on this machine's Docker" \
+    the_way_back_keeps_the_app_builder_on_this_machine_s_docker
 
 printf '\n%sA database whose password happens to look shipped%s\n' "$BOLD" "$NC"
 property "the install carries on, because that password is the right one" \

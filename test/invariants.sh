@@ -8,7 +8,8 @@ BASELINE_FILE="$SCRIPT_DIR/known-issues.txt"
 ALLOWED_PORTS_FILE="$SCRIPT_DIR/allowed-ports.txt"
 
 RELEASE_ENV="$REPO_ROOT/release.env"
-COMPOSE_FILES=("$REPO_ROOT/compose.yaml" "$REPO_ROOT/compose.appbuilder.yaml")
+COMPOSE_FILES=("$REPO_ROOT/compose.yaml" "$REPO_ROOT/compose.appbuilder.yaml" "$REPO_ROOT/compose.appbuilder-nested.yaml"
+    "$REPO_ROOT/compose.appbuilder-on-host.yaml")
 
 SENSITIVE_KEYS=(
     MONGODB_PASSWORD JWT_SECRET ADMIN_SETUP_PASSWORD STATE_SECRET
@@ -345,7 +346,7 @@ check_the_first_backup_is_not_deferred_to_a_clock_time() {
 # AGENT_MAX_OUTPUT_TOKENS=24576 while the App Builder received 8192, thirty lines
 # above under another name.
 SETTINGS_READ_OUTSIDE_THE_STACK=(
-    COMPOSE_FILE COMPOSE_PROFILES COMPOSE_PROJECT_NAME
+    COMPOSE_FILE COMPOSE_PROFILES COMPOSE_PROJECT_NAME APP_BUILDER_DOCKER
     UT_RELEASE_VERSION UT_RELEASE_BUILT_AT
     ARBITER_HOLD_RELEASE ARBITER_HOLD_SHA256_AMD64 ARBITER_HOLD_SHA256_ARM64
 )
@@ -407,6 +408,86 @@ check_the_backup_leaves_through_its_relay_alone() {
     grep -qF -- '- TCP:${BACKUP_RELAY_HOST:-' "$overlay" && grep -qF -- '- "${BACKUP_RELAY_HOST:-' "$overlay" && return 0
     report "backup-relay-sends-elsewhere" \
         "the relay in compose.backup-relay.yaml does not send to BACKUP_RELAY_HOST, the name files-backup resolves to it: the backup goes somewhere it did not ask for"
+}
+
+APPS_DOCKER_OVERLAY="$REPO_ROOT/compose.appbuilder-nested.yaml"
+APPS_DOCKER_SETUP="$REPO_ROOT/bin/ut-install.d/app-builder-docker.sh"
+
+apps_docker_service() {
+    awk '/^  app-builder-docker:$/ { on = 1; next } on && /^  [^ ]/ { on = 0 } on' "$APPS_DOCKER_OVERLAY"
+}
+
+# The image's entrypoint adds tcp://0.0.0.0:2375 unless dockerd is given its own
+# arguments: a listener every app on its networks would drive.
+check_the_apps_docker_listens_on_its_socket_alone() {
+    [[ -f "$APPS_DOCKER_OVERLAY" ]] || return 0
+    grep -qF 'command: ["dockerd", "--host=unix:///run/app-builder-docker/docker.sock"]' <<< "$(apps_docker_service)" \
+        && ! grep -qE 'tcp://|DOCKER_TLS' "$APPS_DOCKER_OVERLAY" "$APPS_DOCKER_SETUP" && return 0
+    report "apps-docker-listens-beyond-its-socket" \
+        "the App Builder's Docker in compose.appbuilder-nested.yaml listens elsewhere than its Unix socket: any app it runs could drive it, and reach every other one"
+}
+
+check_the_host_docker_socket_stays_in_the_way_back() {
+    local file
+    for file in "$REPO_ROOT"/compose*.yaml; do
+        [[ "${file##*/}" == compose.appbuilder-on-host.yaml ]] && continue
+        grep -qE '^[[:space:]]+- "?/var/run/docker\.sock' "$file" || continue
+        report "docker-socket-mounted-by:${file##*/}" \
+            "${file##*/} mounts this machine's Docker socket: whatever runs there is root on the box. Only compose.appbuilder-on-host.yaml, the App Builder's way back, may"
+    done
+}
+
+check_the_apps_docker_stays_off_the_platform_networks() {
+    local service network
+    [[ -f "$APPS_DOCKER_OVERLAY" ]] || return 0
+    while read -r service network; do
+        [[ "$service" == app-builder-docker ]] || continue
+        case "$network" in
+            ut-app-builder-network|proxy) ;;
+            *) report "apps-docker-joins:${network}" \
+                   "the App Builder's Docker joins ${network}: every app it runs reaches the services there by name" ;;
+        esac
+    done <<< "$(service_networks "$APPS_DOCKER_OVERLAY")"
+    grep -qx ut-app-builder-network <<< "$(internal_networks "$APPS_DOCKER_OVERLAY")" \
+        || report "apps-network-with-a-way-out" \
+            "ut-app-builder-network is not internal: Caddy, the App Builder and the API it carries the apps to gain a way out through it"
+}
+
+check_the_apps_docker_runs_unprivileged() {
+    local service profile="$REPO_ROOT/appbuilder/apparmor/ut-app-builder-docker"
+    [[ -f "$APPS_DOCKER_OVERLAY" ]] || return 0
+    service=$(apps_docker_service)
+    grep -qE 'privileged:|cap_add:|SYS_ADMIN' <<< "$service" \
+        && report "apps-docker-privileged" \
+            "the App Builder's Docker is given privileges: a privileged container it starts would reach this machine's disks"
+    grep -qF -- '- apparmor=ut-app-builder-docker' <<< "$service" \
+        && grep -qE '^profile ut-app-builder-docker flags=\(unconfined\) \{' "$profile" 2>/dev/null \
+        && grep -qE '^[[:space:]]*userns,$' "$profile" && return 0
+    report "apps-docker-without-its-profile" \
+        "the App Builder's Docker does not run under appbuilder/apparmor/ut-app-builder-docker, the profile that grants it a user namespace: on Ubuntu 24.04 it does not start"
+}
+
+# The uid, its range and the database owner it implies are written in four
+# places that never see each other run.
+check_the_apps_docker_ids_agree() {
+    local uid start mongo expected
+    uid=$(sed -n 's/^APP_BUILDER_DOCKER_UID=//p' "$APPS_DOCKER_SETUP")
+    start=$(sed -n 's/^APP_BUILDER_DOCKER_SUBIDS_START=//p' "$APPS_DOCKER_SETUP")
+    [[ -n "$uid" && -n "$start" ]] || { report "apps-docker-ids-unknown" "bin/ut-install.d/app-builder-docker.sh no longer says which uid and range the App Builder's Docker runs as"; return 0; }
+    mongo=$(( start + 998 ))
+    for expected in "user: \"${uid}:${uid}\"" "uid=${uid},gid=${uid}" "chown ${uid}:${uid}" \
+        "APPS_MONGO_UID:-${mongo}}" "APPS_MONGO_GID:-${mongo}}"; do
+        grep -qF "$expected" "$APPS_DOCKER_OVERLAY" && continue
+        report "apps-docker-ids-disagree:${expected//[^A-Za-z0-9_=:-]/}" \
+            "compose.appbuilder-nested.yaml lacks '${expected}', which the uid ${uid} and the range from ${start} in bin/ut-install.d/app-builder-docker.sh imply: the daemon or the apps' databases would not open their own files"
+    done
+}
+
+check_the_apps_traefik_calls_no_one() {
+    grep -qF -- '--global.checknewversion=false' "$APPS_DOCKER_SETUP" \
+        && grep -qF -- '--global.sendanonymoususage=false' "$APPS_DOCKER_SETUP" && return 0
+    report "apps-traefik-calls-out" \
+        "the Traefik that serves the generated apps calls home: a box with no network logs a refusal at every start"
 }
 
 check_the_installers_take_registry_access_from_the_license_alone() {
@@ -990,6 +1071,12 @@ main() {
     check_only_its_clients_reach_redis
     check_the_backup_leaves_through_its_relay_alone
     check_the_installers_take_registry_access_from_the_license_alone
+    check_the_apps_docker_listens_on_its_socket_alone
+    check_the_host_docker_socket_stays_in_the_way_back
+    check_the_apps_docker_stays_off_the_platform_networks
+    check_the_apps_docker_runs_unprivileged
+    check_the_apps_docker_ids_agree
+    check_the_apps_traefik_calls_no_one
     check_no_client_auth_without_the_admitted_list
     check_the_relay_checks_its_token_inside_its_route
     check_the_relay_trusts_its_node_alone

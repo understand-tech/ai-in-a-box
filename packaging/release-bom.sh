@@ -46,9 +46,9 @@ name_of()       { local r; r=$(repository_of "$1"); printf '%s' "${r##*/}"; }
 
 # What ut-install writes for each role, App Builder and backup relay included
 # where they can run: an add-on switched on later must find its images in the folder.
-ROLES="appliance:compose.yaml:compose.appbuilder.yaml:compose.backup-relay.yaml:nim
+ROLES="appliance:compose.yaml:compose.appbuilder.yaml:compose.appbuilder-nested.yaml:compose.backup-relay.yaml:nim
 compute:compose.yaml:compose.compute.yaml:nim
-control-plane:compose.yaml:compose.remote-inference.yaml:compose.appbuilder.yaml:compose.backup-relay.yaml:"
+control-plane:compose.yaml:compose.remote-inference.yaml:compose.appbuilder.yaml:compose.appbuilder-nested.yaml:compose.backup-relay.yaml:"
 
 images_of_the_role() {
     local files=$1 profiles=$2 guards
@@ -64,7 +64,7 @@ render_the_roles() {
         || { echo "release-bom.sh needs docker compose to say which role runs which image" >&2; return 1; }
     while IFS= read -r spec; do
         role=${spec%%:*}; rest=${spec#*:}; profiles=${rest##*:}; files=${rest%:*}
-        images=$(images_of_the_role "$files" "$profiles") || true
+        images=$(images_of_the_role "$files" "$profiles" | sort -u) || true
         [[ -n "$images" ]] || { echo "compose rendered no image for the ${role} role" >&2; return 1; }
         ROLE_IMAGES+=$(sed "s|^|${role} |" <<< "$images")$'\n'
     done <<< "$ROLES"
