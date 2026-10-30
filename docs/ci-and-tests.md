@@ -18,7 +18,7 @@ this page is the trigger map, that one is the reference.
      not a branching policy. -->
 <!-- Source of truth: .github/workflows/checks.yml:3-6,
      .github/workflows/release.yml:4-7 -->
-<!-- Date: 2026-10-29 -->
+<!-- Date: 2026-10-30 -->
 <!-- Target: portal — status of "flowchart": not verified, no rendering engine
      installed here; github — rendered, seen at test/README.md before this page
      took the diagram over -->
@@ -49,6 +49,12 @@ workflow, so a merge is checked again on arrival. A tag matching `v*` is the
 only thing that starts `release.yml`, which re-runs the checks, walks a fresh
 install, then builds and publishes the release — see
 [building and publishing a release](releasing.md) for what that stage does.
+
+**A change to the documentation alone runs `invariants.sh` only.** When a pull
+request or a push touches nothing but `docs/` and `mkdocs.yml`, the other jobs
+start and skip every step. `docs/first-run-configuration.md` is the exception:
+`ingress.sh` reads it, so a change there runs everything. So does a push whose
+previous commit cannot be found, such as a branch's first push.
 
 **Gaps** — The diagram shows what starts a workflow, not how branches merge
 into one another: that is a convention, not something this repository declares.
