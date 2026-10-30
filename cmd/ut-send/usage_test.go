@@ -99,7 +99,7 @@ func TestTheSameSamplesAlwaysCompressToTheSameBytes(t *testing.T) {
 }
 
 var usageAnswers = map[string]string{
-	"docker ps -aq --filter label=com.docker.compose.project=understandtech": "mmmm\ngggg\n",
+	"docker ps -aq --filter label=com.docker.compose.project.working_dir=/usr/share/understandtech": "mmmm\ngggg\n",
 	"docker inspect":                      "metrics running healthy 0 false mmmm\ncaddy running healthy 0 false gggg\n",
 	"docker exec gggg printenv UT_DOMAIN": "box.client.example\n",
 	"docker exec mmmm promtool tsdb dump-openmetrics": `caddy_http_requests_total{host="admin.box.client.example"} 3 1791449020.214
@@ -147,7 +147,7 @@ func TestAnExportThatFailsKeepsItsWindowForNextTime(t *testing.T) {
 	mark := b.clock.Add(-2 * time.Hour).UnixMilli()
 	saveState(b.place.State, State{LastExported: mark})
 	answers := map[string]string{
-		"docker ps -aq --filter label=com.docker.compose.project=understandtech": "mmmm\n",
+		"docker ps -aq --filter label=com.docker.compose.project.working_dir=/usr/share/understandtech": "mmmm\n",
 		"docker inspect": "metrics running healthy 0 false mmmm\n",
 	}
 	var out bytes.Buffer
@@ -185,7 +185,7 @@ func TestAWindowWithNoSampleQueuesNothingButMovesOn(t *testing.T) {
 func TestABoxWithoutARecorderExportsNothing(t *testing.T) {
 	b := newBox(t, newFakeReceiver(t))
 	answers := map[string]string{
-		"docker ps -aq --filter label=com.docker.compose.project=understandtech": "gggg\n",
+		"docker ps -aq --filter label=com.docker.compose.project.working_dir=/usr/share/understandtech": "gggg\n",
 		"docker inspect": "caddy running healthy 0 false gggg\n",
 	}
 	var out bytes.Buffer
