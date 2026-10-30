@@ -691,11 +691,16 @@ the_models_listed_are_those_proven_here() {
         grep -qE "$pattern" <<< "$here" || { echo "no row matching: $pattern"; ok=false; }
     done < <(proven_model_ids gb10)
 
-    local expected_elsewhere="Not proven on h100-80gb-hbm3: $(proven_model_ids gb10 | tr '\n' ' ' | sed 's/ *$//')"
+    # The installer lists models in the order of their .env files, where
+    # "x-nim.env" comes before "x.env": the same models, compared as a set.
+    local expected_elsewhere unproven_elsewhere
+    expected_elsewhere=$(proven_model_ids gb10 | LC_ALL=C sort | tr '\n' ' ' | sed 's/ *$//')
+    unproven_elsewhere=$(sed -n 's/.*Not proven on h100-80gb-hbm3: *//p' <<< "$elsewhere" | tr ' ' '\n' | grep . | LC_ALL=C sort | tr '\n' ' ' | sed 's/ *$//')
     grep -q '^EXIT=0$' <<< "$here" || ok=false
     ! grep -q 'Install stopped' <<< "$here" || ok=false
     ! grep -qE '^(qwen|nemotron)' <<< "$elsewhere" || ok=false
-    grep -qF "$expected_elsewhere" <<< "$elsewhere" || { echo "expected: $expected_elsewhere"; ok=false; }
+    [[ "$unproven_elsewhere" == "$expected_elsewhere" ]] \
+        || { echo "expected not proven on h100: $expected_elsewhere"; echo "listed: $unproven_elsewhere"; ok=false; }
     grep -q '^EXIT=0$' <<< "$elsewhere" || ok=false
     ! grep -q 'Install stopped' <<< "$elsewhere" || ok=false
 
