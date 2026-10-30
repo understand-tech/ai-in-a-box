@@ -230,6 +230,16 @@ Every service `healthy`. Then check one document you know, in the platform.
 
 ## What changes that you will notice
 
+**The backup keeps a repository on the machine, even with a destination.**
+Each run writes to `/backup/restic` first, then copies it to the destination
+named by `BACKUP_FILES_DESTINATION` or `BACKUP_FILES_REPOSITORY`. On a box that
+already sent its backup there, the repository already at the destination is kept
+and receives the new copies; the first run after the update creates the one on
+the machine and fills it, which takes room on its disk — about as much as the
+documents and the database archives. The health of `files-backup` now turns red
+when a run did not reach the destination — see
+[backing up](backup.md#who-checks-what-and-how-often).
+
 **`nim-vlm` is gone.** The chat model, `Qwen3.8-27B` on `nim-llm`, now reads
 images too. The release points `VLLM_VLM_MODEL`, `VLLM_VLM_BASE_URL`,
 `GATEWAY_VLM_MODEL` and the `uai-vision` entry of `GATEWAY_MODELS` at it. If the

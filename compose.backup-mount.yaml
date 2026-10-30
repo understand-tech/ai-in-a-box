@@ -15,7 +15,7 @@ name: ${COMPOSE_PROJECT_NAME:-understandtech}
 services:
   files-backup:
     environment:
-      RESTIC_REPOSITORY: /destination/restic
+      BACKUP_DESTINATION_REPOSITORY: /destination/restic
       BACKUP_DESTINATION_MARKER: /destination/.understandtech-backup-destination
     volumes:
       - ${BACKUP_FILES_DESTINATION}:/destination

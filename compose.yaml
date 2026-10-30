@@ -303,7 +303,9 @@ services:
     container_name: ${CONTAINER_PREFIX:-ut}-files-backup
     restart: unless-stopped
     environment:
-      RESTIC_REPOSITORY: ${BACKUP_FILES_REPOSITORY:-/backup/restic}
+      RESTIC_REPOSITORY: /backup/restic
+      BACKUP_DESTINATION_REPOSITORY: ${BACKUP_FILES_REPOSITORY:-}
+      BACKUP_DESTINATION_RETENTION: ${BACKUP_DESTINATION_RETENTION:-appliance}
       RESTIC_PASSWORD: ${BACKUP_FILES_PASSWORD:?set BACKUP_FILES_PASSWORD - losing it makes every snapshot unreadable}
       BACKUP_FILES_AT: ${BACKUP_FILES_AT:-0 3 * * *}
       BACKUP_FILES_KEEP_DAILY: ${BACKUP_FILES_KEEP_DAILY:-7}
@@ -321,10 +323,10 @@ services:
       - -c
       - |
         echo "$$BACKUP_FILES_AT /usr/local/bin/backup-files >> /proc/1/fd/1 2>&1" > /etc/crontabs/root
-        /usr/local/bin/backup-files || true
+        /usr/local/bin/backup-files start || true
         exec crond -f -l 8
     healthcheck:
-      test: ["CMD-SHELL", "restic snapshots --tag files --latest 1 --json | grep -q '\"time\"'"]
+      test: ["CMD", "/usr/local/bin/backup-files", "healthy"]
       <<: *healthcheck-defaults
       start_period: 10m
     networks:
