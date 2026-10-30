@@ -186,6 +186,14 @@ verified, `sudo rm -rf /var/lib/understandtech/ca` frees it. A load balancer
 that verified the box through port 8443 has to trust the box's Caddy root
 instead.
 
+**An administration console answers on port 8443.** The first update that
+carries it creates the `ut-console` account and the two units it runs on, and
+shows the console password once, after the other two — only on a terminal: an
+update with none says to run `sudo ut-install --reset-console-password`. Later
+updates keep the password. The port is the one `step-ca` held; a load balancer
+that still knocks on it now reaches the console. See
+[the administration console](console.md).
+
 **Two volumes are no longer used.** `ut-llm-ollama` and `ut-vllm-llm-cache` stay
 on disk, empty or unused: `docker volume rm ut-llm-ollama ut-vllm-llm-cache`
 frees them.
@@ -239,6 +247,10 @@ the installer again:
 sudo apt-get install ./understandtech_<previous>_all.deb
 sudo ut-install
 ```
+
+A previous version without the administration console leaves its two units
+behind, restarting on programs that are gone:
+`sudo systemctl disable --now ut-console ut-agent` stops them.
 
 `.env` stays one flat, complete file at the same path, so a version that knows
 nothing of `local.env` reads it anyway. Two checks in `test/migration.sh` hold

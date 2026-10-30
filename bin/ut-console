@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+PACKAGE_LIB_DIR="/usr/lib/understandtech"
+CHECKOUT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+architecture() {
+    case "$(uname -m)" in
+        aarch64|arm64) echo arm64 ;;
+        x86_64|amd64) echo amd64 ;;
+        *) return 1 ;;
+    esac
+}
+
+main() {
+    local arch dir
+    arch=$(architecture) || { echo "ut-console: no build for $(uname -m)" >&2; exit 1; }
+    for dir in "$PACKAGE_LIB_DIR" "$CHECKOUT_DIR/dist/ut-console"; do
+        [[ -x "$dir/ut-console-linux-$arch" ]] && exec "$dir/ut-console-linux-$arch" "$@"
+    done
+    echo "ut-console: ut-console-linux-$arch is not installed — run packaging/build-ut-send.sh from a checkout" >&2
+    exit 1
+}
+
+main "$@"

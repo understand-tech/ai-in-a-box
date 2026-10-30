@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UnderstandTech AI in a Box — administration</title>
+<link rel="stylesheet" href="/page/tokens.css">
+<link rel="stylesheet" href="/page/style.css">
+<link rel="stylesheet" href="/page/console.css">
+<script src="/page/theme.js"></script>
+<script src="/page/app.js" defer></script>
+</head>
+<body>
+<header class="bar">
+  <div class="brand-inline"><img src="/page/logo.svg" alt="UnderstandTech"><span>AI in a Box · Administration</span></div>
+  <div class="who"><span id="domain"></span><b>admin</b><button type="button" id="sign-out" class="quiet">Sign out</button></div>
+</header>
+
+<div class="layout">
+<nav class="side" aria-label="Sections">
+  <a href="#overview">Overview</a>
+  <a href="#logs">Logs</a>
+  <a href="#activity">Activity</a>
+</nav>
+
+<main class="content">
+
+<section id="overview" class="tab">
+  <p class="count">This box</p>
+  <h1>Overview</h1>
+  <p class="lead">What runs here. Nothing on this page changes the box.</p>
+  <p id="overview-loading" class="lead"><span class="spinner" aria-hidden="true"></span>Asking the box…</p>
+  <p id="overview-failed" class="banner failure" role="alert" hidden></p>
+  <ul id="summary" class="checks" aria-live="polite"></ul>
+  <h2>Services</h2>
+  <table class="grid"><thead><tr><th>Service</th><th>State</th><th>Health</th><th>Running</th></tr></thead><tbody id="services"></tbody></table>
+  <div class="nav left"><button type="button" id="refresh">Ask again</button></div>
+</section>
+
+<section id="logs" class="tab" hidden>
+  <p class="count">What a service said</p>
+  <h1>Logs</h1>
+  <p class="lead">The last lines of one service, as <code>docker compose logs</code> shows them. Reading them is noted in the activity.</p>
+  <form id="logs-form" class="inline">
+    <label class="visually-hidden" for="service">Service</label>
+    <select id="service" name="service" required></select>
+    <label class="visually-hidden" for="lines">Lines</label>
+    <select id="lines" name="lines">
+      <option value="100">100 lines</option>
+      <option value="200" selected>200 lines</option>
+      <option value="500">500 lines</option>
+    </select>
+    <button class="primary">Show</button>
+  </form>
+  <p id="logs-failed" class="banner failure" role="alert" hidden></p>
+  <pre id="log-lines" hidden></pre>
+</section>
+
+<section id="activity" class="tab" hidden>
+  <p class="count">Who did what</p>
+  <h1>Activity</h1>
+  <p class="lead">Every sign-in, every refusal and every log read, kept on the box with its backup. It cannot be changed from here.</p>
+  <p id="activity-failed" class="banner failure" role="alert" hidden></p>
+  <table class="grid"><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Result</th><th>Detail</th></tr></thead><tbody id="activity-lines"></tbody></table>
+</section>
+
+</main>
+</div>
+</body>
+</html>

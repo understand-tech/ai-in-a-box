@@ -20,6 +20,8 @@ DEBIAN_IMAGE="debian:12.15-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c7768
 BASH_IMAGE="bash:5.3.20@sha256:61962062d969cb46dfc2bad061d36342406fa485f64f246aa7e95693ca07df1f"
 BASH_3_IMAGE="bash:3.2.57@sha256:0fd7cb8499c63a3c9345e7088a9cd83bb69f6e895e83833859aff838a0312091"
 PYTHON_IMAGE="python:3.12-alpine@sha256:1b668429b3511ab407d8e00648891631b0b1a4d7e15e3ca70f38ab5b91ad4ab4"
+# The version go.mod names, for a machine with no Go of its own.
+GO_IMAGE="golang:1.27.2@sha256:820153096fda4de6ac1b7194d12e416b7dd8f4e9a33d17e0345b111b945162d8"
 # A versioned tag on a registry that never deletes an image: quay.io dropped the
 # manifest of busybox:latest the night after it was pinned here.
 BUSYBOX_IMAGE="registry.k8s.io/e2e-test-images/busybox:1.36.1-1@sha256:a9155b13325b2abef48e71de77bb8ac015412a566829f621d06bfae5c699b1b9"

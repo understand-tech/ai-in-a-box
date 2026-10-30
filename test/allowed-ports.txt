@@ -13,3 +13,7 @@ caddy:443:443
 # Generated apps run in their own compose projects and reach the builder's model
 # proxy at host.docker.internal, which Docker DNS cannot resolve for them.
 app-builder:8011:8001
+
+# The administration console is no container: setup-autostart.sh runs it on the
+# host, so that it answers when the stack does not. Its port, not its mapping.
+ut-console:8443

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UnderstandTech AI in a Box — administration</title>
+<link rel="stylesheet" href="/page/tokens.css">
+<link rel="stylesheet" href="/page/style.css">
+<script src="/page/theme.js"></script>
+<script src="/page/sign-in.js" defer></script>
+</head>
+<body>
+<header class="brand"><img src="/page/logo.svg" alt="UnderstandTech"><span>AI in a Box</span></header>
+<main class="focus">
+  <p class="count">Administration</p>
+  <h1>Sign in</h1>
+  <p class="lead">The console password was shown once, when this box was installed. Account: <code>admin</code>.</p>
+  <form id="sign-in">
+    <div class="detail">
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" required autocomplete="current-password">
+    </div>
+    <p id="refused" class="banner failure" role="alert" hidden></p>
+    <div class="nav"><span></span><button class="primary">Sign in</button></div>
+  </form>
+</main>
+</body>
+</html>

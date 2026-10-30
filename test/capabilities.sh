@@ -1076,12 +1076,15 @@ export OUT_DIR=/out
 # The package is under test here, not the compiler: stand-ins take the place of
 # the two ut-send builds, so this suite needs no Go.
 export UT_SEND_BUILDS=/ut-send-builds UT_SETUP_BUILDS=/ut-setup-builds UT_PAIR_BUILDS=/ut-pair-builds UT_ARBITER_BUILDS=/ut-arbiter-builds
-mkdir -p "$UT_SEND_BUILDS" "$UT_SETUP_BUILDS" "$UT_PAIR_BUILDS" "$UT_ARBITER_BUILDS"
+export UT_AGENT_BUILDS=/ut-agent-builds UT_CONSOLE_BUILDS=/ut-console-builds
+mkdir -p "$UT_SEND_BUILDS" "$UT_SETUP_BUILDS" "$UT_PAIR_BUILDS" "$UT_ARBITER_BUILDS" "$UT_AGENT_BUILDS" "$UT_CONSOLE_BUILDS"
 for arch in arm64 amd64; do
     printf '#!/bin/sh\necho %s\n' "$arch" > "$UT_SEND_BUILDS/ut-send-linux-$arch"
     printf '#!/bin/sh\necho %s\n' "$arch" > "$UT_SETUP_BUILDS/ut-setup-linux-$arch"
     printf '#!/bin/sh\necho %s\n' "$arch" > "$UT_PAIR_BUILDS/ut-pair-linux-$arch"
     printf '#!/bin/sh\necho %s\n' "$arch" > "$UT_ARBITER_BUILDS/ut-arbiter-linux-$arch"
+    printf '#!/bin/sh\necho %s\n' "$arch" > "$UT_AGENT_BUILDS/ut-agent-linux-$arch"
+    printf '#!/bin/sh\necho %s\n' "$arch" > "$UT_CONSOLE_BUILDS/ut-console-linux-$arch"
 done
 /src/packaging/build-deb.sh 2026.09.1 >/dev/null
 /src/packaging/build-deb.sh 2026.09.2 >/dev/null
@@ -1128,6 +1131,10 @@ say UT_PAIR           "$([ -x /usr/bin/ut-pair ] && [ -x /usr/lib/understandtech
     && [ -x /usr/lib/understandtech/ut-pair-linux-amd64 ] && echo both || echo missing)"
 say UT_ARBITER        "$([ -x /usr/bin/ut-arbiter ] && [ -x /usr/lib/understandtech/ut-arbiter-linux-arm64 ] \
     && [ -x /usr/lib/understandtech/ut-arbiter-linux-amd64 ] && echo both || echo missing)"
+say UT_AGENT          "$([ -x /usr/bin/ut-agent ] && [ -x /usr/lib/understandtech/ut-agent-linux-arm64 ] \
+    && [ -x /usr/lib/understandtech/ut-agent-linux-amd64 ] && echo both || echo missing)"
+say UT_CONSOLE        "$([ -x /usr/bin/ut-console ] && [ -x /usr/lib/understandtech/ut-console-linux-arm64 ] \
+    && [ -x /usr/lib/understandtech/ut-console-linux-amd64 ] && echo both || echo missing)"
 say CONFIG_DIR_MODE   "$(stat -c '%a' /etc/understandtech 2>/dev/null)"
 say DATA_DIR          "$(present_dir /var/lib/understandtech)"
 say SETTINGS_SHIPPED  "$(dpkg -L understandtech | grep -c '^/etc/understandtech/.' || true)"
@@ -1154,18 +1161,21 @@ printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> /systemctl-calls\n' > /usr/local/bin/
 chmod +x /usr/local/bin/systemctl
 mkdir -p /etc/systemd/system
 touch /etc/systemd/system/ut-send.timer /etc/systemd/system/ut-send.service
+touch /etc/systemd/system/ut-agent.service /etc/systemd/system/ut-console.service
 
 dpkg -i --force-depends /out/understandtech_2026.09.2_all.deb >/dev/null 2>&1
 say UPGRADED_VERSION       "$(dpkg-query -W -f='${Version}' understandtech 2>/dev/null)"
 say SETTINGS_AFTER_UPGRADE "$(cat /etc/understandtech/.env 2>/dev/null || echo gone)"
 say RELEASE_AFTER_UPGRADE  "$(present_file /usr/share/understandtech/compose.yaml)"
 say TIMER_AFTER_UPGRADE    "$(present_file /etc/systemd/system/ut-send.timer)"
+say CONSOLE_AFTER_UPGRADE  "$(present_file /etc/systemd/system/ut-console.service)$(grep -q '^try-restart ut-agent.service ut-console.service$' /systemctl-calls 2>/dev/null && echo ',restarted')"
 
 dpkg --purge --force-depends understandtech >/dev/null 2>&1
 say RELEASE_AFTER_PURGE  "$(present_dir /usr/share/understandtech)"
 say SETTINGS_AFTER_PURGE "$(present_file /etc/understandtech/.env)"
 say DATA_AFTER_PURGE     "$(present_file /var/lib/understandtech/app-data/one)"
 say TIMER_AFTER_PURGE    "$(present_file /etc/systemd/system/ut-send.timer)$(grep -q '^disable --now ut-send.timer$' /systemctl-calls 2>/dev/null && echo ',stopped')"
+say CONSOLE_AFTER_PURGE  "$(present_file /etc/systemd/system/ut-console.service)$(present_file /etc/systemd/system/ut-agent.service)$(grep -q '^disable --now ut-console.service ut-agent.service$' /systemctl-calls 2>/dev/null && echo ',stopped')"
 PROBE
 }
 
@@ -1224,6 +1234,11 @@ the_installed_command_takes_the_release_that_is_there() {
 an_upgrade_keeps_the_reporting_timer_and_removal_stops_it() {
     reports TIMER_AFTER_UPGRADE present \
         && reports TIMER_AFTER_PURGE gone,stopped
+}
+
+an_upgrade_restarts_the_console_and_removal_stops_it() {
+    reports CONSOLE_AFTER_UPGRADE present,restarted \
+        && reports CONSOLE_AFTER_PURGE gonegone,stopped
 }
 
 removing_the_package_leaves_the_settings_and_the_data() {
@@ -3534,6 +3549,12 @@ if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
         reports UT_PAIR both
     capability "it carries ut-arbiter for both architectures it serves" \
         reports UT_ARBITER both
+    capability "it carries ut-agent for both architectures it serves" \
+        reports UT_AGENT both
+    capability "it carries ut-console for both architectures it serves" \
+        reports UT_CONSOLE both
+    capability "an upgrade restarts the console on its new programs, and removing the package stops it" \
+        an_upgrade_restarts_the_console_and_removal_stops_it
     capability "the settings directory is prepared, and the package puts nothing in it" \
         the_settings_directory_is_prepared_but_never_filled
     capability "the settings are read from where the release lives" \

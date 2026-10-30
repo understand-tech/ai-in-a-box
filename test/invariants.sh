@@ -8,6 +8,7 @@ BASELINE_FILE="$SCRIPT_DIR/known-issues.txt"
 ALLOWED_PORTS_FILE="$SCRIPT_DIR/allowed-ports.txt"
 
 RELEASE_ENV="$REPO_ROOT/release.env"
+CONSOLE_ACCOUNT="ut-console"
 COMPOSE_FILES=("$REPO_ROOT/compose.yaml" "$REPO_ROOT/compose.appbuilder.yaml")
 
 SENSITIVE_KEYS=(
@@ -644,6 +645,97 @@ check_published_ports_are_allowed() {
     done <<< "$(published_port_entries "${COMPOSE_FILES[@]}")"
 }
 
+# A unit as setup-autostart.sh writes it: the heredoc piped into its file.
+unit_written_to() {
+    awk -v target="\"\$$1\"" '
+        index($0, "write_file_atomic " target) { on = 1; next }
+        on && /^UNIT_EOF$/ { exit }
+        on { print }
+    ' "$REPO_ROOT/setup-autostart.sh" 2>/dev/null
+}
+
+# The console answers the network and the agent is root: what keeps one from
+# being the other is the account the console runs as, and what it may reach.
+check_the_console_runs_with_no_power() {
+    local unit user directive
+    unit=$(unit_written_to CONSOLE_SERVICE_FILE)
+    if [[ -z "$unit" ]]; then
+        report "console-unit-missing" \
+            "setup-autostart.sh writes no ut-console.service — nothing says which account the console runs as"
+        return 0
+    fi
+    user=$(sed -n 's/^User=//p' <<< "$unit")
+    if [[ -z "$user" || "$user" == root || "$user" == 0 ]]; then
+        report "console-runs-as:${user:-root}" \
+            "ut-console.service runs as ${user:-root}: the page facing the network would hold every right on the box"
+    fi
+    for directive in 'NoNewPrivileges=yes' 'ProtectSystem=strict' 'ProtectHome=yes' 'PrivateTmp=yes' \
+                     'CapabilityBoundingSet=' 'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6'; do
+        grep -qxF "$directive" <<< "$unit" && continue
+        report "console-unit-not-hardened:${directive%%=*}" \
+            "ut-console.service lacks ${directive}"
+    done
+    if grep -qE '^(SupplementaryGroups|AmbientCapabilities)=' <<< "$unit" \
+        || console_account_is_given_a_group; then
+        report "console-account-given-more" \
+            "the console's account is given a group or a capability beyond its own — docker's would make it root"
+    fi
+}
+
+console_account_is_given_a_group() {
+    local lines
+    lines=$(grep -E 'useradd|usermod|gpasswd|adduser' "$REPO_ROOT/bin/ut-install" | grep -E "CONSOLE_USER|${CONSOLE_ACCOUNT}")
+    grep -qE 'usermod|gpasswd|adduser' <<< "$lines" || grep -qE -- ' (-G|--groups|-g|--gid)[ =]' <<< "$lines"
+}
+
+# The agent is root and the console asks it: a shell between them would make a
+# value the console passes on a command.
+check_the_agent_runs_no_shell() {
+    local source
+    for source in "$REPO_ROOT"/cmd/ut-agent/*.go; do
+        [[ -f "$source" && "$source" != *_test.go ]] || continue
+        grep -qE '"(/bin/|/usr/bin/)?(ba|da|z)?sh"|"-c"' "$source" || continue
+        report "agent-runs-a-shell:${source##*/}" \
+            "${source##*/} names a shell: the agent runs fixed programs only, so that no value the console sends becomes a command"
+    done
+}
+
+check_the_agent_socket_opens_to_its_group_alone() {
+    local unit file
+    grep -qE '^[[:space:]]*socketMode[[:space:]]*=[[:space:]]*0o660$' "$REPO_ROOT/cmd/ut-agent/main.go" 2>/dev/null \
+        || report "agent-socket-open-beyond-its-group" \
+            "cmd/ut-agent no longer makes its socket 0660: an account other than root and ut-console could ask it"
+    unit=$(unit_written_to AGENT_SERVICE_FILE)
+    grep -qE "^ExecStart=.* --group ${CONSOLE_ACCOUNT}( |\$)" <<< "$unit" && grep -qx 'RuntimeDirectory=ut-agent' <<< "$unit" \
+        || report "agent-socket-given-to-another-group" \
+            "ut-agent.service does not give its socket, in its own runtime directory, to ${CONSOLE_ACCOUNT} alone"
+    for file in "$REPO_ROOT"/compose*.yaml; do
+        grep -qF '/run/ut-agent' "$file" || continue
+        report "agent-socket-mounted-into:${file##*/}" \
+            "${file##*/} mounts the agent's socket: a container would ask root what only the console may"
+    done
+}
+
+host_port_of() {
+    local IFS=:
+    set -- $1
+    if (( $# >= 3 )); then printf '%s' "$2"; else printf '%s' "$1"; fi
+}
+
+check_the_console_port_is_declared() {
+    local port service spec
+    port=$(unit_written_to CONSOLE_SERVICE_FILE | sed -n 's/^ExecStart=.* --port \([0-9][0-9]*\).*$/\1/p')
+    [[ -n "$port" ]] || return 0
+    grep -vE '^\s*(#|$)' "$ALLOWED_PORTS_FILE" 2>/dev/null | grep -qxF "ut-console:${port}" \
+        || report "console-port-undeclared:${port}" \
+            "the console listens on ${port} on every interface, and test/allowed-ports.txt does not say so"
+    while IFS='|' read -r service spec; do
+        [[ -n "$spec" && "$(host_port_of "$spec")" == "$port" ]] || continue
+        report "console-port-taken:${port}" \
+            "${service} publishes port ${port}, the one the console listens on: one of the two will not start"
+    done <<< "$(published_port_entries "$REPO_ROOT"/compose*.yaml)"
+}
+
 # Static on purpose: building a package here would cost more than the 0.87 s
 # this whole file is allowed, so it reads the builder rather than its output.
 check_the_package_stamps_the_commit_it_was_built_from() {
@@ -1004,6 +1096,10 @@ main() {
     check_required_variables_have_a_value_or_are_generated
     check_variables_without_default_are_declared
     check_published_ports_are_allowed
+    check_the_console_runs_with_no_power
+    check_the_agent_socket_opens_to_its_group_alone
+    check_the_agent_runs_no_shell
+    check_the_console_port_is_declared
     check_the_package_stamps_the_commit_it_was_built_from
     check_the_package_ships_what_the_stack_mounts
     check_every_tool_ships

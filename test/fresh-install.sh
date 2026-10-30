@@ -48,14 +48,25 @@ property() {
 # would otherwise pass on an install that never ran.
 build_the_package() {
     local arch tool
-    for tool in ut-send ut-setup ut-pair ut-arbiter; do
+    for tool in ut-send ut-setup ut-pair ut-arbiter ut-agent ut-console; do
         install -d "$WORK_DIR/$tool-builds"
         for arch in arm64 amd64; do
             printf '#!/bin/sh\necho stand-in\n' > "$WORK_DIR/$tool-builds/$tool-linux-$arch"
         done
     done
+    # The console's stand-in hashes what it reads on its standard input, so a
+    # walk can tell the hash kept from the password shown; and it keeps every
+    # argument it was given, so a walk can tell no password was among them.
+    for arch in arm64 amd64; do
+        cat > "$WORK_DIR/ut-console-builds/ut-console-linux-$arch" <<'STAND_IN'
+#!/bin/sh
+printf '%s\n' "$*" >> /tmp/ut-console-calls
+[ "$1" = hash-password ] || { echo stand-in; exit 0; }
+printf 'stand-in:%s\n' "$(sha256sum | cut -d' ' -f1)"
+STAND_IN
+    done
     docker run --rm -v "$REPO_ROOT":/src:ro -v "$WORK_DIR":/out -w /src "$DEBIAN_IMAGE" \
-        sh -c "OUT_DIR=/out UT_SEND_BUILDS=/out/ut-send-builds UT_SETUP_BUILDS=/out/ut-setup-builds UT_PAIR_BUILDS=/out/ut-pair-builds UT_ARBITER_BUILDS=/out/ut-arbiter-builds ./packaging/build-deb.sh '$VERSION'" >/dev/null
+        sh -c "OUT_DIR=/out UT_SEND_BUILDS=/out/ut-send-builds UT_SETUP_BUILDS=/out/ut-setup-builds UT_PAIR_BUILDS=/out/ut-pair-builds UT_ARBITER_BUILDS=/out/ut-arbiter-builds UT_AGENT_BUILDS=/out/ut-agent-builds UT_CONSOLE_BUILDS=/out/ut-console-builds ./packaging/build-deb.sh '$VERSION'" >/dev/null
     [[ -f "$WORK_DIR/understandtech_${VERSION}_all.deb" ]] || {
         echo "The package did not build — nothing below would mean anything." >&2
         exit 1
@@ -157,6 +168,12 @@ cat /etc/understandtech/backup-ssh/id_ed25519.pub > /w/$state/backup-key-pub 2>/
 sha256sum /etc/understandtech/backup-ssh/id_ed25519 2>/dev/null | cut -d' ' -f1 > /w/$state/backup-key-sum || : > /w/$state/backup-key-sum
 stat -c '%a %U' /etc/understandtech/license > /w/$state/license-mode 2>/dev/null || : > /w/$state/license-mode
 stat -c '%a %U' /etc/understandtech/machine.lic > /w/$state/machine-mode 2>/dev/null || : > /w/$state/machine-mode
+cp /var/lib/understandtech/console/password /w/$state/console-password 2>/dev/null || : > /w/$state/console-password
+stat -c '%a %U %G' /var/lib/understandtech/console/password > /w/$state/console-password-mode 2>/dev/null || : > /w/$state/console-password-mode
+getent passwd ut-console > /w/$state/console-account 2>/dev/null || : > /w/$state/console-account
+id -nG ut-console > /w/$state/console-groups 2>/dev/null || : > /w/$state/console-groups
+cp /tmp/ut-console-calls /w/$state/console-calls 2>/dev/null || : > /w/$state/console-calls
+cp /var/log/ut-install.log /w/$state/install-log 2>/dev/null || : > /w/$state/install-log
 chmod -R a+rw /w/$state
 PROBE
 
@@ -337,6 +354,9 @@ state_setup() {
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_REPOSITORY="s3:https://s3.example.test/appliance-backups"\nBACKUP_RELAY_SUBNET="198.19.0.0/24"\n'"'"' > /etc/understandtech/local.env' ;;
         backup_in_two_places)
             echo 'install -d /w/backup_in_two_places/nas && install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_DESTINATION="/w/backup_in_two_places/nas"\nBACKUP_FILES_REPOSITORY="s3:https://s3.example.test/appliance"\n'"'"' > /etc/understandtech/local.env' ;;
+        # The console's account and its hash, as an earlier install left them.
+        console_password_kept)
+            echo 'useradd --system --user-group --no-create-home --shell /usr/sbin/nologin ut-console && install -d -m 750 -o root -g ut-console /var/lib/understandtech/console && printf "stand-in:kept-from-before\n" > /var/lib/understandtech/console/password && chown root:ut-console /var/lib/understandtech/console/password && chmod 640 /var/lib/understandtech/console/password' ;;
         *)             echo ': ' ;;
     esac
 }
@@ -1263,6 +1283,56 @@ the_secrets_are_findable_without_a_terminal() {
     return 1
 }
 
+console_password_shown_in() {
+    grep -a 'Console password' <<< "$1" | grep -oE '[0-9a-f]{24}' | head -1
+}
+
+# The walk runs under script(1) here: a terminal is what the password is shown
+# on, and the stand-in's hash is sha256 of what ut-install wrote on its input.
+the_console_password_is_shown_once_and_only_its_hash_kept() {
+    local state=console_on_a_terminal output password where
+    output=$(output_of "$state")
+    password=$(console_password_shown_in "$output")
+    [[ -n "$password" ]] || { echo "no console password was shown:"; tail -8 <<< "$output"; return 1; }
+    [[ "$(grep -ac "$password" <<< "$output")" == 1 ]] || { echo "the console password was shown more than once"; return 1; }
+    [[ "$(of_state "$state" console-password)" == "stand-in:$(printf '%s\n' "$password" | openssl dgst -sha256 -r | cut -d' ' -f1)" ]] \
+        || { echo "what is kept is not the hash of the password shown: $(of_state "$state" console-password)"; return 1; }
+    [[ "$(of_state "$state" console-password-mode)" == "640 root ut-console" ]] \
+        || { echo "the hash is $(of_state "$state" console-password-mode), not 640 root ut-console"; return 1; }
+    for where in local-env env install-log console-calls docker-calls; do
+        if grep -qF "$password" "$WORK_DIR/$state/$where" 2>/dev/null; then
+            echo "the console password is in ${where}"
+            return 1
+        fi
+    done
+}
+
+the_console_account_has_no_shell_and_no_other_group() {
+    local state=console_on_a_terminal
+    grep -q ':/usr/sbin/nologin$' <<< "$(of_state "$state" console-account)" \
+        || { echo "the account is: $(of_state "$state" console-account)"; return 1; }
+    [[ "$(of_state "$state" console-groups)" == "ut-console" ]] && return 0
+    echo "ut-console is in: $(of_state "$state" console-groups)"
+    return 1
+}
+
+an_update_keeps_the_console_password() {
+    local state=console_password_kept
+    [[ "$(of_state "$state" console-password)" == "stand-in:kept-from-before" ]] \
+        || { echo "the hash became: $(of_state "$state" console-password)"; return 1; }
+    [[ -z "$(console_password_shown_in "$(output_of "$state")")" ]] && return 0
+    echo "a new console password was shown on an update"
+    return 1
+}
+
+no_console_password_is_drawn_without_a_terminal() {
+    local state=install_runs_through
+    [[ -z "$(of_state "$state" console-password)" ]] || { echo "a password nobody saw was kept"; return 1; }
+    grep -q 'sudo ut-install --reset-console-password' <<< "$(output_of "$state")" && return 0
+    echo "nothing told the operator how to give the console a password"
+    return 1
+}
+
 no_secret_reaches_the_log() {
     local output secret
     output=$(output_of install_runs_through)
@@ -1612,6 +1682,10 @@ prepare_a_vllm_entry
 
 run_install_from_state bare
 PULL_EXIT=0 run_install_from_state install_runs_through
+PULL_EXIT=0 INSTALL_COMMAND="script -qec 'ut-install --domain box.example.test --reporting no' /dev/null" \
+    run_install_from_state console_on_a_terminal -
+PULL_EXIT=0 INSTALL_COMMAND="script -qec 'ut-install --domain box.example.test --reporting no' /dev/null" \
+    run_install_from_state console_password_kept -
 PULL_EXIT=0 run_install_from_state compute_node_runs_through
 INSTALL_COMMAND=/srv/clone/bin/ut-install \
     run_install_from_state launched_from_a_checkout
@@ -1915,6 +1989,16 @@ property "the secrets can be found afterwards" \
     the_secrets_are_findable_without_a_terminal
 property "and none of them reached the log" \
     no_secret_reaches_the_log
+property "no console password is drawn for nobody to see, and the operator is told how to get one" \
+    no_console_password_is_drawn_without_a_terminal
+
+printf '\n%sThe administration console%s\n' "$BOLD" "$NC"
+property "its password is drawn on a terminal, shown once, and only its hash is kept" \
+    the_console_password_is_shown_once_and_only_its_hash_kept
+property "its account has no shell and no group but its own" \
+    the_console_account_has_no_shell_and_no_other_group
+property "an update keeps its password, and shows none" \
+    an_update_keeps_the_console_password
 
 printf '\n%sA license key%s\n' "$BOLD" "$NC"
 property "a license key activates this machine with Keygen, and logs in with the token it carries" \

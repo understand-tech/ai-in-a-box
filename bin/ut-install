@@ -57,6 +57,11 @@ MODEL_ID=""
 ENGINE_CHOICE=""
 LINK_RELAY_URL="http://caddy:8445/v1"
 UT_SEND="${UT_SEND:-ut-send}"
+UT_CONSOLE="${UT_CONSOLE:-ut-console}"
+CONSOLE_USER="ut-console"
+CONSOLE_DIR="/var/lib/understandtech/console"
+CONSOLE_PASSWORD_FILE="$CONSOLE_DIR/password"
+CONSOLE_PORT=8443
 CURRENT_STEP=""
 INFERENCE_STILL_LOADING=""
 
@@ -228,6 +233,10 @@ Options
                        receiver's certificate. Can come later, through
                        ut-send configure.
   --reporting-every N  Minutes between two sends (default: 15).
+  --reset-console-password
+                       Draw a new password for the administration console,
+                       show it once on this terminal, keep only its hash, and
+                       close the console's sessions. Changes nothing else.
   -h, --help           This message.
 
 Environment
@@ -2596,11 +2605,83 @@ step_autostart() {
     log_info "Boot service and mDNS publisher installed"
 }
 
+# A system account with no shell and no home, in no group but its own: never
+# docker's, whose socket is root on this machine.
+prepare_the_console_account() {
+    getent passwd "$CONSOLE_USER" >/dev/null 2>&1 \
+        || useradd --system --user-group --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin "$CONSOLE_USER"
+    install -d -m 750 -o root -g "$CONSOLE_USER" "$CONSOLE_DIR"
+}
+
+step_console() {
+    log_step "Preparing the administration console"
+    if ! command -v "$UT_CONSOLE" >/dev/null 2>&1; then
+        log_warn "ut-console is not installed here — the console stays off. A package install carries it."
+        return 0
+    fi
+    prepare_the_console_account
+    if [[ -s "$CONSOLE_PASSWORD_FILE" ]]; then
+        log_info "Console password already set — kept"
+    else
+        log_info "The console account is ready; its password is drawn at the end, where it is shown"
+    fi
+}
+
+the_console_has_no_password_yet() {
+    command -v "$UT_CONSOLE" >/dev/null 2>&1 && [[ -d "$CONSOLE_DIR" && ! -s "$CONSOLE_PASSWORD_FILE" ]]
+}
+
+console_address() {
+    local domain
+    domain=$(env_get "$INSTALL_DIR/.env" UT_DOMAIN 2>/dev/null || true)
+    printf 'https://%s:%s' "${domain:-$FALLBACK_DOMAIN}" "$CONSOLE_PORT"
+}
+
+# The password reaches ut-console on its standard input, never as an argument,
+# and is shown before its hash is kept: a run stopped in between keeps nothing,
+# and the next one draws another rather than keeping one nobody saw.
+show_and_keep_a_console_password() {
+    local password hash kept
+    password=$(random_alphanumeric 24)
+    if ! hash=$(printf '%s\n' "$password" | "$UT_CONSOLE" hash-password) || [[ -z "$hash" ]]; then
+        log_warn "ut-console could not hash a console password — none was kept. Run: sudo ut-install --reset-console-password"
+        return 1
+    fi
+    printf '  %sConsole password%s  %s\n' "$BOLD" "$NC" "$password" > /dev/tty
+    printf '  Account admin, at %s. Shown here only — this box keeps its hash, never the password.\n\n' "$(console_address)" > /dev/tty
+    kept=$(mktemp "$CONSOLE_DIR/.password.XXXXXX")
+    printf '%s\n' "$hash" > "$kept"
+    chown "root:$CONSOLE_USER" "$kept"
+    chmod 640 "$kept"
+    mv -f "$kept" "$CONSOLE_PASSWORD_FILE"
+}
+
+print_the_console_password_once() {
+    the_console_has_no_password_yet || return 0
+    if ! terminal_is_reachable; then
+        log_warn "The administration console has no password yet, and there is no terminal here to show one on."
+        log_warn "  In a terminal on the box: sudo ut-install --reset-console-password"
+        return 0
+    fi
+    show_and_keep_a_console_password || true
+}
+
+reset_the_console_password() {
+    [[ $EUID -eq 0 ]] || die "Run with sudo: sudo $0 --reset-console-password"
+    command -v "$UT_CONSOLE" >/dev/null 2>&1 || die "ut-console is not installed here: there is no console to give a password to."
+    terminal_is_reachable || die "No terminal to show a new password on — nothing was changed."
+    prepare_the_console_account
+    show_and_keep_a_console_password || die "Nothing was changed."
+    systemctl try-restart ut-console.service >/dev/null 2>&1 || true
+    log_info "The console's sessions are closed: sign in again with the new password"
+}
+
 print_secrets_out_of_band() {
     local env_file=$1 admin_password backup_password
     if ! terminal_is_reachable; then
         log_info "No terminal here, so nothing was printed. The secrets are in $(settings_directory "$env_file")/local.env"
         [[ -z "$EVENTS_FILE" ]] || say_event secrets ",\"file\":$(json_string "$(settings_directory "$env_file")/local.env")"
+        print_the_console_password_once
         return 0
     fi
 
@@ -2619,6 +2700,7 @@ print_secrets_out_of_band() {
     fi
 
     printf '\n  (shown here only — stored in %s, never in the install log)\n\n' "$env_file" > /dev/tty
+    print_the_console_password_once
 }
 
 install_history() {
@@ -2736,6 +2818,7 @@ ${BOLD}Installation complete in $(( SECONDS / 60 )) min${NC}
   Install log    ${LOG_FILE}
 
 EOF
+    print_the_console_password_once
 }
 
 print_summary() {
@@ -2772,6 +2855,7 @@ ${BOLD}Installation complete in $(( SECONDS / 60 )) min${NC}
 
     docker exec ut-caddy cat /data/caddy/pki/authorities/local/root.crt > ut-root-ca.crt
 
+  Administration $(console_address)
   Status         cd ${INSTALL_DIR} && docker compose ps
   Logs           cd ${INSTALL_DIR} && docker compose logs -f api
   Install log    ${LOG_FILE}
@@ -2814,6 +2898,7 @@ parse_arguments() {
             --reporting-token-file)    REPORTING_TOKEN_FILE="${2:?--reporting-token-file needs a path}"; shift ;;
             --reporting-receiver-cert) REPORTING_RECEIVER_CERT="${2:?--reporting-receiver-cert needs a path}"; shift ;;
             --reporting-every)         REPORTING_EVERY="${2:?--reporting-every needs minutes}"; shift ;;
+            --reset-console-password)  ACTION="reset-console-password" ;;
             --inference-from)     INFERENCE_FROM="${2:?--inference-from needs an address}"; shift ;;
             --inference-here)     INFERENCE_HERE=true ;;
             --images-from)        IMAGES_FROM="${2:?--images-from needs the folder ut-get --prepare wrote}"; DO_PULL=false; shift ;;
@@ -2839,6 +2924,11 @@ main() {
 
     if [[ "$ACTION" == "list-models" ]]; then
         list_the_models_this_machine_serves
+        exit 0
+    fi
+
+    if [[ "$ACTION" == "reset-console-password" ]]; then
+        reset_the_console_password
         exit 0
     fi
 
@@ -2871,6 +2961,7 @@ main() {
     step_weights_from_the_network
     step_start
     step_wait_healthy
+    step_console
     step_autostart
     step_reporting
     print_summary

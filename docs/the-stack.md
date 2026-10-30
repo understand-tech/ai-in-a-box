@@ -14,6 +14,11 @@ loopback, so it is reachable from the machine itself and from nowhere else; a co
 Caddy on port 8444, to the platforms paired with it by `ut-pair` only. **Everything else is reachable only from inside the
 Docker networks** — the database has no host port at all.
 
+One more port answers on every interface, and no container holds it: **8443**,
+the [administration console](console.md), which runs on the machine itself so
+that it answers when the stack does not. See
+[auto-start on boot](#auto-start-on-boot).
+
 Five services carry no fixed container name, because a fixed name and `--scale`
 are mutually exclusive. Compose names them after the project, so the prefix
 follows `COMPOSE_PROJECT_NAME`.
@@ -172,9 +177,15 @@ upgrade does to your settings.
   was missed, so the install history says when the box served and when it
   stopped. A failed check shows in `systemctl status ut-status`;
 - **`ut-mdns-alias.service`** — publishes the apex, satellite and
-  generated-app hostnames over mDNS, all derived from `UT_DOMAIN`.
+  generated-app hostnames over mDNS, all derived from `UT_DOMAIN`;
+- **`ut-agent.service`** — runs as root and answers the administration console
+  on `/run/ut-agent/agent.sock`, which only root and the `ut-console` group can
+  open;
+- **`ut-console.service`** — the [administration console](console.md), on port
+  8443, as the `ut-console` account, which has no shell and no other group.
+  Installed once `ut-install` has created that account.
 
-It does not pull images, create stack resources, or start anything. `ut-install`
+It does not pull images, create stack resources, or start the stack. `ut-install`
 runs it for you; you only need it directly when changing the domain or
 repairing an install.
 

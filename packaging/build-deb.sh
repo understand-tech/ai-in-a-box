@@ -15,6 +15,8 @@ LIB_DIR="usr/lib/$PACKAGE"
 UT_SEND_BUILDS="${UT_SEND_BUILDS:-$REPO_ROOT/dist/ut-send}"
 UT_SETUP_BUILDS="${UT_SETUP_BUILDS:-$REPO_ROOT/dist/ut-setup}"
 UT_PAIR_BUILDS="${UT_PAIR_BUILDS:-$REPO_ROOT/dist/ut-pair}"
+UT_AGENT_BUILDS="${UT_AGENT_BUILDS:-$REPO_ROOT/dist/ut-agent}"
+UT_CONSOLE_BUILDS="${UT_CONSOLE_BUILDS:-$REPO_ROOT/dist/ut-console}"
 UT_ARBITER_BUILDS="${UT_ARBITER_BUILDS:-$REPO_ROOT/dist/ut-arbiter}"
 CONFIG_DIR="etc/$PACKAGE"
 
@@ -27,8 +29,8 @@ build-deb.sh — builds the ${PACKAGE} Debian package.
 The version is the only argument. It has to be orderable by dpkg, so
 YYYY.MM.N reads the way it sorts.
 
-Writes to \$OUT_DIR (default: dist/). Needs ut-send, ut-setup and ut-pair compiled
-first (packaging/build-ut-send.sh), ut-arbiter fetched first
+Writes to \$OUT_DIR (default: dist/). Needs ut-send, ut-setup, ut-pair, ut-agent
+and ut-console compiled first (packaging/build-ut-send.sh), ut-arbiter fetched first
 (packaging/fetch-ut-arbiter.sh), and dpkg-deb, so run it on Debian or in a
 container:
 
@@ -109,6 +111,8 @@ stage_commands() {
     install -m 755 "$REPO_ROOT/bin/ut-send" "$root/usr/bin/"
     install -m 755 "$REPO_ROOT/bin/ut-setup" "$root/usr/bin/"
     install -m 755 "$REPO_ROOT/bin/ut-pair" "$root/usr/bin/"
+    install -m 755 "$REPO_ROOT/bin/ut-agent" "$root/usr/bin/"
+    install -m 755 "$REPO_ROOT/bin/ut-console" "$root/usr/bin/"
     install -m 755 "$REPO_ROOT/bin/ut-arbiter" "$root/usr/bin/"
 }
 
@@ -188,6 +192,9 @@ if [ "$1" = configure ]; then
     install -d -m 750 /etc/understandtech
     install -d -m 755 /var/lib/understandtech
 
+    # The new binaries are only run once the units are started again.
+    systemctl try-restart ut-agent.service ut-console.service >/dev/null 2>&1 || true
+
     if [ ! -e /etc/understandtech/.env ]; then
         echo ""
         echo "understandtech installed. Nothing is configured yet:"
@@ -213,6 +220,14 @@ set -e
 if [ "$1" = remove ] && [ -e /etc/systemd/system/ut-send.timer ]; then
     systemctl disable --now ut-send.timer >/dev/null 2>&1 || true
     rm -f /etc/systemd/system/ut-send.timer /etc/systemd/system/ut-send.service
+    systemctl daemon-reload >/dev/null 2>&1 || true
+fi
+
+# The same for the console and its agent, which would restart forever on
+# programs that are gone.
+if [ "$1" = remove ] && [ -e /etc/systemd/system/ut-console.service ]; then
+    systemctl disable --now ut-console.service ut-agent.service >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/ut-console.service /etc/systemd/system/ut-agent.service
     systemctl daemon-reload >/dev/null 2>&1 || true
 fi
 EOF
@@ -249,6 +264,8 @@ main() {
     stage_builds_of "$root" ut-send "$UT_SEND_BUILDS"
     stage_builds_of "$root" ut-setup "$UT_SETUP_BUILDS"
     stage_builds_of "$root" ut-pair "$UT_PAIR_BUILDS"
+    stage_builds_of "$root" ut-agent "$UT_AGENT_BUILDS"
+    stage_builds_of "$root" ut-console "$UT_CONSOLE_BUILDS"
     stage_builds_of "$root" ut-arbiter "$UT_ARBITER_BUILDS"
     stage_documentation "$root"
     link_configuration_into_project_directory "$root"

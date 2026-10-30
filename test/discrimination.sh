@@ -237,6 +237,52 @@ discriminates "the recorder published on every interface" \
     "unlisted-port:metrics:9090:9090" \
     "sed -i.bak '/^  metrics:\$/,/^    expose:/ s|^    expose:|    ports:\n      - \"9090:9090\"\n    expose:|' compose.yaml"
 
+if grep -q 'check_the_console_runs_with_no_power' "$REPO_ROOT/test/invariants.sh"; then
+    discriminates "a console unit setup-autostart.sh no longer writes" \
+        "console-unit-missing" \
+        "sed -i.bak 's|write_file_atomic \"\$CONSOLE_SERVICE_FILE\"|write_file_atomic \"\$CONSOLE_UNIT_PATH\"|' setup-autostart.sh"
+
+    discriminates "a console that runs as root" \
+        "console-runs-as:root" \
+        "sed -i.bak 's/^User=ut-console\$/User=root/' setup-autostart.sh"
+
+    discriminates "a console unit that leaves /var writable" \
+        "console-unit-not-hardened:ProtectSystem" \
+        "sed -i.bak 's/^ProtectSystem=strict\$/ProtectSystem=full/' setup-autostart.sh"
+
+    discriminates "a console unit that hands docker's group to its account" \
+        "console-account-given-more" \
+        "sed -i.bak 's/^Group=ut-console\$/SupplementaryGroups=docker/' setup-autostart.sh"
+
+    discriminates "a console account created in docker's group" \
+        "console-account-given-more" \
+        "sed -i.bak 's/useradd --system --user-group /useradd --system --user-group --groups docker /' bin/ut-install"
+
+    discriminates "an agent socket any account may open" \
+        "agent-socket-open-beyond-its-group" \
+        "sed -i.bak 's/= 0o660\$/= 0o666/' cmd/ut-agent/main.go"
+
+    discriminates "an agent socket given to docker's group" \
+        "agent-socket-given-to-another-group" \
+        "sed -i.bak 's/--group ut-console\$/--group docker/' setup-autostart.sh"
+
+    discriminates "an agent socket mounted into a container" \
+        "agent-socket-mounted-into:compose.agent.yaml" \
+        "printf 'services:\n  caddy:\n    volumes:\n      - /run/ut-agent:/run/ut-agent\n' > compose.agent.yaml"
+
+    discriminates "an agent that runs what it is asked through a shell" \
+        "agent-runs-a-shell:main.go" \
+        "sed -i.bak 's|exec.CommandContext(ctx, name, args...)|exec.CommandContext(ctx, \"sh\", \"-c\", name)|' cmd/ut-agent/main.go"
+
+    discriminates "a console port nobody declared" \
+        "console-port-undeclared:8443" \
+        "sed -i.bak '/^ut-console:8443\$/d' test/allowed-ports.txt"
+
+    discriminates "a console port a service publishes too" \
+        "console-port-taken:8443" \
+        "printf 'services:\n  caddy:\n    ports:\n      - \"8443:8443\"\n' > compose.port.yaml"
+fi
+
 if grep -q 'check_the_recorder_is_bounded' "$REPO_ROOT/test/invariants.sh"; then
     discriminates "the recorder kept by age alone" \
         "recorder-unbounded-in-size" \
@@ -385,6 +431,108 @@ ingress_discriminates() {
         FAILURES+=("$description")
     fi
 }
+
+# A guard written in Go is seen failing by its own test, on a copy where it is
+# broken, in the Go that go.mod names: this needs Docker, not Go. The build cache
+# lasts the run, so the standard library is compiled once.
+go_discriminates() {
+    local description=$1 expected=$2 mutation=$3
+    fresh_copy
+    ( cd "$COPY" && eval "$mutation" ) >/dev/null 2>&1
+    find "$COPY" -name '*.bak' -delete 2>/dev/null
+
+    local output
+    output=$(docker run --rm --network none -e GOTOOLCHAIN=local \
+        -v "$COPY":/src:ro -v "$WORK_DIR/go-cache":/root/.cache -w /src \
+        "$GO_IMAGE" go test -count=1 -run "^${expected}\$" ./... 2>&1)
+
+    if grep -qF -- "--- FAIL: ${expected} " <<< "$output"; then
+        printf '  %s✔%s %s\n' "$GREEN" "$NC" "$description"
+        PASSED=$((PASSED + 1))
+    else
+        printf '  %s✘%s %s\n' "$RED" "$NC" "$description"
+        printf '%s      %s was expected to fail and did not:%s\n' "$DIM" "$expected" "$NC"
+        printf '%s      %s%s\n' "$DIM" "$(tail -4 <<< "$output" | tr '\n' ' ')" "$NC"
+        FAILED=$((FAILED + 1))
+        FAILURES+=("$description")
+    fi
+}
+
+if [[ -d "$REPO_ROOT/cmd/ut-agent" ]]; then
+    printf '\n%sThe console and its agent, seen failing%s\n\n' "$BOLD" "$NC"
+
+    go_discriminates "an agent that answers a route outside its list" \
+        "TestARouteOrMethodOutsideTheListIsRefusedRunsNothingAndIsNoted" \
+        "sed -i.bak 's|a.refuse(rw, r, printable(r.Method+\" \"+r.URL.Path, maxDetailLength))|a.status(rw, r)|' cmd/ut-agent/agent.go"
+
+    go_discriminates "an agent that reads the logs of a service the box does not run" \
+        "TestAServiceTheBoxDoesNotRunHasNoLogsRead" \
+        "sed -i.bak 's|if !slices.Contains(services, service) {|if service == \"\" {|' cmd/ut-agent/agent.go"
+
+    go_discriminates "an agent that reads more lines than its bound" \
+        "TestTheLinesAskedForAreBounded" \
+        "sed -i.bak 's|maxLogLines *= 500\$|maxLogLines = 5000|' cmd/ut-agent/agent.go"
+
+    go_discriminates "a status that sends a report while it reads" \
+        "TestTheStatusIsReadWithReadOnlyCommandsOnly" \
+        "sed -i.bak 's|a.answer(\"ut-send\", \"status\")|a.answer(\"ut-send\", \"send\")|' cmd/ut-agent/status.go"
+
+    go_discriminates "an agent that writes down a value a request sent" \
+        "TestAValueSentIsNeverWrittenBackToTheActivity" \
+        "sed -i.bak 's|\"GET /v1/logs: a service this box does not run\"|\"GET /v1/logs: \"+service|' cmd/ut-agent/agent.go"
+
+    go_discriminates "a console allowed to write any line in the activity" \
+        "TestTheConsoleWritesOnlyTheLinesItMay" \
+        "sed -i.bak 's/ || !note.valid()//' cmd/ut-agent/agent.go"
+
+    go_discriminates "an activity other accounts can read" \
+        "TestTheActivityFileIsReadableByRootAlone" \
+        "sed -i.bak 's|os.O_CREATE, 0o600)|os.O_CREATE, 0o644)|' cmd/ut-agent/activity.go"
+
+    go_discriminates "a console key other accounts can read" \
+        "TestTheConsoleCertificateIsSignedByTheRootBrowsersAlreadyTrust" \
+        "sed -i.bak 's|bundleMode *= 0o640\$|bundleMode = 0o644|' cmd/ut-agent/certificate.go"
+
+    go_discriminates "a console certificate renewed on its last day" \
+        "TestACertificateIsRenewedTenDaysBeforeItEnds" \
+        "sed -i.bak 's|renewWithin *= 10 \\* 24|renewWithin = 1 * 24|' cmd/ut-agent/certificate.go"
+
+    go_discriminates "a console that shows the box without a session" \
+        "TestNothingIsShownWithoutASession" \
+        "sed -i.bak 's|if !c.signedIn(r) {|if c.now().IsZero() {|' cmd/ut-console/console.go"
+
+    go_discriminates "a console that answers a request naming another host" \
+        "TestARequestNamingAnotherHostIsRefused" \
+        "sed -i.bak 's|if r.Host != c.host {|if r.Host == \"\" {|' cmd/ut-console/console.go"
+
+    go_discriminates "a console that takes a post from another origin" \
+        "TestAPostFromAnotherOriginIsRefused" \
+        "sed -i.bak 's|r.Header.Get(\"Origin\") != \"https://\"+r.Host|r.Header.Get(\"Origin\") == \"never\"|' cmd/ut-console/console.go"
+
+    go_discriminates "a console that lets a sixth wrong password through" \
+        "TestTheSixthAttemptAfterFiveWrongPasswordsIsBlockedAndNoted" \
+        "sed -i.bak 's|maxFailures *= 5\$|maxFailures = 50|' cmd/ut-console/console.go"
+
+    go_discriminates "a session cookie a script can read" \
+        "TestTheSessionCookieIsHostOnlySecureHttpOnlyAndStrict" \
+        "sed -i.bak 's|Value: token, Path: \"/\", Secure: true, HttpOnly: true|Value: token, Path: \"/\", Secure: true|' cmd/ut-console/console.go"
+
+    go_discriminates "pages another site may frame" \
+        "TestEveryAnswerCarriesThePolicy" \
+        "sed -i.bak \"s|; frame-ancestors 'none'||\" cmd/ut-console/console.go"
+
+    go_discriminates "a session that outlives eight hours" \
+        "TestASessionEndsAfterFifteenIdleMinutesOrEightHours" \
+        "sed -i.bak 's|sessionLimit *= 8 \\* time.Hour|sessionLimit = 80 * time.Hour|' cmd/ut-console/console.go"
+
+    go_discriminates "a sign-in let through though the activity could not keep it" \
+        "TestASignInTheActivityCannotKeepLetsNobodyIn" \
+        "sed -i.bak 's|if err := c.note(r.Context(), \"sign-in\", \"ok\"); err != nil {|if err := c.note(r.Context(), \"sign-in\", \"ok\"); err == errors.ErrUnsupported {|' cmd/ut-console/console.go"
+
+    go_discriminates "a password taken as an argument" \
+        "TestThePasswordIsHashedFromTheStandardInputOnly" \
+        "sed -i.bak 's|if len(args) != 1 {|if len(args) == 2 { stdin = strings.NewReader(args[1]) } else if len(args) != 1 {|' cmd/ut-console/main.go"
+fi
 
 printf '\n%sCapabilities, seen failing%s\n\n' "$BOLD" "$NC"
 
@@ -858,6 +1006,22 @@ if [[ -x "$REPO_ROOT/packaging/build-deb.sh" ]]; then
     capability_discriminates "a package that leaves ut-send's builds behind" \
         "it carries ut-send for both architectures" \
         "sed -i.bak '/stage_builds_of \"\$root\" ut-send/d' packaging/build-deb.sh"
+
+    capability_discriminates "a package that leaves ut-agent's builds behind" \
+        "it carries ut-agent for both architectures" \
+        "sed -i.bak '/stage_builds_of \"\$root\" ut-agent/d' packaging/build-deb.sh"
+
+    capability_discriminates "a package that leaves ut-console's builds behind" \
+        "it carries ut-console for both architectures" \
+        "sed -i.bak '/stage_builds_of \"\$root\" ut-console/d' packaging/build-deb.sh"
+
+    capability_discriminates "a package upgrade that leaves the console on its old programs" \
+        "an upgrade restarts the console" \
+        "sed -i.bak '/systemctl try-restart ut-agent.service ut-console.service/d' packaging/build-deb.sh"
+
+    capability_discriminates "a package removal that leaves the console running" \
+        "an upgrade restarts the console" \
+        "sed -i.bak 's|^    systemctl disable --now ut-console.service ut-agent.service|    true|' packaging/build-deb.sh"
 
     capability_discriminates "a size read off the block count" \
         "the installed size does not come from a block count" \
@@ -1592,6 +1756,32 @@ if grep -q 'if ! terminal_is_reachable' "$REPO_ROOT/bin/ut-install"; then
     install_walk_discriminates "an install that finishes without saying where the secrets are" \
         "the secrets can be found afterwards" \
         "sed -i.bak 's|^        log_info \"No terminal here.*$|        :|' bin/ut-install"
+fi
+
+if grep -q 'show_and_keep_a_console_password' "$REPO_ROOT/bin/ut-install"; then
+    install_walk_discriminates "a console password kept in clear" \
+        "its password is drawn on a terminal, shown once, and only its hash is kept" \
+        "sed -i.bak 's|\"\$hash\" > \"\$kept\"|\"\$password\" > \"\$kept\"|' bin/ut-install"
+
+    install_walk_discriminates "a console password handed to ut-console as an argument" \
+        "its password is drawn on a terminal, shown once, and only its hash is kept" \
+        "sed -i.bak 's|\"\$UT_CONSOLE\" hash-password)|\"\$UT_CONSOLE\" hash-password \"\$password\")|' bin/ut-install"
+
+    install_walk_discriminates "a console password copied into the install log" \
+        "its password is drawn on a terminal, shown once, and only its hash is kept" \
+        "sed -i.bak 's|\"\$NC\" \"\$password\" > /dev/tty|\"\$NC\" \"\$password\" \\| tee -a \"\$LOG_FILE\" > /dev/tty|' bin/ut-install"
+
+    install_walk_discriminates "a console account with a shell" \
+        "its account has no shell and no group but its own" \
+        "sed -i.bak 's|--shell /usr/sbin/nologin \"\$CONSOLE_USER\"|--shell /bin/bash \"\$CONSOLE_USER\"|' bin/ut-install"
+
+    install_walk_discriminates "an update that draws a new console password" \
+        "an update keeps its password, and shows none" \
+        "sed -i.bak 's|^the_console_has_no_password_yet() {\$|the_console_has_no_password_yet() { return 0|' bin/ut-install"
+
+    install_walk_discriminates "a console password drawn with no terminal to show it on" \
+        "no console password is drawn for nobody to see" \
+        "sed -i.bak '/^print_the_console_password_once() {\$/,/^}\$/ s|if ! terminal_is_reachable; then|if false; then|' bin/ut-install"
 fi
 
 if grep -q 'looks_like_a_checkout' "$REPO_ROOT/bin/ut-install"; then

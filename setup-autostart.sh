@@ -9,6 +9,11 @@
 #                             derived from UT_DOMAIN in .env. Installed only
 #                             when UT_DOMAIN ends in .local; on a real domain
 #                             the names come from the operator's own DNS.
+#   ut-agent.service        - answers the console's questions about this box,
+#                             as root, on a socket only the console can open
+#   ut-console.service      - the administration console, on port 8443, as the
+#                             ut-console account; installed once ut-install has
+#                             created that account
 #
 # It does not pull images, create stack resources, or start anything. Deploy
 # the stack the normal way (docker compose pull && docker compose up -d); this
@@ -33,6 +38,11 @@ MDNS_SERVICE_NAME="ut-mdns-alias"
 MDNS_SERVICE_FILE="/etc/systemd/system/${MDNS_SERVICE_NAME}.service"
 MDNS_HELPER="/usr/local/bin/ut-mdns-alias"
 MDNS_DEFAULTS="/etc/default/ut-mdns-alias"
+AGENT_UNIT_NAME="ut-agent"
+AGENT_SERVICE_FILE="/etc/systemd/system/${AGENT_UNIT_NAME}.service"
+CONSOLE_UNIT_NAME="ut-console"
+CONSOLE_SERVICE_FILE="/etc/systemd/system/${CONSOLE_UNIT_NAME}.service"
+CONSOLE_USER="ut-console"
 DOCKER_BIN=""
 
 if [[ -t 1 ]]; then
@@ -834,6 +844,87 @@ UNIT_EOF
     fi
 }
 
+# Beside the stack rather than behind Caddy, on a port of its own: the console
+# has to answer when the stack does not. Restarted only when a unit changed;
+# the package restarts both when it replaces their programs.
+install_console() {
+    local agent console domain changed=false action=start
+    agent="$(command -v ut-agent || true)"
+    console="$(command -v ut-console || true)"
+    if [[ -z "$agent" || -z "$console" ]]; then
+        log_warn "ut-agent or ut-console not found — the administration console is not installed"
+        return 0
+    fi
+    if ! id -u "$CONSOLE_USER" &>/dev/null; then
+        log_warn "No $CONSOLE_USER account yet — ut-install creates it; the console is not installed"
+        return 0
+    fi
+    domain="$(env_value UT_DOMAIN)"; domain="${domain:-understand.local}"
+    if [[ ! "$domain" =~ ^[A-Za-z0-9.-]+$ ]]; then
+        log_warn "UT_DOMAIN=\"$domain\" is not a name the console can answer on — it is not installed"
+        return 0
+    fi
+
+    log_step "Installing the administration console..."
+    if sed -e "s|@AGENT@|${agent}|g" -e "s|@INSTALL_DIR@|${INSTALL_DIR}|g" << 'UNIT_EOF' | write_file_atomic "$AGENT_SERVICE_FILE" 644
+[Unit]
+Description=UnderstandTech agent, what the administration console may ask this machine
+After=docker.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=@AGENT@ --dir @INSTALL_DIR@ --group ut-console
+RuntimeDirectory=ut-agent
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+UNIT_EOF
+    then
+        changed=true
+    fi
+    if sed -e "s|@CONSOLE@|${console}|g" -e "s|@DOMAIN@|${domain}|g" << 'UNIT_EOF' | write_file_atomic "$CONSOLE_SERVICE_FILE" 644
+[Unit]
+Description=UnderstandTech administration console, on port 8443
+After=ut-agent.service network-online.target
+Wants=ut-agent.service network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=ut-console
+Group=ut-console
+ExecStart=@CONSOLE@ serve --domain @DOMAIN@ --port 8443
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
+UNIT_EOF
+    then
+        changed=true
+    fi
+    if $changed; then
+        systemctl daemon-reload
+        action=restart
+    fi
+    systemctl enable "$AGENT_UNIT_NAME" "$CONSOLE_UNIT_NAME" >/dev/null 2>&1 \
+        || log_warn "Could not enable $AGENT_UNIT_NAME and $CONSOLE_UNIT_NAME — the console will not start on boot"
+    if systemctl "$action" "$AGENT_UNIT_NAME" "$CONSOLE_UNIT_NAME"; then
+        log_info "The administration console answers at https://${domain}:8443"
+    else
+        log_warn "The console did not start. Check: journalctl -u $AGENT_UNIT_NAME -u $CONSOLE_UNIT_NAME -n 50"
+    fi
+}
+
 # compose.appbuilder.yaml declares the 'proxy' network external, because the
 # generated apps join it from their own compose projects — so no single project
 # owns it, and nothing creates it on the way up. Without it `docker compose up`
@@ -866,6 +957,7 @@ do_install() {
     install_service
     install_status_timer
     install_mdns_alias
+    install_console
     install_proxy_network
 
     echo ""
@@ -892,7 +984,7 @@ do_uninstall() {
 
     check_root
 
-    if [[ ! -f "$SERVICE_FILE" && ! -f "$MDNS_SERVICE_FILE" && ! -f "$STATUS_TIMER_FILE" ]]; then
+    if [[ ! -f "$SERVICE_FILE" && ! -f "$MDNS_SERVICE_FILE" && ! -f "$STATUS_TIMER_FILE" && ! -f "$CONSOLE_SERVICE_FILE" ]]; then
         log_warn "Service file not found - nothing to remove"
         exit 0
     fi
@@ -919,6 +1011,12 @@ do_uninstall() {
         systemctl stop "$MDNS_SERVICE_NAME" 2>/dev/null || true
         systemctl disable "$MDNS_SERVICE_NAME" 2>/dev/null || true
         rm -f "$MDNS_SERVICE_FILE" "$MDNS_HELPER"
+    fi
+
+    if [[ -f "$CONSOLE_SERVICE_FILE" || -f "$AGENT_SERVICE_FILE" ]]; then
+        log_step "Removing the administration console..."
+        systemctl disable --now "$CONSOLE_UNIT_NAME" "$AGENT_UNIT_NAME" 2>/dev/null || true
+        rm -f "$CONSOLE_SERVICE_FILE" "$AGENT_SERVICE_FILE"
     fi
 
     log_step "Reloading systemd daemon..."
@@ -958,6 +1056,12 @@ do_status() {
     if [[ -f "$MDNS_SERVICE_FILE" ]]; then
         echo -e "${GREEN}mDNS Alias Service:${NC}"
         systemctl status "$MDNS_SERVICE_NAME" --no-pager 2>/dev/null || true
+        echo ""
+    fi
+
+    if [[ -f "$CONSOLE_SERVICE_FILE" ]]; then
+        echo -e "${GREEN}Administration Console:${NC}"
+        systemctl status "$AGENT_UNIT_NAME" "$CONSOLE_UNIT_NAME" --no-pager 2>/dev/null || true
         echo ""
     fi
 

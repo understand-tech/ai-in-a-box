@@ -394,15 +394,22 @@ first: the initial admin password opens the
 [first-run wizard](first-run-configuration.md) there. An inference engine still
 loading is named on an `Inference` line.
 
-Two secrets are shown **once**, on the terminal and not in the log:
+Three secrets are shown **once**, on the terminal and not in the log:
 
 - the **initial admin password**;
-- the **backup password** (`BACKUP_FILES_PASSWORD`).
+- the **backup password** (`BACKUP_FILES_PASSWORD`);
+- the **console password**, for the [administration console](console.md) at
+  `https://<your-domain>:8443`, account `admin`. The box keeps only its hash.
 
 Losing the backup password makes every snapshot unreadable — including the
 remote ones, including the certificate authority's root. There is no recovery
 path. Put it wherever your organisation keeps such things before closing the
 terminal.
+
+The console password is the only one of the three that is never written down
+on the box: an install with no terminal, through the page `ut-setup` opens or
+unattended, draws none and says so. `sudo ut-install --reset-console-password`
+gives the console one, in a terminal, whenever it is needed.
 
 ## 7 · Verify
 
@@ -471,7 +478,8 @@ reinstallable in a minute.
 | `--license-file PATH` | Read the license key from a file instead of a prompt. |
 | `--machine-file PATH` | The license file UnderstandTech sent for a machine that cannot reach Keygen. Checked with no network, then kept. |
 | `--skip-pull` | Images are already on the machine. The license file this machine keeps is still checked; the registry is not contacted. A first install activates the license through Keygen, or takes `--machine-file`. |
-| `--no-autostart` | Do not install the boot service. |
+| `--no-autostart` | Do not install the boot service, nor the administration console. |
+| `--reset-console-password` | Draw a new password for the [administration console](console.md), show it once, close its sessions. Changes nothing else. |
 | `--dir PATH` | Another release directory. Defaults to `/usr/share/understandtech`. |
 | `--health-timeout N` | Longer than 3600 s if the machine is slow to load models. |
 
