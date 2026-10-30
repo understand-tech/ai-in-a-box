@@ -15,6 +15,9 @@ SERIAL_FILES='/sys/class/dmi/id/product_serial /sys/class/dmi/id/board_serial'
 MACHINE_ID_FILE='/etc/machine-id'
 
 CONTACT='contact@understand.tech'
+# A license file checked right after Keygen issues it can still look like it
+# came from the future — the two clocks do not have to disagree, only to differ
+# by a few seconds. Without this, that machine would fail its own fresh license.
 CLOCK_TOLERANCE_SECONDS=300
 MACHINE_FILE_SECONDS=31556952
 

@@ -1986,6 +1986,8 @@ prepare_a_portainer
 run_install_from_state bare
 PULL_EXIT=0 run_install_from_state install_runs_through
 PULL_EXIT=0 run_install_from_state compute_node_runs_through
+# state_setup only fabricates the checkout: without INSTALL_COMMAND too, the
+# harness still runs the packaged ut-install from $PATH, and never reads it.
 INSTALL_COMMAND=/srv/clone/bin/ut-install \
     run_install_from_state launched_from_a_checkout
 INSTALL_COMMAND=/srv/clone/bin/ut-install \
