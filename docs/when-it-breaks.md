@@ -108,6 +108,13 @@ authority changed. See [certificates and DNS](certificates-and-dns.md).
 does not catch it — docker creates a directory where the missing fragment
 should be. `sudo ./setup-autostart.sh --check` is what catches it.
 
+**A new model was chosen, but NIM keeps serving the old one.** On its first
+start NIM writes `nim_runtime_manifest.yaml` into its cache volume
+(`nim-llm-cache`) and replays it on every later start without comparing it to
+what was asked for — by design, so it can restart offline. `/v1/models` names
+the workspace, not the model. Check the manifest's own `model:` line, or clear
+the cache volume, to actually change it.
+
 ## In service
 
 **A service stays unhealthy.** Read its log first. The inference engines are the
