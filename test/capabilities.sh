@@ -2799,7 +2799,12 @@ the_repository_sits_on_a_disk_of_its_own() {
 
     touch "$disk/${marker#"$target"/}"
     run_on_the_disk >/dev/null || { echo "the backup failed on the mounted disk"; return 1; }
-    [[ -f "$disk/${repository#"$target"/}/config" ]] || { echo "no repository on the disk"; return 1; }
+    # restic keeps its repository readable by root alone: it is read back from a
+    # container, as the destination is, not from the runner's account.
+    docker run --rm -v "$disk":/only-the-disk:ro \
+        -e RESTIC_REPOSITORY="/only-the-disk/${repository#"$target"/}" -e RESTIC_PASSWORD=capability-test \
+        "$RESTIC_IMAGE" snapshots --no-lock --json 2>/dev/null | grep -q '"time"' \
+        || { echo "no snapshot readable on the disk alone"; return 1; }
 }
 
 the_network_destination_gets_a_way_out_of_its_own() {
