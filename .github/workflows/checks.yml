@@ -15,6 +15,30 @@ permissions:
 # x86 leg keeps the bare name it had before the matrix existed. Renaming it
 # would leave a pull request waiting forever on a check that no longer reports.
 jobs:
+  # The suites read README.md and docs/first-run-configuration.md, so only the
+  # rest of docs/ and mkdocs.yml are a change they cannot break. Their jobs still
+  # run with every step skipped: branch protection waits on their exact names.
+  changes:
+    name: what the change touches
+    runs-on: ubuntu-24.04
+    outputs:
+      beyond-docs: ${{ steps.diff.outputs.beyond-docs }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if git cat-file -e "${BASE}^{commit}" 2>/dev/null \
+              && git diff --quiet "$BASE" HEAD -- . ':!docs' ':!mkdocs.yml' \
+              && git diff --quiet "$BASE" HEAD -- docs/first-run-configuration.md; then
+            echo "beyond-docs=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "beyond-docs=true" >> "$GITHUB_OUTPUT"
+          fi
+
   invariants:
     name: repository invariants${{ matrix.suffix }}
     runs-on: ${{ matrix.runner }}
@@ -34,20 +58,28 @@ jobs:
   # both architectures the package carries, so a release cannot fail to compile.
   ut-send:
     name: ut-send builds and passes its tests
+    needs: changes
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - if: needs.changes.outputs.beyond-docs == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - if: needs.changes.outputs.beyond-docs == 'true'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: false
-      - run: go vet ./...
-      - run: go test ./...
-      - run: test -z "$(gofmt -l .)"
-      - run: ./packaging/build-ut-send.sh
+      - if: needs.changes.outputs.beyond-docs == 'true'
+        run: go vet ./...
+      - if: needs.changes.outputs.beyond-docs == 'true'
+        run: go test ./...
+      - if: needs.changes.outputs.beyond-docs == 'true'
+        run: test -z "$(gofmt -l .)"
+      - if: needs.changes.outputs.beyond-docs == 'true'
+        run: ./packaging/build-ut-send.sh
 
   capabilities:
     name: capabilities${{ matrix.suffix }}
+    needs: changes
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -58,14 +90,17 @@ jobs:
           - runner: ubuntu-24.04-arm
             suffix: " on arm64"
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: ./test/capabilities.sh
+      - if: needs.changes.outputs.beyond-docs == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - if: needs.changes.outputs.beyond-docs == 'true'
+        run: ./test/capabilities.sh
 
   # The only suite that reaches a service actually running. It can, because the
   # front door is caddy:2-alpine — public — and stubs answer for the eight
   # upstreams. The application images stay out of reach of any runner.
   ingress:
     name: the front door actually serves${{ matrix.suffix }}
+    needs: changes
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -76,11 +111,14 @@ jobs:
           - runner: ubuntu-24.04-arm
             suffix: " on arm64"
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: ./test/ingress.sh
+      - if: needs.changes.outputs.beyond-docs == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - if: needs.changes.outputs.beyond-docs == 'true'
+        run: ./test/ingress.sh
 
   migration:
     name: an existing install survives the upgrade${{ matrix.suffix }}
+    needs: changes
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -91,9 +129,12 @@ jobs:
           - runner: ubuntu-24.04-arm
             suffix: " on arm64"
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - if: needs.changes.outputs.beyond-docs == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - run: ./test/migration.sh
+      - if: needs.changes.outputs.beyond-docs == 'true'
+        run: ./test/migration.sh
       - name: from the last version of the package
+        if: needs.changes.outputs.beyond-docs == 'true'
         run: MIGRATION_FROM="$(git describe --tags --abbrev=0 --match 'v*')" ./test/migration.sh
