@@ -1,0 +1,19 @@
+name: ${COMPOSE_PROJECT_NAME:-understandtech}
+
+# Overlay for the repository on the machine kept on a disk of its own, so that a
+# backup can neither fill the disk the platform runs on nor die with it.
+#
+#   BACKUP_LOCAL_DIR=/srv/backup
+#
+# ut-install adds it to COMPOSE_FILE when BACKUP_LOCAL_DIR is set, and writes the
+# marker once it has checked the directory is not on the root disk nor on the one
+# holding DATA_ROOT. The variable carries no ${...:?} guard on purpose: the test
+# suites read every such guard as a setting all installs require.
+
+services:
+  files-backup:
+    environment:
+      RESTIC_REPOSITORY: /local/restic
+      BACKUP_LOCAL_MARKER: /local/.understandtech-backup-local
+    volumes:
+      - ${BACKUP_LOCAL_DIR}:/local

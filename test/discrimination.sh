@@ -29,7 +29,7 @@ fresh_copy() {
     rm -rf "$COPY"
     mkdir -p "$COPY"
     ( cd "$REPO_ROOT" && tar -cf - release.env compose.yaml compose.appbuilder.yaml \
-        compose.compute.yaml compose.no-gpu.yaml compose.arbiter.yaml compose.arbiter-link.yaml compose.backup-mount.yaml compose.backup-network.yaml compose.backup-relay.yaml compose.remote-inference.yaml compose.engine-vllm.yaml models \
+        compose.compute.yaml compose.no-gpu.yaml compose.arbiter.yaml compose.arbiter-link.yaml compose.backup-mount.yaml compose.backup-local.yaml compose.backup-network.yaml compose.backup-relay.yaml compose.remote-inference.yaml compose.engine-vllm.yaml models \
         Caddyfile caddy metrics backup-files.sh \
         setup-autostart.sh bin go.mod cmd appbuilder docs \
         packaging README.md test .github 2>/dev/null ) | tar -xf - -C "$COPY" 2>/dev/null
@@ -1186,6 +1186,14 @@ capability_discriminates "the repository left on the machine's own disk" \
 capability_discriminates "a backup written where nothing is mounted" \
     "not mounted is refused" \
     "sed -i.bak 's/\\[ -e \"\\\$BACKUP_DESTINATION_MARKER\" \\]/true/' backup-files.sh"
+
+capability_discriminates "a backup that writes whatever the free space" \
+    "never fills the disk it shares" \
+    "sed -i.bak '/step check-free-space/d' backup-files.sh"
+
+capability_discriminates "a repository written to a disk of its own that is not mounted" \
+    "written there once it is mounted, and not before" \
+    "sed -i.bak 's/\\[ -e \"\\\$BACKUP_LOCAL_MARKER\" \\]/true/' backup-files.sh"
 
 capability_discriminates "a guide that restores a foreign database whole" \
     "restored on another machine, as the guide says" \

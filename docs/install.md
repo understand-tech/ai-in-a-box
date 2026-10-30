@@ -51,6 +51,11 @@ engine is installed here.
 ## What you need first
 
 - A machine with Docker 24 or newer and Compose v2, 250 GB free, 24 GB of RAM.
+- If the machine has more than one data disk, one of them for the backup
+  repository, mounted before the install — see
+  [a disk of its own](configuration.md#the-repository-on-a-disk-of-its-own).
+  A machine with one disk works as well: the backup then never writes past
+  `BACKUP_MIN_FREE_PERCENT` of free space.
 - The license key UnderstandTech issued for the machine. The first install
   activates it through `api.keygen.sh`; a machine that cannot reach it gets its
   license file from UnderstandTech instead, as section 5 says.

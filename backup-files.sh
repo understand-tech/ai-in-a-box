@@ -13,6 +13,7 @@ STATUS_FILE="${DUMP_DIR}/.understandtech-backup-status.json"
 KEEP_DAILY="${BACKUP_FILES_KEEP_DAILY:-7}"
 KEEP_WEEKLY="${BACKUP_FILES_KEEP_WEEKLY:-4}"
 KEEP_MONTHLY="${BACKUP_FILES_KEEP_MONTHLY:-6}"
+MIN_FREE_PERCENT="${BACKUP_MIN_FREE_PERCENT:-10}"
 HEALTHY_FOR_MINUTES=$(( 26 * 60 ))
 
 log() { echo "$(date -u '+%Y-%m-%d %H:%M:%S') [files-backup] $*"; }
@@ -21,6 +22,26 @@ on() {
     local repository=$1
     shift
     RESTIC_REPOSITORY="$repository" restic --retry-lock 30m "$@"
+}
+
+the_local_disk_is_mounted() {
+    [ -z "${BACKUP_LOCAL_MARKER:-}" ] || [ -e "$BACKUP_LOCAL_MARKER" ]
+}
+
+# On a disk shared with the platform, a backup that fills it stops the database
+# and every service with it: below the floor, nothing is written.
+the_local_disk_has_room() {
+    local directory free_percent
+    if ! the_local_disk_is_mounted; then
+        log "the disk for the repository is not mounted: ${BACKUP_LOCAL_MARKER} is missing, nothing written"
+        return 1
+    fi
+    directory=$(dirname "$LOCAL_REPOSITORY")
+    free_percent=$(df -P "$directory" | awk 'NR == 2 { sub("%", "", $5); print 100 - $5 }')
+    if [ "$free_percent" -lt "$MIN_FREE_PERCENT" ]; then
+        log "only ${free_percent}% of the disk that holds ${LOCAL_REPOSITORY} is free, under BACKUP_MIN_FREE_PERCENT=${MIN_FREE_PERCENT}: nothing written"
+        return 1
+    fi
 }
 
 the_destination_is_mounted() {
@@ -131,6 +152,7 @@ run_the_steps() {
     if [ -n "$DESTINATION" ] && the_destination_is_mounted; then
         template=$DESTINATION
     fi
+    step check-free-space the_local_disk_has_room || return 1
     step open-local-repository open "$LOCAL_REPOSITORY" "$template" || return 1
     step back-up back_up || return 1
     log "applying retention"
