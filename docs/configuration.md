@@ -284,16 +284,28 @@ contents too — nothing does it for you.
 ```bash
 BACKUP_BEGIN="+0"              # at startup; an HHMM value waits for that hour
 BACKUP_INTERVAL="1440"         # minutes
+BACKUP_FILES_AT="0 3 * * *"    # cron; "0 */4 * * *" runs every four hours
 BACKUP_FILES_KEEP_DAILY="7"
 BACKUP_FILES_KEEP_WEEKLY="4"
 BACKUP_FILES_KEEP_MONTHLY="6"
+BACKUP_DESTINATION_RETENTION="appliance"   # or "owner"
 ```
+
+Every run of the last day is kept, however many `BACKUP_FILES_AT` makes; older
+ones thin out to one a day, a week, a month. `owner` leaves the destination's
+retention to whoever runs it, for a destination that refuses deletions — see
+[backing up](backup.md#what-the-destination-has-to-provide).
 
 ### Sending backups off the machine
 
 **The default keeps everything on the machine it protects** — the `restic`
 repository sits in the same volume as the database archives. Against a disk
 failure, a theft or a fire, that is no protection at all.
+
+A destination does not replace that repository: each run writes there first,
+then copies it to the destination. A restore reads the one on the machine
+without waiting on the network, and the destination is the copy that outlives
+the machine. The repository on the machine takes room on its disk.
 
 #### To a disk the host mounts
 
@@ -315,16 +327,17 @@ the one holding `DATA_ROOT`: that is a mount point with nothing mounted yet, and
 a backup written there dies with the machine. Once it has checked, it writes
 `.understandtech-backup-destination` into the directory.
 
-**Before every run, the backup looks for that file.** When the share is not
-mounted, it writes nothing, says so in its log, and its health check turns red.
+**Before every copy, the backup looks for that file.** When the share is not
+mounted, it copies nothing there, says so in its log, and its health check
+turns red; the repository on the machine still gets its run.
 An update that finds it unmounted says so too, and carries on:
 
 ```bash
 docker compose logs files-backup | grep 'not mounted'
 ```
 
-The first run creates the repository on the destination and copies everything;
-later runs copy only what changed. The database archives stay on the machine as
+The first run creates the repository on the destination and copies everything
+into it; later runs copy only what changed. The database archives stay on the machine as
 well, where they always were.
 
 To keep the backup on the machine again, empty `BACKUP_FILES_DESTINATION` and
@@ -392,12 +405,12 @@ The first run creates the repository and uploads everything; later runs send
 only what changed. Check it arrived:
 
 ```bash
-docker exec ut-files-backup restic snapshots
+docker exec ut-files-backup sh -c 'restic -r "$BACKUP_DESTINATION_REPOSITORY" snapshots'
 ```
 
 When the destination does not answer, or when `BACKUP_FILES_PASSWORD` does not
-open the repository there, the backup writes nothing and says which, by name, in
-its log:
+open the repository there, the backup copies nothing, says which, by name, in
+its log, and its health check turns red:
 
 ```bash
 docker compose logs files-backup | grep -E 'cannot reach|does not open'

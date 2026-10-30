@@ -98,16 +98,18 @@ checked. The appliance provides part of it; the destination provides the rest.
 
 | | Provided by the appliance | Required of the destination |
 |---|---|---|
-| **3 copies** | the live data | the `restic` repository, and the copy its owner keeps of it |
+| **3 copies** | the live data, and the `restic` repository on the machine | the copy of that repository the appliance sends it |
 | **2 media** | the machine's own disk | another one: a NAS, an S3 bucket, an SFTP server |
-| **1 off the site** | — | that copy, outside the building the machine is in |
+| **1 off the site** | — | the destination, outside the building the machine is in |
 | **1 immutable** | — | snapshots of the destination taken by its owner, that the appliance cannot delete |
 | **0 errors** | `restic check` after every run | a restore exercise, as in [restoring](restore.md) |
 
-**A destination off the machine is mandatory.** The default keeps the
-repository in the same volume as the dumps, which protects against nothing that
-destroys the machine; [configure one](configuration.md#sending-backups-off-the-machine)
-before the appliance holds data that matters.
+**A destination off the machine is mandatory.** Each run writes to a
+repository on the machine, in the same volume as the dumps, then copies it to
+the destination. Without a destination, nothing protects against what destroys
+the machine; [configure one](configuration.md#sending-backups-off-the-machine)
+before the appliance holds data that matters. The repository on the machine is
+what a restore reads first: it does not wait on the network.
 
 **The immutable copy is the destination's job.** The machine holds the
 credentials of its destination: an attacker who controls the machine can delete
@@ -116,10 +118,15 @@ files at the next run. Snapshots taken on the NAS, or on the server, by its
 owner protect against both.
 
 A destination that refuses deletion itself — a `rest-server` in
-`--append-only` mode, or an S3 bucket with object lock — also refuses the
-retention the appliance applies after each run: the run writes its snapshot,
-then fails at `restic forget`. Retention then belongs to the destination's
-owner.
+`--append-only` mode, or an S3 bucket with object lock — refuses the retention
+the appliance would apply there. Leave it to the destination's owner, in
+`/etc/understandtech/local.env`:
+
+```bash
+BACKUP_DESTINATION_RETENTION="owner"
+```
+
+The repository on the machine keeps its retention either way.
 
 ## The two secrets kept away from the machine
 
@@ -154,18 +161,23 @@ For each appliance, name a person for each line:
 
 | When | What | How |
 |---|---|---|
-| At install | the destination is configured, the first snapshot is there | `docker exec ut-files-backup restic snapshots` |
+| At install | the destination is configured, the first copy is there | `docker exec ut-files-backup cat /backup/.understandtech-backup-status.json` reads `"destination":"copied"` |
 | At install | both secrets are in escrow | the [escrow check](#the-two-secrets-kept-away-from-the-machine) |
-| Every day | both backup services are healthy | `docker compose ps mongodb-backup files-backup` |
-| Every week | every run of the week ended with `done`, none with `nothing written` | the log of `files-backup`, below |
+| Every day | both backup services are healthy — `files-backup` only when its last run reached the destination, less than 26 hours ago | `docker compose ps mongodb-backup files-backup` |
+| Every week | every run of the week ended with `done`, none with `failed at` | the log of `files-backup`, below |
 | Every quarter | a restore, end to end | [restoring](restore.md), on a machine other than the one in service |
 | Every year | the escrowed password opens the repository | the [escrow check](#the-two-secrets-kept-away-from-the-machine) |
 
 The commands run from `/usr/share/understandtech`. The week's runs:
 
 ```bash
-docker compose logs --since 168h files-backup | grep -E '\[files-backup\] (done|.*nothing written)'
+docker compose logs --since 168h files-backup | grep -E '\[files-backup\] (done|failed at)'
 ```
+
+The last run's outcome is in `/backup/.understandtech-backup-status.json`
+inside `ut-files-backup`: when it started and ended, its result, the step it
+failed at, and whether it reached the destination (`copied`, `failed`,
+`not-mounted`, or `none` without a destination).
 
 **Keep a log of every check**: the date, the person, the snapshot it looked at,
 the result, and what was done when it failed. An audit reads that log, not this

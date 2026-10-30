@@ -11,8 +11,8 @@ that is what it actually printed.
 <!-- Scope: what the two backup services produce, and what a restore reads.
      Not the retention rules. -->
 <!-- Source of truth: compose.yaml:213-298, compose.backup-mount.yaml, compose.backup-relay.yaml, compose.backup-network.yaml -->
-<!-- Date: 2026-10-13 -->
-<!-- Target: github — status of "flowchart": rendered -->
+<!-- Date: 2026-10-30 -->
+<!-- Target: github — status of "flowchart": rendered before 2026-10-30; this version not seen rendered -->
 
 ```mermaid
 flowchart LR
@@ -22,16 +22,16 @@ flowchart LR
     DATAROOT["DATA_ROOT - documents, App Builder projects"]
     HTTPSCA["ut-caddy-data - the authority browsers trust"]
     FILESBACKUP["files-backup - restic, encrypted"]
-    REPO["restic repository - in that volume by default"]
-    MOUNTED["or on a disk the host mounts - BACKUP_FILES_DESTINATION"]
-    REMOTE["or on S3 or SFTP - BACKUP_FILES_REPOSITORY"]
+    REPO["restic repository - in that volume, always"]
+    MOUNTED["copied to a disk the host mounts - BACKUP_FILES_DESTINATION"]
+    REMOTE["or copied to S3 or SFTP - BACKUP_FILES_REPOSITORY"]
     MONGO --> DBBACKUP --> DUMPS
     DATAROOT --> FILESBACKUP
     DUMPS --> FILESBACKUP
     HTTPSCA --> FILESBACKUP
     FILESBACKUP --> REPO
-    FILESBACKUP -.-> MOUNTED
-    FILESBACKUP -.-> REMOTE
+    REPO -.-> MOUNTED
+    REPO -.-> REMOTE
 ```
 
 **Description** — Two services, in a chain. `mongodb-backup` takes a full-server
@@ -40,10 +40,11 @@ dump of every database, compressed with gzip, and writes it into the
 volume; `DATA_ROOT` on the host, which holds uploaded documents and the App
 Builder's projects; and, in `ut-caddy-data`, the authority
 that signs the HTTPS certificate browsers see — and writes them into a `restic`
-repository, encrypted with `BACKUP_FILES_PASSWORD`. By default the repository
+repository, encrypted with `BACKUP_FILES_PASSWORD`. That repository always
 sits in the same volume as the archives. The two dotted lines are the ways off
-the machine, one at a time: a disk the host mounts — a NAS share or a USB disk —
-named by `BACKUP_FILES_DESTINATION`, or an S3 bucket or an SFTP server named by
+the machine, one at a time: after each run the repository is copied to a disk
+the host mounts — a NAS share or a USB disk — named by
+`BACKUP_FILES_DESTINATION`, or to an S3 bucket or an SFTP server named by
 `BACKUP_FILES_REPOSITORY`. So the database leaves the site inside the file
 backup, not on its own.
 
@@ -336,8 +337,8 @@ them on purpose: database files copied while they are written restore into a
 corrupt state. They need a dump each, which is pending a product decision.
 
 **Anything outside this machine, unless you configured it.** The `restic`
-repository defaults to `/backup/restic` — the same volume as the database
-archives. Losing that volume loses both. Set `BACKUP_FILES_DESTINATION` to a
+repository is `/backup/restic` — the same volume as the database archives.
+Losing that volume loses both, unless a destination holds the copy. Set `BACKUP_FILES_DESTINATION` to a
 disk the host mounts, or `BACKUP_FILES_REPOSITORY` to S3 or SFTP, if the data
 matters more than the machine does; see
 [configuration](configuration.md#sending-backups-off-the-machine).

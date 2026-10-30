@@ -1181,11 +1181,11 @@ capability_discriminates "the backup given a network with a way out" \
 
 capability_discriminates "the repository left on the machine's own disk" \
     "lands on the destination the host mounts" \
-    "sed -i.bak 's|RESTIC_REPOSITORY: /destination/restic|RESTIC_REPOSITORY: /backup/restic|' compose.backup-mount.yaml"
+    "sed -i.bak 's|BACKUP_DESTINATION_REPOSITORY: /destination/restic|BACKUP_DESTINATION_REPOSITORY: /backup/restic|' compose.backup-mount.yaml"
 
 capability_discriminates "a backup written where nothing is mounted" \
     "not mounted is refused" \
-    "sed -i.bak '/BACKUP_DESTINATION_MARKER:-/,/^fi\$/d' backup-files.sh"
+    "sed -i.bak 's/\\[ -e \"\\\$BACKUP_DESTINATION_MARKER\" \\]/true/' backup-files.sh"
 
 capability_discriminates "a guide that restores a foreign database whole" \
     "restored on another machine, as the guide says" \
@@ -1209,7 +1209,7 @@ capability_discriminates "an SFTP destination without the keys to check it" \
 
 capability_discriminates "a backup that takes any host key an SFTP destination shows" \
     "trusted only under the host key pinned for it" \
-    "sed -i.bak 's#^set -eu\$#set -eu; restic() { command restic -o sftp.args=\"-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null\" \"\$@\"; }#' backup-files.sh"
+    "sed -i.bak 's#^set -u\$#set -u; restic() { command restic -o sftp.args=\"-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null\" \"\$@\"; }#' backup-files.sh"
 
 capability_discriminates "a backup that resolves its destination on its own, around the relay" \
     "a backup to S3 over TLS goes through the relay" \

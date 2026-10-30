@@ -2563,7 +2563,7 @@ the_backup_round_trips_through_an_s3_endpoint() {
     local key=capability-key secret=capability-secret-value
     local work="$WORK_DIR/offsite" source="$WORK_DIR/offsite/data" restored="$WORK_DIR/offsite/out"
     net=$run-net; store=$run-store
-    mkdir -p "$source/app-data" "$restored"
+    mkdir -p "$source/app-data" "$restored" "$work/local"
 
     head -c 200000 /dev/urandom > "$source/app-data/document.bin"
     echo "customer notes" > "$source/app-data/notes.txt"
@@ -2596,9 +2596,10 @@ the_backup_round_trips_through_an_s3_endpoint() {
     # and an unreachable endpoint is exactly what a failure of this check looks
     # like. Unbounded, one broken destination stalls the whole run.
     offsite() {
-        docker run --rm --network "$net" -v "$source":/data:ro -v "$restored":/out \
+        docker run --rm --network "$net" -v "$source":/data:ro -v "$restored":/out -v "$work/local":/backup \
             -v "$REPO_ROOT/backup-files.sh":/usr/local/bin/backup-files:ro \
-            -e RESTIC_REPOSITORY="s3:http://${OFFSITE_ENDPOINT:-$store}:9000/$bucket" \
+            -e RESTIC_REPOSITORY=/backup/restic \
+            -e BACKUP_DESTINATION_REPOSITORY="s3:http://${OFFSITE_ENDPOINT:-$store}:9000/$bucket" \
             -e RESTIC_PASSWORD=capability-test \
             -e AWS_ACCESS_KEY_ID="$key" -e AWS_SECRET_ACCESS_KEY="$secret" \
             --entrypoint sh "$RESTIC_IMAGE" -c "timeout 90 $1"
@@ -2609,7 +2610,7 @@ the_backup_round_trips_through_an_s3_endpoint() {
         printf '%s %s\n' "$f" "$(cksum < "$f" | cut -d' ' -f1)"; done | cksum | cut -d' ' -f1 )
 
     if offsite /usr/local/bin/backup-files >/dev/null 2>&1 \
-        && offsite "restic restore latest --target /out" >/dev/null 2>&1; then
+        && offsite 'restic -r "$BACKUP_DESTINATION_REPOSITORY" restore latest --target /out' >/dev/null 2>&1; then
         after=$( cd "$restored/data" && find . -type f | sort | while read -r f; do
             printf '%s %s\n' "$f" "$(cksum < "$f" | cut -d' ' -f1)"; done | cksum | cut -d' ' -f1 )
         [[ "$before" == "$after" ]] && verdict=0
@@ -2658,7 +2659,8 @@ the_database_leaves_the_machine_with_the_files() {
         docker run --rm --network "$net" -v "$source":/data:ro -v "$dumps":/backup \
             -v "$restored":/out \
             -v "$REPO_ROOT/backup-files.sh":/usr/local/bin/backup-files:ro \
-            -e RESTIC_REPOSITORY="s3:http://${OFFSITE_ENDPOINT:-$store}:9000/$bucket" \
+            -e RESTIC_REPOSITORY=/backup/restic \
+            -e BACKUP_DESTINATION_REPOSITORY="s3:http://${OFFSITE_ENDPOINT:-$store}:9000/$bucket" \
             -e RESTIC_PASSWORD=capability-test \
             -e AWS_ACCESS_KEY_ID="$key" -e AWS_SECRET_ACCESS_KEY="$secret" \
             --entrypoint sh "$RESTIC_IMAGE" -c "timeout 90 $1"
@@ -2666,7 +2668,7 @@ the_database_leaves_the_machine_with_the_files() {
 
     local verdict=1
     if offsite_with_dumps /usr/local/bin/backup-files >/dev/null 2>&1 \
-        && offsite_with_dumps "restic restore latest --target /out" >/dev/null 2>&1; then
+        && offsite_with_dumps 'restic -r "$BACKUP_DESTINATION_REPOSITORY" restore latest --target /out' >/dev/null 2>&1; then
         [[ -f "$restored/backup/$archive" && -f "$restored/data/app-data/notes.txt" ]] && verdict=0
     fi
 
@@ -2705,7 +2707,7 @@ backup_into() {
     local source=$1 destination=$2 target=$3 repository=$4 marker=$5
     docker run --rm -v "$source":/data:ro -v "$destination":"$target" \
         -v "$REPO_ROOT/backup-files.sh":/usr/local/bin/backup-files:ro \
-        -e RESTIC_REPOSITORY="$repository" -e RESTIC_PASSWORD=capability-test \
+        -e RESTIC_REPOSITORY=/backup/restic -e BACKUP_DESTINATION_REPOSITORY="$repository" -e RESTIC_PASSWORD=capability-test \
         -e BACKUP_DESTINATION_MARKER="$marker" \
         --entrypoint /usr/local/bin/backup-files "$RESTIC_IMAGE" 2>&1
 }
@@ -2718,7 +2720,7 @@ the_backup_lands_on_the_mounted_destination() {
     config=$(rendered_backup_destination "$destination")
     [[ -n "$config" ]] || { echo "the stack does not render with a destination"; return 1; }
     target=$(jq -r --arg d "$destination" '.services["files-backup"].volumes[]? | select(.source == $d) | .target' <<< "$config")
-    repository=$(jq -r '.services["files-backup"].environment.RESTIC_REPOSITORY' <<< "$config")
+    repository=$(jq -r '.services["files-backup"].environment.BACKUP_DESTINATION_REPOSITORY' <<< "$config")
     marker=$(jq -r '.services["files-backup"].environment.BACKUP_DESTINATION_MARKER // empty' <<< "$config")
     [[ -n "$target" && "$repository" == "$target"/* ]] || { echo "the repository ${repository} is not on the destination"; return 1; }
     [[ -n "$marker" ]] && touch "$destination/${marker#"$target"/}"
@@ -2741,7 +2743,7 @@ the_backup_refuses_a_destination_that_is_not_mounted() {
     config=$(rendered_backup_destination "$destination")
     [[ -n "$config" ]] || { echo "the stack does not render with a destination"; return 1; }
     target=$(jq -r --arg d "$destination" '.services["files-backup"].volumes[]? | select(.source == $d) | .target' <<< "$config")
-    repository=$(jq -r '.services["files-backup"].environment.RESTIC_REPOSITORY' <<< "$config")
+    repository=$(jq -r '.services["files-backup"].environment.BACKUP_DESTINATION_REPOSITORY' <<< "$config")
     marker=$(jq -r '.services["files-backup"].environment.BACKUP_DESTINATION_MARKER // empty' <<< "$config")
     [[ -n "$target" && -n "$marker" ]] || { echo "the destination carries no marker to check"; return 1; }
 
@@ -2773,7 +2775,7 @@ backup_over_sftp() {
     [[ -n "$target" ]] || { echo "the SSH directory is not handed to files-backup"; return 1; }
     docker run --rm --network "$network" -v "$source":/data:ro -v "$ssh_dir":"$target":ro \
         -v "$REPO_ROOT/backup-files.sh":/usr/local/bin/backup-files:ro \
-        -e RESTIC_REPOSITORY="$repository" -e RESTIC_PASSWORD=capability-test \
+        -e RESTIC_REPOSITORY=/backup/restic -e BACKUP_DESTINATION_REPOSITORY="$repository" -e RESTIC_PASSWORD=capability-test \
         --entrypoint sh "$RESTIC_IMAGE" -c "timeout 90 /usr/local/bin/backup-files" 2>&1
 }
 
@@ -2907,8 +2909,9 @@ the_sftp_destination_has_to_prove_who_it_is() {
 
 an_unreachable_destination_is_named() {
     local output
-    output=$(docker run --rm -v "$REPO_ROOT/backup-files.sh":/usr/local/bin/backup-files:ro \
-        -e RESTIC_REPOSITORY='sftp:nobody@127.0.0.1:/appliance' -e RESTIC_PASSWORD=capability-test \
+    mkdir -p "$WORK_DIR/unreachable-source"
+    output=$(docker run --rm -v "$REPO_ROOT/backup-files.sh":/usr/local/bin/backup-files:ro -v "$WORK_DIR/unreachable-source":/data:ro \
+        -e BACKUP_DESTINATION_REPOSITORY='sftp:nobody@127.0.0.1:/appliance' -e RESTIC_PASSWORD=capability-test \
         --entrypoint /usr/local/bin/backup-files "$RESTIC_IMAGE" 2>&1) && { echo "the backup reported success"; return 1; }
     grep -q 'cannot reach the repository at sftp:nobody@127.0.0.1:/appliance' <<< "$output" || { echo "$output"; return 1; }
 }
@@ -2918,8 +2921,8 @@ a_password_that_does_not_open_the_repository_is_named() {
     mkdir -p "$repo"
     docker run --rm -v "$repo":/r -e RESTIC_REPOSITORY=/r/restic -e RESTIC_PASSWORD=the-old-machine \
         "$RESTIC_IMAGE" init >/dev/null 2>&1 || { echo "no repository to test against"; return 1; }
-    output=$(docker run --rm -v "$repo":/r -v "$REPO_ROOT/backup-files.sh":/usr/local/bin/backup-files:ro \
-        -e RESTIC_REPOSITORY=/r/restic -e RESTIC_PASSWORD=this-machine \
+    output=$(docker run --rm -v "$repo":/r -v "$repo":/data:ro -v "$REPO_ROOT/backup-files.sh":/usr/local/bin/backup-files:ro \
+        -e BACKUP_DESTINATION_REPOSITORY=/r/restic -e RESTIC_PASSWORD=this-machine \
         --entrypoint /usr/local/bin/backup-files "$RESTIC_IMAGE" 2>&1) && { echo "the backup reported success"; return 1; }
     grep -q 'BACKUP_FILES_PASSWORD does not open the repository at /r/restic' <<< "$output" || { echo "$output"; return 1; }
 }
@@ -3018,8 +3021,8 @@ RELAY_TEST_ADDRESS="198.19.255.250"
 # files-backup and the relay as the stack runs them, from compose.yaml and an
 # overlay, under a project, networks and containers named for one run.
 #
-# compose run keeps the service's health check, whose restic snapshots every
-# 30 s holds a lock that the prune of backup-files refuses to run beside.
+# compose run keeps the service's health check, which this one-off run would
+# never satisfy and which says nothing about the relay.
 relayed_compose() {
     local project=$1; shift
     cp "$REPO_ROOT/backup-files.sh" "$WORK_DIR/backup-files.sh"
@@ -3075,11 +3078,11 @@ the_backup_reaches_s3_through_the_relay_alone() {
 
         if (( ready )) || [[ ! -s "$ca/root.crt" ]]; then
             echo "the destination never answered"
-        elif ! output=$(inside_the_backup "export RESTIC_CACERT=/ca/root.crt; timeout 90 /usr/local/bin/backup-files && timeout 90 restic restore latest --target /out"); then
+        elif ! output=$(inside_the_backup "export RESTIC_CACERT=/ca/root.crt; timeout 90 /usr/local/bin/backup-files && timeout 90 restic -r \"\$BACKUP_DESTINATION_REPOSITORY\" restore latest --target /out"); then
             echo "the backup did not go through the relay: $(tail -3 <<< "$output" | tr '\n' ' ')"
         elif [[ "$(tree_sum "$source")" != "$(tree_sum "$restored/data")" ]]; then
             echo "what came back differs from what was sent"
-        elif output=$(inside_the_backup "timeout 30 restic snapshots"); then
+        elif output=$(inside_the_backup "timeout 30 restic -r \"\$BACKUP_DESTINATION_REPOSITORY\" snapshots"); then
             echo "trusting the system's authorities alone, the backup still reached the destination"
         elif ! grep -q 'x509' <<< "$output"; then
             echo "refused, but not for the destination's certificate: $(tail -2 <<< "$output" | tr '\n' ' ')"
@@ -3088,7 +3091,7 @@ the_backup_reaches_s3_through_the_relay_alone() {
         elif [[ -z "$address" ]] || inside_the_backup "wget -q -T 5 -O /dev/null http://${address}:9000/" >/dev/null; then
             echo "the backup reached the store behind the destination by its address (${address:-unknown})"
         elif ! stack stop backup-relay >/dev/null 2>&1 \
-                || inside_the_backup "export RESTIC_CACERT=/ca/root.crt; timeout 30 restic snapshots" >/dev/null; then
+                || inside_the_backup "export RESTIC_CACERT=/ca/root.crt; timeout 30 restic -r \"\$BACKUP_DESTINATION_REPOSITORY\" snapshots" >/dev/null; then
             echo "with the relay stopped, the backup still reached the destination"
         else
             verdict=0
@@ -3127,7 +3130,7 @@ the_backup_reaches_sftp_through_the_relay() {
     else
         sed "s/^\[${server}\]/[nas.relay.test]/" <<< "$scanned" | pin_host_keys "$ssh_dir"
         if ! output=$(stack run --rm --no-deps -v "$restored":/out --entrypoint sh files-backup \
-                -c "timeout 90 /usr/local/bin/backup-files && timeout 90 restic restore latest --target /out" 2>&1); then
+                -c "timeout 90 /usr/local/bin/backup-files && timeout 90 restic -r \"\$BACKUP_DESTINATION_REPOSITORY\" restore latest --target /out" 2>&1); then
             echo "the backup did not go through the relay: $(tail -3 <<< "$output" | tr '\n' ' ')"
         elif [[ "$(tree_sum "$source")" != "$(tree_sum "$restored/data")" ]]; then
             echo "what came back differs from what was sent"
