@@ -76,6 +76,11 @@ Write down what you are restoring *from*. `restic` and `mongodump` both keep
 several snapshots, and picking yesterday's when you meant last week's is the
 mistake that costs a second outage.
 
+**Read the repository on the machine first**: `/backup/restic` in the
+`ut-mongodb-backup` volume, or the one under `BACKUP_LOCAL_DIR`. It answers
+without the network. Read the destination only when the machine, or the disk
+that holds that repository, is gone — as in [on another machine](#on-another-machine).
+
 ## 1 · The database
 
 Archives are written daily by `ut-mongodb-backup` into the `ut-mongodb-backup`
@@ -324,6 +329,61 @@ every value you had changed from the release — model memory, file budget,
 ports. **Before naming the backup destination again, give this machine the old
 `BACKUP_FILES_PASSWORD`**, or point it at a new directory: the repository there
 opens with the old password only.
+
+## How long it takes
+
+Measured on 2026-10-30, on a GB10 with one NVMe disk, release
+`v2026.10.0-rc19`: 90,000 documents (264 GB, incompressible) and a 17 GB
+database, restored [on another machine](#on-another-machine) from a disk holding
+the copy.
+
+| Step | Took |
+|---|---|
+| 1 · Install the same version | 9 min |
+| 2 · Read the latest snapshot | 6 min |
+| 3 · Put the files and the authority in place | 4 min |
+| 4 · Restore the database | 1 min 15 s |
+| 5 · Start again | 22 s |
+| **From the first command to a platform that answers** | **20 min 38 s** |
+
+Not counted: downloading the images and the model's weights, which a machine
+installed for the first time needs as well — minutes to over an hour depending
+on the connection, none with a [prepared folder](install.md#in-one-command) —
+and the time the inference engine takes to load its model. The database there
+compressed better than real conversations do, so its two steps are short.
+
+## When the backup password is lost
+
+`BACKUP_FILES_PASSWORD` encrypts every snapshot, on the machine and at the
+destination. **Without it, none of them can be read, by anyone**: there is no
+recovery path and no support path. What is lost is the history, not the data —
+as long as the machine runs, its documents and its database are intact.
+
+Start a new repository at once, so that the machine is backed up again, then
+put the new password in escrow — see [backing up](backup.md#the-two-secrets-kept-away-from-the-machine):
+
+```bash
+cd /usr/share/understandtech
+sudo docker compose stop files-backup
+sudo docker compose run --rm --no-deps --entrypoint sh files-backup \
+    -c 'mv /backup/restic "/backup/restic.unreadable-$(date +%F)"'
+sudo sed -i '/^BACKUP_FILES_PASSWORD=/d' /etc/understandtech/local.env
+sudo ut-install --skip-pull
+sudo docker compose up -d
+```
+
+`ut-install` draws a new password, since none is left, and prints it once. It
+reports the backup as not working yet: the service has not run with it. Its
+first run, as it starts, creates a new repository and fills it — run on
+2026-10-30, it held its first snapshot a minute later, the old repository left
+beside it.
+
+**A destination still holds the old repository**, which opens with the old
+password only: every copy is refused, and the health check turns red. Have its
+owner move it aside, or name another place for the new one, before that run.
+
+The old repositories can be deleted once the new one holds its first snapshot:
+nothing will ever read them.
 
 ## What this does not cover
 

@@ -185,6 +185,19 @@ inside `ut-files-backup`: when it started and ended, its result, the step it
 failed at, and whether it reached the destination (`copied`, `failed`,
 `not-mounted`, or `none` without a destination).
 
+**Write down a restore exercise** in the same log, with:
+
+- the date, the people, the release and the machine;
+- the snapshot restored — its id and its time — and where it was read from;
+- how much it held: documents, their size, the database's size;
+- each step of [restoring](restore.md) and how long it took, and the total;
+- what was compared and whether it came back identical: documents, records,
+  the authority's fingerprint;
+- every step done otherwise than the page says, and what is to change.
+
+[How long it takes](restore.md#how-long-it-takes) gives a measured reference to
+compare with.
+
 **Keep a log of every check**: the date, the person, the snapshot it looked at,
 the result, and what was done when it failed. An audit reads that log, not this
 page.
