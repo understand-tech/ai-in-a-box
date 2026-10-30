@@ -14,6 +14,7 @@ nav:
   - Licensing: license.md
   - Certificates and DNS: certificates-and-dns.md
   - Updating: update.md
+  - Backing up: backup.md
   - Restoring: restore.md
   - Monitoring and the usage report: usage-report.md
   - When it breaks: when-it-breaks.md
