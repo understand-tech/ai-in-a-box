@@ -104,6 +104,12 @@ checked. The appliance provides part of it; the destination provides the rest.
 | **1 immutable** | — | snapshots of the destination taken by its owner, that the appliance cannot delete |
 | **0 errors** | `restic check` after every run | a restore exercise, as in [restoring](restore.md) |
 
+**The repository on the machine takes room on its disk.** No run writes once
+less than `BACKUP_MIN_FREE_PERCENT` of that disk is free, so a backup never
+stops the database by filling it. On a machine with a disk to spare, the
+repository goes on that disk —
+[`BACKUP_LOCAL_DIR`](configuration.md#the-repository-on-a-disk-of-its-own).
+
 **A destination off the machine is mandatory.** Each run writes to a
 repository on the machine, in the same volume as the dumps, then copies it to
 the destination. Without a destination, nothing protects against what destroys

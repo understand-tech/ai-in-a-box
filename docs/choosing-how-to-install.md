@@ -59,6 +59,9 @@ Only `internal` needs no setting. The other three are written in
 | To a mounted disk — a NAS, a USB drive | [`BACKUP_FILES_DESTINATION`](configuration.md#backups) | `ut-install` refuses the box's own disk |
 | Over the network — S3, SFTP | [`BACKUP_FILES_REPOSITORY`](configuration.md#sending-backups-off-the-machine) | SFTP needs a key you create first |
 
+Whatever the destination, a repository also stays on the machine. With a disk
+to spare, give it that disk: [`BACKUP_LOCAL_DIR`](configuration.md#the-repository-on-a-disk-of-its-own).
+
 The install ends by showing two passwords, once. Losing the
 backup password makes every backup unreadable.
 

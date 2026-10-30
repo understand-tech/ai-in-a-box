@@ -2753,6 +2753,55 @@ the_backup_refuses_a_destination_that_is_not_mounted() {
     grep -q 'not mounted' <<< "$output" || { echo "$output"; return 1; }
 }
 
+# Below the floor of free space, a run writes nothing: on a disk shared with the
+# platform, a backup that fills it stops the database with it.
+a_backup_never_fills_the_disk_it_shares() {
+    local source="$WORK_DIR/floor-source" dumps="$WORK_DIR/floor-backup" output
+    mkdir -p "$source/app-data" "$dumps"
+    echo "customer notes" > "$source/app-data/notes.txt"
+    output=$(docker run --rm -v "$source":/data:ro -v "$dumps":/backup \
+        -v "$REPO_ROOT/backup-files.sh":/usr/local/bin/backup-files:ro \
+        -e RESTIC_REPOSITORY=/backup/restic -e RESTIC_PASSWORD=capability-test -e BACKUP_MIN_FREE_PERCENT=101 \
+        --entrypoint /usr/local/bin/backup-files "$RESTIC_IMAGE" 2>&1) && { echo "the backup went ahead"; return 1; }
+    [[ ! -e "$dumps/restic" ]] || { echo "a repository was written anyway"; return 1; }
+    grep -q 'under BACKUP_MIN_FREE_PERCENT=101: nothing written' <<< "$output" || { echo "$output"; return 1; }
+}
+
+rendered_local_backup_disk() {
+    ( cd "$WORK_DIR" && BACKUP_LOCAL_DIR="$1" \
+        docker compose -f compose.yaml -f compose.backup-local.yaml config --format json 2>/dev/null )
+}
+
+# The repository on the machine, moved to a disk of its own, is written there
+# once its marker shows the disk is mounted, and not before.
+the_repository_sits_on_a_disk_of_its_own() {
+    command -v jq >/dev/null || { echo "jq absent"; return 1; }
+    local disk="$WORK_DIR/local-disk" source="$WORK_DIR/local-disk-source" config target repository marker output
+    mkdir -p "$disk" "$source/app-data"
+    echo "customer notes" > "$source/app-data/notes.txt"
+    config=$(rendered_local_backup_disk "$disk")
+    [[ -n "$config" ]] || { echo "the stack does not render with BACKUP_LOCAL_DIR"; return 1; }
+    target=$(jq -r --arg d "$disk" '.services["files-backup"].volumes[]? | select(.source == $d) | .target' <<< "$config")
+    repository=$(jq -r '.services["files-backup"].environment.RESTIC_REPOSITORY' <<< "$config")
+    marker=$(jq -r '.services["files-backup"].environment.BACKUP_LOCAL_MARKER // empty' <<< "$config")
+    [[ -n "$target" && "$repository" == "$target"/* && -n "$marker" ]] \
+        || { echo "the repository ${repository} is not on the disk, or carries no marker"; return 1; }
+
+    run_on_the_disk() {
+        docker run --rm -v "$source":/data:ro -v "$disk":"$target" \
+            -v "$REPO_ROOT/backup-files.sh":/usr/local/bin/backup-files:ro \
+            -e RESTIC_REPOSITORY="$repository" -e BACKUP_LOCAL_MARKER="$marker" -e RESTIC_PASSWORD=capability-test \
+            --entrypoint /usr/local/bin/backup-files "$RESTIC_IMAGE" 2>&1
+    }
+    output=$(run_on_the_disk) && { echo "written to a disk that is not mounted"; return 1; }
+    [[ -z "$(ls -A "$disk")" ]] || { echo "written anyway: $(ls -A "$disk" | tr '\n' ' ')"; return 1; }
+    grep -q 'is not mounted' <<< "$output" || { echo "$output"; return 1; }
+
+    touch "$disk/${marker#"$target"/}"
+    run_on_the_disk >/dev/null || { echo "the backup failed on the mounted disk"; return 1; }
+    [[ -f "$disk/${repository#"$target"/}/config" ]] || { echo "no repository on the disk"; return 1; }
+}
+
 the_network_destination_gets_a_way_out_of_its_own() {
     command -v jq >/dev/null || { echo "jq absent"; return 1; }
     local config open sharing
@@ -3721,6 +3770,10 @@ if [[ -f "$REPO_ROOT/backup-files.sh" ]]; then
         the_backup_lands_on_the_mounted_destination
     capability "a destination that is not mounted is refused, and nothing is written" \
         the_backup_refuses_a_destination_that_is_not_mounted
+    capability "a backup never fills the disk it shares: below the floor, nothing is written" \
+        a_backup_never_fills_the_disk_it_shares
+    capability "the repository kept on a disk of its own is written there once it is mounted, and not before" \
+        the_repository_sits_on_a_disk_of_its_own
     capability "the backup has no way off the machine, with a mounted destination too" \
         with_a_backup_destination the_backup_has_no_way_off_the_machine -f compose.yaml -f compose.backup-mount.yaml
     capability "a database restored on another machine, as the guide says, keeps that machine's accounts" \

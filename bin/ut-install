@@ -1446,6 +1446,7 @@ write_the_settings_the_model_needs() {
 }
 
 BACKUP_DESTINATION_MARKER=".understandtech-backup-destination"
+BACKUP_LOCAL_MARKER=".understandtech-backup-local"
 
 filesystem_of_the_nearest_existing() {
     local path=$1
@@ -1471,12 +1472,12 @@ die_on_a_backup_destination_that_is_not_one() {
 }
 
 backup_destination_problem() {
-    local destination=$1
+    local destination=$1 marker=${2:-$BACKUP_DESTINATION_MARKER}
     if [[ "$destination" != /* || ! -d "$destination" ]]; then
         echo "it is not an existing directory given by its full path"
     elif ! the_backup_destination_is_off_this_machine "$destination"; then
         echo "it sits on this machine's own disk: nothing is mounted there"
-    elif ! touch "$destination/$BACKUP_DESTINATION_MARKER" 2>/dev/null; then
+    elif ! touch "$destination/$marker" 2>/dev/null; then
         echo "it cannot be written to"
     fi
 }
@@ -1531,6 +1532,48 @@ write_the_settings_a_backup_destination_needs() {
         *) env_set "$local_file" COMPOSE_FILE "${compose_files}:compose.backup-mount.yaml" ;;
     esac
     log_info "Backups go to ${destination}, off this machine's disk"
+}
+
+# The repository on the machine, on a disk of its own: neither the root disk nor
+# the one holding DATA_ROOT, or it isolates nothing. Checked as a destination is,
+# and for the same reason the marker is only written once the disk is known.
+write_the_settings_a_local_backup_disk_needs() {
+    local local_file=$1 directory destination compose_files problem
+
+    directory=$(env_get "$local_file" BACKUP_LOCAL_DIR 2>/dev/null || true)
+    compose_files=$(env_get "$local_file" COMPOSE_FILE 2>/dev/null || true)
+    [[ -n "$compose_files" ]] || compose_files=$(release_declares COMPOSE_FILE || echo "compose.yaml")
+
+    if [[ -z "$directory" ]]; then
+        case "$compose_files" in
+            *:compose.backup-local.yaml*)
+                env_set "$local_file" COMPOSE_FILE "${compose_files//:compose.backup-local.yaml/}"
+                log_info "The backup repository is kept beside the database archives again" ;;
+        esac
+        return 0
+    fi
+
+    destination=$(env_get "$local_file" BACKUP_FILES_DESTINATION 2>/dev/null || true)
+    [[ "${directory%/}" != "${destination%/}" ]] \
+        || die "BACKUP_LOCAL_DIR and BACKUP_FILES_DESTINATION are both ${directory}: the copy would land on the disk it copies."
+
+    problem=$(backup_destination_problem "$directory" "$BACKUP_LOCAL_MARKER")
+    if [[ -n "$problem" ]]; then
+        case "$compose_files" in
+            *compose.backup-local.yaml*)
+                log_warn "BACKUP_LOCAL_DIR is ${directory}, and ${problem}."
+                log_warn "  The install goes on; the backup writes nothing until the disk is back." ;;
+            *)
+                die "BACKUP_LOCAL_DIR is ${directory}, and ${problem}. Mount a disk of its own there, or empty BACKUP_LOCAL_DIR in $(settings_directory "$INSTALL_DIR/.env")/local.env." ;;
+        esac
+        return 0
+    fi
+
+    case "$compose_files" in
+        *compose.backup-local.yaml*) ;;
+        *) env_set "$local_file" COMPOSE_FILE "${compose_files}:compose.backup-local.yaml" ;;
+    esac
+    log_info "The backup repository is kept on ${directory}, a disk of its own"
 }
 
 the_backup_repository_is_reached_over_the_network() {
@@ -1833,6 +1876,7 @@ step_configure() {
     fi
     die_on_two_backup_destinations "$local_file"
     write_the_settings_a_backup_destination_needs "$local_file"
+    write_the_settings_a_local_backup_disk_needs "$local_file"
     write_the_settings_a_backup_over_the_network_needs "$local_file"
 
     render_settings "$env_file" "$local_file"

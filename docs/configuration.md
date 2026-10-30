@@ -296,6 +296,41 @@ ones thin out to one a day, a week, a month. `owner` leaves the destination's
 retention to whoever runs it, for a destination that refuses deletions — see
 [backing up](backup.md#what-the-destination-has-to-provide).
 
+### Room on the disk
+
+The repository on the machine lives in the `ut-mongodb-backup` volume, on the
+disk that also holds the database and the documents. **A run writes nothing
+when less than `BACKUP_MIN_FREE_PERCENT` of that disk is free** — 10 by default
+— says so in its log, and its health check turns red: a backup that filled the
+disk would stop the database with it.
+
+```bash
+docker compose logs files-backup | grep 'is free, under'
+```
+
+#### The repository on a disk of its own
+
+On a machine with a disk to spare, the repository goes there: it can then
+neither fill the disk the platform runs on nor die with it. Mount the disk the
+way your systems usually are, so that it comes back after a reboot, then:
+
+```bash
+echo 'BACKUP_LOCAL_DIR="/srv/backup"' | sudo tee -a /etc/understandtech/local.env
+sudo ut-install --skip-pull
+docker compose up -d
+```
+
+The installer refuses a directory on the root disk or on the one holding
+`DATA_ROOT`, as it does a destination, and writes
+`.understandtech-backup-local` once it has checked. Before every run the backup
+looks for that file: when the disk is not mounted, it writes nothing and its
+health check turns red. `BACKUP_LOCAL_DIR` and `BACKUP_FILES_DESTINATION` cannot
+name the same directory.
+
+The first run starts a new repository there; the history already in the volume
+stays where it is. To keep it, copy `restic` out of the volume into
+`BACKUP_LOCAL_DIR` before running the installer.
+
 ### Sending backups off the machine
 
 **The default keeps everything on the machine it protects** — the `restic`
