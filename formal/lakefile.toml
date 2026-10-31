@@ -1,0 +1,30 @@
+name = "formal"
+defaultTargets = ["RotationProofs", "rotation_cases", "rotation_report", "SettingsProofs", "settings_cases", "settings_report"]
+
+[[lean_lib]]
+name = "Rotation"
+
+[[lean_lib]]
+name = "Settings"
+
+[[lean_lib]]
+name = "RotationProofs"
+
+[[lean_lib]]
+name = "SettingsProofs"
+
+[[lean_exe]]
+name = "rotation_cases"
+root = "Cases"
+
+[[lean_exe]]
+name = "rotation_report"
+root = "Report"
+
+[[lean_exe]]
+name = "settings_cases"
+root = "SettingsCases"
+
+[[lean_exe]]
+name = "settings_report"
+root = "SettingsReport"

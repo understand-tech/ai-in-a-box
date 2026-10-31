@@ -309,12 +309,28 @@ env_get() {
     printf '%s' "$value"
 }
 
+# A cut while a file is written in place leaves it empty. A copy beside it,
+# given the file's mode and owner, synced, then renamed over it, leaves either
+# the old content or the new one.
+replace_file_with() {
+    local file tmp
+    file=$(readlink -f "$1")
+    tmp=$(mktemp "${file}.XXXXXX")
+    cat > "$tmp"
+    if [[ -e "$file" ]]; then
+        chmod --reference="$file" "$tmp"
+        (( EUID != 0 )) || chown --reference="$file" "$tmp"
+    fi
+    sync "$tmp"
+    mv -f "$tmp" "$file"
+}
+
 env_drop() {
     local file=$1 key=$2 tmp
     grep -qE "^[[:space:]]*${key}=" "$file" 2>/dev/null || return 0
     tmp=$(mktemp)
     grep -vE "^[[:space:]]*${key}=" "$file" > "$tmp" || true
-    cat "$tmp" > "$file"
+    replace_file_with "$file" < "$tmp"
     rm -f "$tmp"
 }
 
@@ -333,8 +349,6 @@ write_the_list_a_server_keeps() {
 }
 
 env_set() {
-    # Copying the temp file's content back, rather than moving it over, keeps
-    # the original inode and its 0600 permissions.
     local file=$1 key=$2 value=$3 tmp found=0 line
     tmp=$(mktemp)
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -346,7 +360,7 @@ env_set() {
         fi
     done < "$file"
     (( found )) || printf '%s="%s"\n' "$key" "$value" >> "$tmp"
-    cat "$tmp" > "$file"
+    replace_file_with "$file" < "$tmp"
     rm -f "$tmp"
 }
 
@@ -1127,14 +1141,14 @@ checkout_logged_in_debug_by_the_old_default() {
 # Lines are carried over verbatim, never re-quoted: GATEWAY_MODELS holds JSON
 # inside single quotes, which env_set would rewrite as KEY="value" and corrupt.
 migrate_existing_settings_into_local() {
-    local env_file=$1 local_file=$2 release line key kept=0 diverged=0 left=0 left_names="" debug_log_level_left_behind=0
+    local env_file=$1 local_file=$2 release line key kept=0 diverged=0 left=0 left_names="" debug_log_level_left_behind=0 split
     release="$INSTALL_DIR/release.env"
 
     [[ -s "$env_file" ]] || return 0
     [[ -s "$local_file" ]] && return 0
 
     install -m 600 "$env_file" "${local_file%/*}/env.before-split"
-    install -m 600 /dev/null "$local_file"
+    split=$(mktemp)
 
     while IFS= read -r line || [[ -n "$line" ]]; do
         case "$line" in
@@ -1152,9 +1166,12 @@ migrate_existing_settings_into_local() {
             continue
         fi
         if grep -qE "^${key}=" "$release" 2>/dev/null; then diverged=$((diverged + 1)); fi
-        printf '%s\n' "$line" >> "$local_file"
+        printf '%s\n' "$line" >> "$split"
         kept=$((kept + 1))
     done < "$env_file"
+    # The next run splits again only while local.env is empty, so it appears whole.
+    replace_file_with "$local_file" < "$split"
+    rm -f "$split"
 
     log_info "Split the settings: ${kept} kept as yours, ${diverged} of them differing from this release"
     if (( left > 0 )); then
@@ -1399,7 +1416,7 @@ put_the_line_in_place_of_its_key() {
     tmp=$(mktemp)
     grep -v -E "^[[:space:]]*${key}=" "$local_file" > "$tmp" || true
     printf '%s\n' "$line" >> "$tmp"
-    cat "$tmp" > "$local_file"
+    replace_file_with "$local_file" < "$tmp"
     rm -f "$tmp"
 }
 
@@ -1797,7 +1814,7 @@ render_settings() {
         cat "$local_file" >> "$tmp"
     fi
 
-    cat "$tmp" > "$target"
+    replace_file_with "$target" < "$tmp"
     rm -f "$tmp"
 }
 
@@ -2248,7 +2265,7 @@ forget_the_images_of_a_folder() {
     grep -qE "^[A-Z_]+_IMAGE=\"?${FOLDER_REGISTRY_ADDRESS}/" "$local_file" 2>/dev/null || return 0
     tmp=$(mktemp)
     grep -vE "^[A-Z_]+_IMAGE=\"?${FOLDER_REGISTRY_ADDRESS}/" "$local_file" > "$tmp" || true
-    cat "$tmp" > "$local_file"
+    replace_file_with "$local_file" < "$tmp"
     rm -f "$tmp"
     log_info "Images come from the registry again, no longer from a folder"
 }
@@ -2912,7 +2929,7 @@ put_the_old_database_password_back() {
     log_error "Changing the password failed — putting the old one back"
     the_database_answers && { database_opens_with "$user" "$old" || change_database_password "$user" "$new" "$old"; } \
         || die "The database did not answer, or took neither password. Running ut-install again settles ${local_file} on the one it takes, once it answers. The backup taken before: ${archive}"
-    printf '%s\n' "$saved" > "$local_file"
+    printf '%s\n' "$saved" | replace_file_with "$local_file"
     render_settings "$INSTALL_DIR/.env" "$local_file"
     rm -f "$(database_password_change_record)"
     compose_in_dir up -d && every_waited_for_service_is_ready \
