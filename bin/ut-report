@@ -332,8 +332,9 @@ memory_section() {
     printf '{"host": {"total_bytes": %s, "available_bytes": %s}, "services": [%s]}' "${total:-null}" "${available:-null}" "$services"
 }
 
+# Without the registry: a customer's own registry is named by its address.
 images_section() {
-    running_images | sort -u | awk 'NF == 2 { gsub(/["\\]/, "", $2); printf "%s{\"service\": \"%s\", \"image\": \"%s\"}", (n++ ? ", " : ""), $1, $2 }'
+    running_images | sed -E 's#^([^ ]+) (localhost|[^/ ]*[.:][^/ ]*)/#\1 #' | sort -u | awk 'NF == 2 { gsub(/["\\]/, "", $2); printf "%s{\"service\": \"%s\", \"image\": \"%s\"}", (n++ ? ", " : ""), $1, $2 }'
 }
 
 history_section() {
@@ -362,7 +363,8 @@ What it holds
     tokens long
   - per hour: how many distinct people sent a request — a number, never who
   - every run of ut-install and every ut-status verdict on this machine
-  - the release, and the image each service runs
+  - the release, and the image each service runs, without the registry it
+    came from
   - the memory each service uses, its peak since it started and its limit,
     and the machine's total and available memory
 

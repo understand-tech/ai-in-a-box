@@ -3937,16 +3937,18 @@ history_probe() {
 }
 
 # Each value of exits is one run of the installer ending with that status, while
-# the step it had announced last was the one given.
+# the step it had announced last was the one given, as the function running and
+# the text it shows.
 install_history_after() {
-    local probe=$1 exits=$2 step=$3
+    local probe=$1 exits=$2 step=$3 text=$4
     cat > "$probe/run.sh" <<EOF
 set +u
 UT_INSTALL_DIR="$probe" source "$REPO_ROOT/bin/ut-install" >/dev/null 2>&1
 set +eE
 trap - ERR
+$step() { log_step "$text" >/dev/null; }
 for status in $exits; do
-    ( trap record_this_install EXIT; log_step "$step" >/dev/null; exit "\$status" )
+    ( trap record_this_install EXIT; $step; exit "\$status" )
 done
 EOF
     bash "$probe/run.sh" >/dev/null 2>&1
@@ -3960,8 +3962,8 @@ the_installer_keeps_every_run_from_its_first_step() {
 
 a_failed_install_is_kept_with_the_step_it_stopped_at() {
     local history
-    history=$(install_history_after "$(history_probe)" 1 "Pulling images")
-    grep -q '"tool":"ut-install","outcome":"failed","step":"Pulling images","release":"2026.10.1+abc1234"' <<< "$history" \
+    history=$(install_history_after "$(history_probe)" 1 step_pull "Pulling images")
+    grep -q '"tool":"ut-install","outcome":"failed","step":"step_pull","release":"2026.10.1+abc1234"' <<< "$history" \
         && return 0
     echo "${history:-no history written}"
     return 1
@@ -3969,7 +3971,7 @@ a_failed_install_is_kept_with_the_step_it_stopped_at() {
 
 a_second_install_is_added_after_the_first() {
     local history
-    history=$(install_history_after "$(history_probe)" "1 0" "Starting the platform")
+    history=$(install_history_after "$(history_probe)" "1 0" step_start "Starting the platform")
     [[ $(grep -c '"tool":"ut-install"' <<< "$history") -eq 2 ]] \
         && tail -1 <<< "$history" | grep -q '"outcome":"done","step":""' \
         && return 0
@@ -4086,7 +4088,7 @@ users_by_hour() { printf '$users'; }
 recorder_storage() { printf '${RECORDER_STORAGE-}'; }
 recorder_retention() { printf '${RECORDER_RETENTION-5w or 1GiB}'; }
 the_database_runs_here() { return 0; }
-running_images() { printf 'api ghcr.io/understand-tech/ut-api-customer:2.1-arm64@sha256:0000\n'; }
+running_images() { printf '${IMAGES-api ghcr.io/understand-tech/ut-api-customer:2.1-arm64@sha256:0000\\n}'; }
 host_memory() { printf '128000000000 23000000000\n'; }
 service_memory() { printf '${SERVICE_MEMORY-api 537022464 596684800 4294967296 2026-10-06T09:45:26Z\\nnim-llm 7500000000 92000000000 max 2026-10-06T09:45:26Z\\n}'; }
 write_report "$probe/out"
@@ -4096,6 +4098,24 @@ EOF
 }
 
 a_served_hour() { report_from "$(history_probe)" '1759651200 5\n' '1759651200 3\n' '1759651200 0.8\n'; }
+# A failed install whose last step showed the domain and a folder, on a box that
+# pulls from its own registry: the report sent from it names neither.
+the_report_names_no_address_of_the_box() {
+    local probe report leaked="" leaked_value
+    probe=$(history_probe)
+    install_history_after "$probe" 1 step_check_resolution "Checking how box.example.test resolves from /srv/images" >/dev/null
+    report=$(IMAGES='api registry.example.test:5000/understand-tech/ut-api:2.1@sha256:0000\n' \
+        report_from "$probe" '1759651200 5\n' '1759651200 3\n' '1759651200 0.8\n')
+    [[ -n "$report" ]] || { echo "no report written"; return 1; }
+    grep -q '"step":"step_check_resolution"' <<< "$report" || { echo "the failed step is not named in the report"; return 1; }
+    for leaked_value in box.example.test /srv/images registry.example.test; do
+        grep -qF "$leaked_value" <<< "$report" && leaked+=" ${leaked_value}"
+    done
+    [[ -z "$leaked" ]] && return 0
+    echo "the report carries:${leaked}"
+    return 1
+}
+
 
 the_report_holds_no_key_outside_its_schema() {
     local report key unknown=""
@@ -4342,6 +4362,8 @@ if [[ -x "$REPO_ROOT/bin/ut-report" ]]; then
         the_report_holds_no_key_outside_its_schema
     capability "the report names no user" \
         the_report_names_no_user
+    capability "a failed install's report names its step, never the box's domain, folders or registry" \
+        the_report_names_no_address_of_the_box
     capability "requests served with no user counted are flagged" \
         requests_served_with_no_user_counted_are_flagged
     capability "a series the recorder does not have is flagged" \
