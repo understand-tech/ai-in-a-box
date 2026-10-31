@@ -2995,6 +2995,29 @@ ut_install_answers() {
     )
 }
 
+# Inside ut-install: the NIM path a settings file ends with, given what it held.
+nim_path_from() {
+    local file="$WORK_DIR/nim-path-$1.env"
+    mkdir -p "$INSTALL_DIR/models/weights"
+    printf '%s\n' "0000 1 Example/Model-7B@0123456789abcdef0123456789abcdef01234567/config.json" > "$INSTALL_DIR/models/weights/example.txt"
+    printf '%b' "$2" > "$file"
+    point_nim_at_the_weights_placed "$file"
+    env_get "$file" NIM_LLM_MODEL_PATH
+}
+
+# The engine has no way out and NIM asks Hugging Face for an hf:// path as it
+# starts: once the weights are placed, it reads their snapshot.
+nim_reads_the_weights_it_was_given() {
+    local placed online local_already expected
+    expected=/opt/nim/.cache/huggingface/hub/models--Example--Model-7B/snapshots/0123456789abcdef0123456789abcdef01234567
+    placed=$(ut_install_answers nim_path_from placed 'HF_HUB_OFFLINE="1"\nNIM_LLM_MODEL_PATH="hf://Example/Model-7B"\n')
+    online=$(ut_install_answers nim_path_from online 'HF_HUB_OFFLINE="0"\nNIM_LLM_MODEL_PATH="hf://Example/Model-7B"\n')
+    local_already=$(ut_install_answers nim_path_from local "HF_HUB_OFFLINE=\"1\"\nNIM_LLM_MODEL_PATH=\"${expected}\"\n")
+    [[ "$placed" == "$expected" ]] || { echo "with the weights placed, NIM reads ${placed:-nothing}"; return 1; }
+    [[ "$online" == hf://Example/Model-7B ]] || { echo "online, NIM was moved off its repository: ${online:-nothing}"; return 1; }
+    [[ "$local_already" == "$expected" ]] || { echo "a snapshot path became ${local_already:-nothing}"; return 1; }
+}
+
 # Inside ut-install: what generate_application_secrets says of JWT_SECRET, given
 # the settings file it starts from.
 jwt_secret_warning_from() {
@@ -3641,6 +3664,8 @@ fi
 
 if [[ -x "$REPO_ROOT/bin/ut-get" ]]; then
     group "Installing from a release"
+    capability "with the weights placed, NIM reads their snapshot rather than asking Hugging Face" \
+        nim_reads_the_weights_it_was_given
     capability "a shipped JWT_SECRET replaced is named, and a first install's new one is not" \
         a_shipped_jwt_secret_is_named_and_a_missing_one_is_not
     capability "with no network at all, a release we signed is installed, then handed to ut-install" \
