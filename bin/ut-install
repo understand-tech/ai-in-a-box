@@ -95,7 +95,15 @@ log()       { printf '%s\n' "$*"; }
 log_info()  { printf '%s[ ok ]%s %s\n' "$GREEN" "$NC" "$*"; say_message ok "$*"; }
 log_warn()  { printf '%s[warn]%s %s\n' "$YELLOW" "$NC" "$*"; say_message warn "$*"; }
 log_error() { printf '%s[fail]%s %s\n' "$RED" "$NC" "$*" >&2; say_message fail "$*"; }
-log_step()  { CURRENT_STEP=$*; printf '\n%s==>%s %s%s%s\n' "$CYAN" "$NC" "$BOLD" "$*" "$NC"; say_message step "$*"; }
+log_step()  { CURRENT_STEP=$(the_step_running); printf '\n%s==>%s %s%s%s\n' "$CYAN" "$NC" "$BOLD" "$*" "$NC"; say_message step "$*"; }
+# The install history leaves the box in the usage report, so it names a step by
+# its function: the text shown can carry the domain or a path.
+the_step_running() {
+    local name
+    for name in "${FUNCNAME[@]}"; do
+        [[ "$name" == step_* ]] && { printf '%s' "$name"; return 0; }
+    done
+}
 
 # --events writes each of these beside the text, never instead of it: ut-setup
 # reads the events, a person reads the text, and neither changes the other.
@@ -319,12 +327,28 @@ env_get() {
     printf '%s' "$value"
 }
 
+# A cut while a file is written in place leaves it empty. A copy beside it,
+# given the file's mode and owner, synced, then renamed over it, leaves either
+# the old content or the new one.
+replace_file_with() {
+    local file tmp
+    file=$(readlink -f "$1")
+    tmp=$(mktemp "${file}.XXXXXX")
+    cat > "$tmp"
+    if [[ -e "$file" ]]; then
+        chmod --reference="$file" "$tmp"
+        (( EUID != 0 )) || chown --reference="$file" "$tmp"
+    fi
+    sync "$tmp"
+    mv -f "$tmp" "$file"
+}
+
 env_drop() {
     local file=$1 key=$2 tmp
     grep -qE "^[[:space:]]*${key}=" "$file" 2>/dev/null || return 0
     tmp=$(mktemp)
     grep -vE "^[[:space:]]*${key}=" "$file" > "$tmp" || true
-    cat "$tmp" > "$file"
+    replace_file_with "$file" < "$tmp"
     rm -f "$tmp"
 }
 
@@ -343,8 +367,6 @@ write_the_list_a_server_keeps() {
 }
 
 env_set() {
-    # Copying the temp file's content back, rather than moving it over, keeps
-    # the original inode and its 0600 permissions.
     local file=$1 key=$2 value=$3 tmp found=0 line
     tmp=$(mktemp)
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -356,7 +378,7 @@ env_set() {
         fi
     done < "$file"
     (( found )) || printf '%s="%s"\n' "$key" "$value" >> "$tmp"
-    cat "$tmp" > "$file"
+    replace_file_with "$file" < "$tmp"
     rm -f "$tmp"
 }
 
@@ -372,6 +394,14 @@ database_already_initialised() {
     local env_file=$1 prefix
     prefix=$(env_get "$env_file" RESOURCE_PREFIX 2>/dev/null || true)
     docker volume inspect "${prefix:-ut}-mongodb-data" >/dev/null 2>&1
+}
+
+# The backup volume also holds the database dumps, which main wrote without
+# restic: only a repository's config says there are snapshots to open.
+files_backup_repository_exists() {
+    local mountpoint
+    mountpoint=$(docker volume inspect -f '{{ .Mountpoint }}' "$(volume_named mongodb-backups)" 2>/dev/null) || return 1
+    [[ -f "$mountpoint/restic/config" ]]
 }
 
 compose_in_dir() { ( cd "$INSTALL_DIR" && docker compose "$@" ); }
@@ -1032,10 +1062,16 @@ generate_database_credentials() {
 }
 
 generate_application_secrets() {
-    local local_file=$1 key rotated=()
+    local local_file=$1 key value rotated=() forgeable=false
 
     for key in "${GENERATED_SECRET_KEYS[@]}"; do
-        if is_shipped_placeholder "$(env_get "$local_file" "$key" || true)"; then
+        value=$(env_get "$local_file" "$key" || true)
+        if is_shipped_placeholder "$value"; then
+            if [[ "$key" == BACKUP_FILES_PASSWORD ]] && files_backup_repository_exists; then
+                die "A backup repository is already here, and ${local_file} holds no BACKUP_FILES_PASSWORD for it, or a shipped one. A new password would leave every snapshot unreadable: put back the one it was created with, then run ut-install again."
+            fi
+            # An empty value is a first install, not a secret others shared.
+            [[ "$key" == JWT_SECRET && -n "$value" ]] && forgeable=true
             case "$key" in
                 JWT_SECRET|BACKUP_FILES_PASSWORD) env_set "$local_file" "$key" "$(random_alphanumeric 64)" ;;
                 APP_BUILDER_TOKEN_ENCRYPTION_KEY) env_set "$local_file" "$key" "$(random_fernet_key)" ;;
@@ -1052,8 +1088,7 @@ generate_application_secrets() {
     fi
 
     log_info "Generated: ${rotated[*]}"
-    [[ " ${rotated[*]} " == *" JWT_SECRET "* ]] \
-        && log_warn "JWT_SECRET was the shipped value — tokens were forgeable across deployments"
+    $forgeable && log_warn "JWT_SECRET was the shipped value — tokens were forgeable across deployments"
     return 0
 }
 
@@ -1136,14 +1171,14 @@ checkout_logged_in_debug_by_the_old_default() {
 # Lines are carried over verbatim, never re-quoted: GATEWAY_MODELS holds JSON
 # inside single quotes, which env_set would rewrite as KEY="value" and corrupt.
 migrate_existing_settings_into_local() {
-    local env_file=$1 local_file=$2 release line key kept=0 diverged=0 left=0 left_names="" debug_log_level_left_behind=0
+    local env_file=$1 local_file=$2 release line key kept=0 diverged=0 left=0 left_names="" debug_log_level_left_behind=0 split
     release="$INSTALL_DIR/release.env"
 
     [[ -s "$env_file" ]] || return 0
     [[ -s "$local_file" ]] && return 0
 
     install -m 600 "$env_file" "${local_file%/*}/env.before-split"
-    install -m 600 /dev/null "$local_file"
+    split=$(mktemp)
 
     while IFS= read -r line || [[ -n "$line" ]]; do
         case "$line" in
@@ -1161,9 +1196,12 @@ migrate_existing_settings_into_local() {
             continue
         fi
         if grep -qE "^${key}=" "$release" 2>/dev/null; then diverged=$((diverged + 1)); fi
-        printf '%s\n' "$line" >> "$local_file"
+        printf '%s\n' "$line" >> "$split"
         kept=$((kept + 1))
     done < "$env_file"
+    # The next run splits again only while local.env is empty, so it appears whole.
+    replace_file_with "$local_file" < "$split"
+    rm -f "$split"
 
     log_info "Split the settings: ${kept} kept as yours, ${diverged} of them differing from this release"
     if (( left > 0 )); then
@@ -1408,7 +1446,7 @@ put_the_line_in_place_of_its_key() {
     tmp=$(mktemp)
     grep -v -E "^[[:space:]]*${key}=" "$local_file" > "$tmp" || true
     printf '%s\n' "$line" >> "$tmp"
-    cat "$tmp" > "$local_file"
+    replace_file_with "$local_file" < "$tmp"
     rm -f "$tmp"
 }
 
@@ -1806,7 +1844,7 @@ render_settings() {
         cat "$local_file" >> "$tmp"
     fi
 
-    cat "$tmp" > "$target"
+    replace_file_with "$target" < "$tmp"
     rm -f "$tmp"
 }
 
@@ -1875,6 +1913,7 @@ step_configure() {
     write_the_settings_an_arbiter_role_needs "$local_file"
     write_the_settings_a_platform_taking_its_inference_back_needs "$local_file"
     write_the_settings_the_model_needs "$local_file"
+    point_nim_at_the_weights_placed "$local_file"
     write_the_settings_a_compute_node_needs "$local_file"
     write_the_list_a_server_keeps "$local_file"
     write_the_link_a_platform_keeps "$local_file"
@@ -2256,7 +2295,7 @@ forget_the_images_of_a_folder() {
     grep -qE "^[A-Z_]+_IMAGE=\"?${FOLDER_REGISTRY_ADDRESS}/" "$local_file" 2>/dev/null || return 0
     tmp=$(mktemp)
     grep -vE "^[A-Z_]+_IMAGE=\"?${FOLDER_REGISTRY_ADDRESS}/" "$local_file" > "$tmp" || true
-    cat "$tmp" > "$local_file"
+    replace_file_with "$local_file" < "$tmp"
     rm -f "$tmp"
     log_info "Images come from the registry again, no longer from a folder"
 }
@@ -2392,8 +2431,25 @@ place_the_weights() {
         fi
     done
     env_set "$local_file" HF_HUB_OFFLINE "1"
+    point_nim_at_the_weights_placed "$local_file"
     render_settings "$INSTALL_DIR/.env" "$local_file"
     log_info "No model is downloaded on its first start"
+}
+
+# NIM resolves an hf:// path through the Hugging Face API as it starts, whatever
+# HF_HUB_OFFLINE says, and the engine has no way out: measured on 2026-10-31, a
+# box installed afresh restarted it in a loop and never served. Once the weights
+# are placed, it is given their snapshot instead, at the revision the release pins.
+point_nim_at_the_weights_placed() {
+    local local_file=$1 path repository revision
+    [[ "$(env_get "$local_file" HF_HUB_OFFLINE 2>/dev/null || true)" == 1 ]] || return 0
+    path=$(env_get "$local_file" NIM_LLM_MODEL_PATH 2>/dev/null || release_declares NIM_LLM_MODEL_PATH || true)
+    [[ "$path" == hf://* ]] || return 0
+    repository=${path#hf://}
+    revision=$(awk -v prefix="${repository}@" 'index($3, prefix) == 1 { split(substr($3, length(prefix) + 1), part, "/"); print part[1]; exit }' \
+        "$INSTALL_DIR"/models/weights/*.txt 2>/dev/null)
+    [[ -n "$revision" ]] || return 0
+    env_set "$local_file" NIM_LLM_MODEL_PATH "/opt/nim/.cache/huggingface/hub/models--${repository//\//--}/snapshots/${revision}"
 }
 
 model_this_box_serves() {
@@ -2903,7 +2959,7 @@ put_the_old_database_password_back() {
     log_error "Changing the password failed — putting the old one back"
     the_database_answers && { database_opens_with "$user" "$old" || change_database_password "$user" "$new" "$old"; } \
         || die "The database did not answer, or took neither password. Running ut-install again settles ${local_file} on the one it takes, once it answers. The backup taken before: ${archive}"
-    printf '%s\n' "$saved" > "$local_file"
+    printf '%s\n' "$saved" | replace_file_with "$local_file"
     render_settings "$INSTALL_DIR/.env" "$local_file"
     rm -f "$(database_password_change_record)"
     compose_in_dir up -d && every_waited_for_service_is_ready \

@@ -2995,6 +2995,88 @@ ut_install_answers() {
     )
 }
 
+# A customer agrees to a change of model on what the release notes say: they
+# name every setting that changes what a box serves, and say nothing changed
+# when nothing did.
+the_release_notes_say_when_the_model_changes() {
+    local previous="$WORK_DIR/notes-previous.env" current="$WORK_DIR/notes-current.env" same changed
+    cp "$REPO_ROOT/release.env" "$previous"
+    cp "$REPO_ROOT/release.env" "$current"
+    same=$(bash "$REPO_ROOT/packaging/model-changes.sh" "$previous" "$current" 2026.10.0-rc0)
+    grep -q '^\*\*Models: unchanged since 2026.10.0-rc0' <<< "$same" || { echo "unchanged settings read as: ${same}"; return 1; }
+    sed -i.bak 's|^NIM_LLM_MODEL_PATH=.*|NIM_LLM_MODEL_PATH="hf://Example/Another-Model"|' "$current"
+    changed=$(bash "$REPO_ROOT/packaging/model-changes.sh" "$previous" "$current" 2026.10.0-rc0)
+    grep -q '^\*\*Models: changed since 2026.10.0-rc0' <<< "$changed" && grep -q 'NIM_LLM_MODEL_PATH.*hf://Example/Another-Model' <<< "$changed" \
+        || { echo "a changed model read as: ${changed}"; return 1; }
+}
+
+# Inside ut-install: the NIM path a settings file ends with, given what it held.
+nim_path_from() {
+    local file="$WORK_DIR/nim-path-$1.env"
+    mkdir -p "$INSTALL_DIR/models/weights"
+    printf '%s\n' "0000 1 Example/Model-7B@0123456789abcdef0123456789abcdef01234567/config.json" > "$INSTALL_DIR/models/weights/example.txt"
+    printf '%b' "$2" > "$file"
+    point_nim_at_the_weights_placed "$file"
+    env_get "$file" NIM_LLM_MODEL_PATH
+}
+
+# The engine has no way out and NIM asks Hugging Face for an hf:// path as it
+# starts: once the weights are placed, it reads their snapshot.
+nim_reads_the_weights_it_was_given() {
+    local placed online local_already expected
+    expected=/opt/nim/.cache/huggingface/hub/models--Example--Model-7B/snapshots/0123456789abcdef0123456789abcdef01234567
+    placed=$(ut_install_answers nim_path_from placed 'HF_HUB_OFFLINE="1"\nNIM_LLM_MODEL_PATH="hf://Example/Model-7B"\n')
+    online=$(ut_install_answers nim_path_from online 'HF_HUB_OFFLINE="0"\nNIM_LLM_MODEL_PATH="hf://Example/Model-7B"\n')
+    local_already=$(ut_install_answers nim_path_from local "HF_HUB_OFFLINE=\"1\"\nNIM_LLM_MODEL_PATH=\"${expected}\"\n")
+    [[ "$placed" == "$expected" ]] || { echo "with the weights placed, NIM reads ${placed:-nothing}"; return 1; }
+    [[ "$online" == hf://Example/Model-7B ]] || { echo "online, NIM was moved off its repository: ${online:-nothing}"; return 1; }
+    [[ "$local_already" == "$expected" ]] || { echo "a snapshot path became ${local_already:-nothing}"; return 1; }
+}
+
+# Inside ut-install: what generate_application_secrets says of JWT_SECRET, given
+# the settings file it starts from.
+jwt_secret_warning_from() {
+    local file="$WORK_DIR/jwt-secret-$1.env"
+    printf '%b' "$2" > "$file"
+    if generate_application_secrets "$file" 2>&1 | grep -q 'tokens were forgeable'; then echo warned; else echo silent; fi
+}
+
+# A first install has no JWT_SECRET yet: calling the one it draws a replaced
+# shipped value told every new box its tokens had been forgeable.
+a_shipped_jwt_secret_is_named_and_a_missing_one_is_not() {
+    local first shipped
+    first=$(ut_install_answers jwt_secret_warning_from first '')
+    shipped=$(ut_install_answers jwt_secret_warning_from shipped 'JWT_SECRET="SECRET"\n')
+    [[ "$first" == silent ]] || { echo "a first install was told its JWT_SECRET was the shipped one (${first})"; return 1; }
+    [[ "$shipped" == warned ]] || { echo "a shipped JWT_SECRET was replaced without a word (${shipped})"; return 1; }
+}
+
+# Inside ut-install: what generate_application_secrets leaves in an empty
+# BACKUP_FILES_PASSWORD when the backup volume holds a restic repository, or
+# only the database dumps main wrote there.
+backup_password_after() {
+    local file="$WORK_DIR/backup-password-$1.env" volume="$WORK_DIR/backup-volume-$1"
+    mkdir -p "$volume"
+    [[ "$1" == repository ]] && mkdir -p "$volume/restic" && : > "$volume/restic/config"
+    printf 'BACKUP_FILES_PASSWORD=""\n' > "$file"
+    docker() { [[ "$1 $2" == "volume inspect" ]] && echo "$volume"; }
+    if ( generate_application_secrets "$file" ) >/dev/null 2>&1; then
+        env_get "$file" BACKUP_FILES_PASSWORD
+    else
+        echo "refused:$(env_get "$file" BACKUP_FILES_PASSWORD)"
+    fi
+}
+
+# A new BACKUP_FILES_PASSWORD over an existing repository leaves every snapshot
+# unreadable; an upgrade from main, whose volume holds only dumps, still gets one.
+a_backup_repository_keeps_its_password() {
+    local dumps repository
+    dumps=$(ut_install_answers backup_password_after dumps)
+    repository=$(ut_install_answers backup_password_after repository)
+    [[ ${#dumps} == 64 ]] || { echo "beside database dumps alone, as main left them, no password was drawn (${dumps:-none})"; return 1; }
+    [[ "$repository" == "refused:" ]] || { echo "an existing repository was given a new password (${repository:-none})"; return 1; }
+}
+
 the_relay_destinations_written_in() {
     local repository expected got
     while IFS='|' read -r repository expected; do
@@ -3623,6 +3705,12 @@ fi
 
 if [[ -x "$REPO_ROOT/bin/ut-get" ]]; then
     group "Installing from a release"
+    capability "the release notes say when the model changes, and what changes" \
+        the_release_notes_say_when_the_model_changes
+    capability "with the weights placed, NIM reads their snapshot rather than asking Hugging Face" \
+        nim_reads_the_weights_it_was_given
+    capability "a shipped JWT_SECRET replaced is named, and a first install's new one is not" \
+        a_shipped_jwt_secret_is_named_and_a_missing_one_is_not
     capability "with no network at all, a release we signed is installed, then handed to ut-install" \
         a_signed_release_is_installed_then_handed_to_ut_install
     capability "nothing is installed from a release that was altered, signed by another key, or not signed at all" \
@@ -3809,6 +3897,8 @@ if [[ -f "$REPO_ROOT/backup-files.sh" ]]; then
         an_unreachable_destination_is_named
     capability "a password that does not open the repository is named as such" \
         a_password_that_does_not_open_the_repository_is_named
+    capability "a reinstall never draws a new password over an existing repository" \
+        a_backup_repository_keeps_its_password
     capability "the database leaves with them, not only the files" \
         the_database_leaves_the_machine_with_the_files
 fi
@@ -3847,16 +3937,18 @@ history_probe() {
 }
 
 # Each value of exits is one run of the installer ending with that status, while
-# the step it had announced last was the one given.
+# the step it had announced last was the one given, as the function running and
+# the text it shows.
 install_history_after() {
-    local probe=$1 exits=$2 step=$3
+    local probe=$1 exits=$2 step=$3 text=$4
     cat > "$probe/run.sh" <<EOF
 set +u
 UT_INSTALL_DIR="$probe" source "$REPO_ROOT/bin/ut-install" >/dev/null 2>&1
 set +eE
 trap - ERR
+$step() { log_step "$text" >/dev/null; }
 for status in $exits; do
-    ( trap record_this_install EXIT; log_step "$step" >/dev/null; exit "\$status" )
+    ( trap record_this_install EXIT; $step; exit "\$status" )
 done
 EOF
     bash "$probe/run.sh" >/dev/null 2>&1
@@ -3870,8 +3962,8 @@ the_installer_keeps_every_run_from_its_first_step() {
 
 a_failed_install_is_kept_with_the_step_it_stopped_at() {
     local history
-    history=$(install_history_after "$(history_probe)" 1 "Pulling images")
-    grep -q '"tool":"ut-install","outcome":"failed","step":"Pulling images","release":"2026.10.1+abc1234"' <<< "$history" \
+    history=$(install_history_after "$(history_probe)" 1 step_pull "Pulling images")
+    grep -q '"tool":"ut-install","outcome":"failed","step":"step_pull","release":"2026.10.1+abc1234"' <<< "$history" \
         && return 0
     echo "${history:-no history written}"
     return 1
@@ -3879,7 +3971,7 @@ a_failed_install_is_kept_with_the_step_it_stopped_at() {
 
 a_second_install_is_added_after_the_first() {
     local history
-    history=$(install_history_after "$(history_probe)" "1 0" "Starting the platform")
+    history=$(install_history_after "$(history_probe)" "1 0" step_start "Starting the platform")
     [[ $(grep -c '"tool":"ut-install"' <<< "$history") -eq 2 ]] \
         && tail -1 <<< "$history" | grep -q '"outcome":"done","step":""' \
         && return 0
@@ -3996,7 +4088,7 @@ users_by_hour() { printf '$users'; }
 recorder_storage() { printf '${RECORDER_STORAGE-}'; }
 recorder_retention() { printf '${RECORDER_RETENTION-5w or 1GiB}'; }
 the_database_runs_here() { return 0; }
-running_images() { printf 'api ghcr.io/understand-tech/ut-api-customer:2.1-arm64@sha256:0000\n'; }
+running_images() { printf '${IMAGES-api ghcr.io/understand-tech/ut-api-customer:2.1-arm64@sha256:0000\\n}'; }
 host_memory() { printf '128000000000 23000000000\n'; }
 service_memory() { printf '${SERVICE_MEMORY-api 537022464 596684800 4294967296 2026-10-06T09:45:26Z\\nnim-llm 7500000000 92000000000 max 2026-10-06T09:45:26Z\\n}'; }
 write_report "$probe/out"
@@ -4006,6 +4098,24 @@ EOF
 }
 
 a_served_hour() { report_from "$(history_probe)" '1759651200 5\n' '1759651200 3\n' '1759651200 0.8\n'; }
+# A failed install whose last step showed the domain and a folder, on a box that
+# pulls from its own registry: the report sent from it names neither.
+the_report_names_no_address_of_the_box() {
+    local probe report leaked="" leaked_value
+    probe=$(history_probe)
+    install_history_after "$probe" 1 step_check_resolution "Checking how box.example.test resolves from /srv/images" >/dev/null
+    report=$(IMAGES='api registry.example.test:5000/understand-tech/ut-api:2.1@sha256:0000\n' \
+        report_from "$probe" '1759651200 5\n' '1759651200 3\n' '1759651200 0.8\n')
+    [[ -n "$report" ]] || { echo "no report written"; return 1; }
+    grep -q '"step":"step_check_resolution"' <<< "$report" || { echo "the failed step is not named in the report"; return 1; }
+    for leaked_value in box.example.test /srv/images registry.example.test; do
+        grep -qF "$leaked_value" <<< "$report" && leaked+=" ${leaked_value}"
+    done
+    [[ -z "$leaked" ]] && return 0
+    echo "the report carries:${leaked}"
+    return 1
+}
+
 
 the_report_holds_no_key_outside_its_schema() {
     local report key unknown=""
@@ -4252,6 +4362,8 @@ if [[ -x "$REPO_ROOT/bin/ut-report" ]]; then
         the_report_holds_no_key_outside_its_schema
     capability "the report names no user" \
         the_report_names_no_user
+    capability "a failed install's report names its step, never the box's domain, folders or registry" \
+        the_report_names_no_address_of_the_box
     capability "requests served with no user counted are flagged" \
         requests_served_with_no_user_counted_are_flagged
     capability "a series the recorder does not have is flagged" \

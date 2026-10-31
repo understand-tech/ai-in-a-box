@@ -146,6 +146,14 @@ your identity provider.
 The configuration page stays reachable at
 `https://<your-domain>/en/workspace/admin` with the password you just set.
 
+Changing sign-on or a provider key later on this page reaches the service that
+saved it at once; the others read it when they start. Restart them after
+saving:
+
+```bash
+cd /usr/share/understandtech && sudo docker compose restart api api-customer workers workers-customer
+```
+
 Day-to-day administration of tenants and users is a different surface:
 `https://admin.<your-domain>`. See
 [using the platform](using-the-platform.md) for what each address is for.

@@ -16,6 +16,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       # dpkg-deb writes the build time into the archive, so two builds a second
       # apart differ. Fixing it to the commit's own date is what lets anyone
@@ -113,7 +115,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          sed "s/VERSION/${VERSION}/g" packaging/release-notes.md > dist/notes.md
+          # The release before this one, candidate or not: what a box updates from.
+          previous=$(git describe --tags --abbrev=0 --match 'v*' "${GITHUB_REF_NAME}^")
+          git show "${previous}:release.env" > dist/previous-release.env
+          bash packaging/model-changes.sh dist/previous-release.env release.env "${previous#v}" > dist/notes.md
+          sed "s/VERSION/${VERSION}/g" packaging/release-notes.md >> dist/notes.md
 
           # A version carrying a suffix — 2026.09.0-rc1 — is a candidate, and
           # marking it keeps it off the repository page as the one to install.
