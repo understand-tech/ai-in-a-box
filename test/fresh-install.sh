@@ -225,6 +225,13 @@ state_setup() {
         # tells an operator to write it.
         openai_key_given)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'OA_KEY="sk-test-kept"\n'"'"' > /etc/understandtech/local.env' ;;
+        # An install updated from a release that had no connector key: its
+        # settings hold other generated secrets, and not that one.
+        update_without_the_connector_key)
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'JWT_SECRET="keptfromthelocalenv0123456789abcdef0123456789abcd"\nAPP_BUILDER_TOKEN_ENCRYPTION_KEY="a2VwdGZyb210aGVjaGVja291dDAxMjM0NTY3ODlhYmM="\n'"'"' > /etc/understandtech/local.env' ;;
+        # The same install on its next update, the key now in its settings.
+        update_with_a_connector_key)
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'JWT_SECRET="keptfromthelocalenv0123456789abcdef0123456789abcd"\nAGENT_CONNECTOR_KEY_V1="a2VwdC1jb25uZWN0b3Ita2V5LTAxMjM0NTY3ODkwMTI="\n'"'"' > /etc/understandtech/local.env' ;;
         # An entry a team adds to the registry, served by vLLM.
         model_on_vllm|test_vllm_forced_on_nim)
             echo 'cp /w/models/test-vllm.env /usr/share/understandtech/models/ && cp /w/models/proven/test-vllm.vllm.gb10.md /usr/share/understandtech/models/proven/' ;;
@@ -548,7 +555,7 @@ the_builder_key_is_one_fernet_accepts() {
 
 two_installs_do_not_share_a_secret() {
     local key a b
-    for key in JWT_SECRET APP_BUILDER_TOKEN_ENCRYPTION_KEY; do
+    for key in JWT_SECRET APP_BUILDER_TOKEN_ENCRYPTION_KEY AGENT_CONNECTOR_KEY_V1; do
         a=$(grep -m1 "^${key}=" <<< "$(settings_of bare)" | cut -d= -f2-)
         b=$(grep -m1 "^${key}=" <<< "$(settings_of empty_settings)" | cut -d= -f2-)
         [[ -n "$a" && "$a" != "$b" ]] && continue
@@ -600,6 +607,57 @@ an_openai_key_given_is_never_replaced() {
     grep -qx 'OA_KEY="sk-test-kept"' <<< "$settings" && return 0
     grep '^OA_KEY' <<< "$settings"
     echo "$(output_of openai_key_given)"
+    return 1
+}
+
+# Read as the api reads it: strict standard base64, 32 bytes. A Fernet key
+# (URL-safe alphabet) is refused by cipher.master_secret.
+is_standard_base64_of_32_bytes() {
+    local key=$1
+    [[ ${#key} -eq 44 && "$key" =~ ^[A-Za-z0-9+/]{43}=$ ]] || return 1
+    [[ $(printf '%s' "$key" | base64 -d 2>/dev/null | wc -c | tr -d ' ') == 32 ]]
+}
+
+connector_key_of() { grep -m1 '^AGENT_CONNECTOR_KEY_V1=' <<< "$(settings_of "$1")" | cut -d= -f2- | tr -d '"'; }
+
+the_connector_key_is_32_bytes_of_standard_base64() {
+    local key
+    key=$(connector_key_of "$1")
+    is_standard_base64_of_32_bytes "$key" && return 0
+    echo "AGENT_CONNECTOR_KEY_V1 is ${#key} characters and not standard base64 of 32 bytes: every connection answers 503"
+    return 1
+}
+
+the_connector_key_is_kept_when_the_settings_hold_one() {
+    [[ $(connector_key_of update_with_a_connector_key) == "a2VwdC1jb25uZWN0b3Ita2V5LTAxMjM0NTY3ODkwMTI=" ]] && return 0
+    echo "the key an update found was replaced: every stored connection is now unreadable"
+    return 1
+}
+
+an_update_keeps_the_other_secrets_it_found() {
+    local settings
+    settings=$(settings_of update_without_the_connector_key)
+    grep -q '^JWT_SECRET="keptfromthelocalenv' <<< "$settings" \
+        && grep -q '^APP_BUILDER_TOKEN_ENCRYPTION_KEY="a2VwdGZyb210aGVjaGVja291dDAxMjM0NTY3ODlhYmM="' <<< "$settings" && return 0
+    echo "adding the connector key disturbed a secret the install already had"
+    return 1
+}
+
+# Rendered the way an install is, then read per service: the value is compared
+# in here and never printed.
+the_connector_key_reaches_the_api_and_no_other_service() {
+    local state=$1 render holders key
+    render="$WORK_DIR/render-key-$state"
+    mkdir -p "$render"
+    cp "$REPO_ROOT"/compose*.yaml "$render/"
+    settings_of "$state" > "$render/.env"
+    key=$(connector_key_of "$state")
+    holders=$( cd "$render" && docker compose config 2>/dev/null | awk -v key="$key" '
+        /^[^[:space:]]/ { top = $1 }
+        top == "services:" && /^  [a-z][a-z0-9-]*:$/ { service = $1; sub(/:$/, "", service); next }
+        top == "services:" && $1 == "AGENT_CONNECTOR_KEY_V1:" && $2 == key { print service }' | sort -u | tr '\n' ' ' )
+    [[ "$holders" == "api " ]] && return 0
+    echo "the key reaches: ${holders:-no service} (expected the api alone, with the value the install wrote)"
     return 1
 }
 
@@ -2000,6 +2058,8 @@ INSTALL_COMMAND=/srv/clone/bin/ut-install \
 run_install_from_state empty_settings
 run_install_from_state installed_before_licenses
 run_install_from_state openai_key_given
+run_install_from_state update_without_the_connector_key
+run_install_from_state update_with_a_connector_key
 run_install_from_state engine_key_left_empty
 run_install_from_state origins_on_an_old_domain
 INSTALL_COMMAND="ut-install --model qwen3.8-27b-nvfp4" run_install_from_state model_on_nim
@@ -2151,6 +2211,16 @@ property "the secrets are not the ones the template ships" \
     secrets_are_not_the_shipped_ones bare
 property "the App Builder's token key is one Fernet accepts" \
     the_builder_key_is_one_fernet_accepts
+property "the connector key is standard base64 of 32 bytes, which is what the API reads" \
+    the_connector_key_is_32_bytes_of_standard_base64 bare
+property "an update of an install that lacks the connector key generates one" \
+    the_connector_key_is_32_bytes_of_standard_base64 update_without_the_connector_key
+property "adding the connector key leaves the other secrets as they were" \
+    an_update_keeps_the_other_secrets_it_found
+property "an update never replaces a connector key it finds" \
+    the_connector_key_is_kept_when_the_settings_hold_one
+property "the connector key reaches the API and no other service" \
+    the_connector_key_reaches_the_api_and_no_other_service bare
 
 property "a machine without a GPU is told its documents get no answer" \
     a_machine_without_gpu_is_told_documents_get_no_answer
