@@ -4555,6 +4555,8 @@ capability "an app that mounts the Docker socket is refused before anything is w
     an_app_that_mounts_the_docker_socket_is_refused_before_anything_is_written
 
 group "Keeping the history of an install"
+capability "logging before a named step preserves installer progress" \
+    bash "$REPO_ROOT/test/installer-step-name.sh"
 capability "every install run is kept, from its first step" \
     the_installer_keeps_every_run_from_its_first_step
 capability "a failed install is kept, with the step it stopped at" \

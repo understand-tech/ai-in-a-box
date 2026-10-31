@@ -17,6 +17,7 @@ SENSITIVE_KEYS=(
     APP_BUILDER_GATEWAY_API_KEY NGC_API_KEY CLAUDE_API_KEY
     GATEWAY_TRUSTED_PROXY_KEYS GATEWAY_METRICS_TOKEN
     APP_BUILDER_TOKEN_ENCRYPTION_KEY APP_BUILDER_GITLAB_CLIENT_SECRET
+    AGENT_CONNECTOR_KEY_V1
 )
 
 NOT_SECRETS_DESPITE_THE_NAME=(
@@ -552,6 +553,31 @@ check_every_volume_is_mounted() {
     done <<< "$(awk '/^volumes:/ { inside = 1; next } /^[^[:space:]#]/ { inside = 0 } inside && /^  [a-z][a-z0-9-]*:/ { sub(/^  /, ""); sub(/:.*/, ""); print }' "$REPO_ROOT/compose.yaml")"
 }
 
+# The key encrypts the connection tokens UT Agent keeps. Only the API reads it:
+# a second holder is one more place for it to leak from. A shared x- block would
+# hand it to api-customer too, so that is a holder as well.
+services_that_hold() {
+    local variable=$1
+    awk -v variable="$variable" '
+        /^[^[:space:]#]/ { top = $1; sub(/:$/, "", top); service = "" }
+        top == "services" && /^  [a-z][a-z0-9-]*:[[:space:]]*$/ { service = $1; sub(/:$/, "", service); next }
+        index($0, variable ":") && !/^[[:space:]]*#/ { print (top == "services" ? service : top) }' \
+        "$REPO_ROOT"/compose*.yaml | sort -u
+}
+
+check_the_connector_key_reaches_the_api_alone() {
+    local holder holders
+    holders=$(services_that_hold AGENT_CONNECTOR_KEY_V1)
+    while read -r holder; do
+        [[ -n "$holder" && "$holder" != api ]] || continue
+        report "connector-key-held-by:${holder}" \
+            "${holder} receives AGENT_CONNECTOR_KEY_V1: only the api reads it, and a second holder is one more place it can leak from"
+    done <<< "$holders"
+    grep -qx api <<< "$holders" && return 0
+    report "connector-key-reaches-nobody" \
+        "no compose service passes AGENT_CONNECTOR_KEY_V1 to the api: UT Agent's connection routes answer 503 on every install"
+}
+
 # A variable falling back to one value in one service and another elsewhere is
 # a difference nobody chose. MONGODB_HOST read `mongodb` for the App Builder and
 # the empty string for the seven services in compose.yaml, so an .env without
@@ -1012,6 +1038,7 @@ main() {
     check_imported_app_routes_stay_out_of_the_app_builders_hands
     check_ut_import_app_reads_the_default_origins
     check_the_gateway_trusts_the_app_builder_key
+    check_the_connector_key_reaches_the_api_alone
     check_defaults_do_not_diverge
     check_required_variables_appear_in_the_template
     check_required_variables_have_a_value_or_are_generated
