@@ -54,6 +54,31 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: ./test/invariants.sh
 
+  # A model of the database password rotation, proved, and checked against the
+  # installer cut at every step: formal/README.md.
+  database-rotation:
+    name: database password rotation survives every cut
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check the proof
+        uses: leanprover/lean-action@fe408643ea7367d8c0404a8be3975bb145f5fb64 # v1.7.0
+        with:
+          lake-package-directory: formal
+          build-args: --wfail
+          axiom-audit: true
+          axiom-audit-root: Rotation
+      # The report builds without the proof, so it still names the broken cut.
+      - name: Report every cut
+        if: ${{ !cancelled() }}
+        working-directory: formal
+        shell: bash
+        run: lake exe rotation_report | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Replay every cut on ut-install
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: (cd formal && lake exe rotation_cases) | ./test/database-rotation-cuts.sh
+
   # ut-send is the one compiled tool: vetted, tested, formatted, and built for
   # both architectures the package carries, so a release cannot fail to compile.
   ut-send:
