@@ -177,6 +177,24 @@ discriminates "the App Builder's token key defaulted in its overlay" \
     "compose-secret-default:APP_BUILDER_TOKEN_ENCRYPTION_KEY" \
     "sed -i.bak 's|\${APP_BUILDER_TOKEN_ENCRYPTION_KEY:-}|\${APP_BUILDER_TOKEN_ENCRYPTION_KEY:-shipped-value}|' compose.appbuilder.yaml"
 
+discriminates "the connector key defaulted in the compose file" \
+    "compose-secret-default:AGENT_CONNECTOR_KEY_V1" \
+    "sed -i.bak 's|\${AGENT_CONNECTOR_KEY_V1:-}|\${AGENT_CONNECTOR_KEY_V1:-shipped-value}|' compose.yaml"
+
+discriminates "the connector key given a value by the release" \
+    "plaintext-secret:AGENT_CONNECTOR_KEY_V1" \
+    "printf 'AGENT_CONNECTOR_KEY_V1=\"a3f9c1d2e4b8\"\n' >> release.env"
+
+if grep -q 'check_the_connector_key_reaches_the_api_alone' "$REPO_ROOT/test/invariants.sh"; then
+    discriminates "the connector key handed to every service that shares the API's settings" \
+        "connector-key-held-by:x-api-shared-env" \
+        "sed -i.bak 's|^  LOG_LEVEL: \${LOG_LEVEL:-INFO}\$|&\\n  AGENT_CONNECTOR_KEY_V1: \${AGENT_CONNECTOR_KEY_V1:-}|' compose.yaml"
+
+    discriminates "the connector key passed to no service" \
+        "connector-key-reaches-nobody" \
+        "sed -i.bak '/^      AGENT_CONNECTOR_KEY_V1: /d' compose.yaml"
+fi
+
 if grep -q 'check_no_healthcheck_carries_a_password' "$REPO_ROOT/test/invariants.sh"; then
     discriminates "the database's password put back in its healthcheck" \
         "healthcheck-carries-a-password:compose.yaml:235" \
@@ -1655,6 +1673,34 @@ fi
     install_walk_discriminates "a carried token key replaced by a new one" \
         "the App Builder's token key comes along" \
         "sed -i.bak 's|^    local local_file=\$1 key rotated=()\$|&; env_set \"\$local_file\" APP_BUILDER_TOKEN_ENCRYPTION_KEY \"\"|' bin/ut-install"
+
+    install_walk_discriminates "a connector key nobody generates" \
+        "an update of an install that lacks the connector key generates one" \
+        "sed -i.bak 's| AGENT_CONNECTOR_KEY_V1 VLLM_API_KEY)| VLLM_API_KEY)|' bin/ut-install"
+
+    install_walk_discriminates "a connector key the API cannot read" \
+        "the connector key is standard base64 of 32 bytes" \
+        "sed -i.bak 's|^random_base64_32() {\$|random_base64_32() { random_alphanumeric 44; return 0;|' bin/ut-install"
+
+    install_walk_discriminates "a connector key in the URL-safe alphabet of the App Builder's" \
+        "the connector key is standard base64 of 32 bytes" \
+        "sed -i.bak 's|^random_base64_32() {\$|random_base64_32() { printf %s abc-def_ghijklmnopqrstuvwxyzABCDEFGHIJKLMNO=; return 0;|' bin/ut-install"
+
+    install_walk_discriminates "two machines given the same connector key" \
+        "two installs do not share a secret" \
+        "sed -i.bak 's|^random_base64_32() {\$|random_base64_32() { printf %s a2VwdC1jb25uZWN0b3Ita2V5LTAxMjM0NTY3ODkwMTI=; return 0;|' bin/ut-install"
+
+    install_walk_discriminates "a connector key found in the settings replaced by a new one" \
+        "an update never replaces a connector key it finds" \
+        "sed -i.bak 's|^    local local_file=\$1 key rotated=()\$|&; env_set \"\$local_file\" AGENT_CONNECTOR_KEY_V1 \"\"|' bin/ut-install"
+
+    install_walk_discriminates "a connector key that no longer reaches the API" \
+        "the connector key reaches the API and no other service" \
+        "sed -i.bak '/^      AGENT_CONNECTOR_KEY_V1: /d' compose.yaml"
+
+    install_walk_discriminates "a connector key that reaches the customer API too" \
+        "the connector key reaches the API and no other service" \
+        "sed -i.bak 's|^  LOG_LEVEL: \${LOG_LEVEL:-INFO}\$|&\\n  AGENT_CONNECTOR_KEY_V1: \${AGENT_CONNECTOR_KEY_V1:-}|' compose.yaml"
 
     install_walk_discriminates "a declared machine refused anyway" \
         "the install goes on when the inference is served elsewhere" \
