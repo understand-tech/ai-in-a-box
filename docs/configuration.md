@@ -34,7 +34,8 @@ Knowing which kind you are editing matters more than knowing the variable.
 **Generated at install, never edited.** `JWT_SECRET`, `STATE_SECRET`,
 `OPENID_SECRET_KEY`, `ADMIN_SETUP_PASSWORD`, `BACKUP_FILES_PASSWORD`,
 `GPU_VM_API_TOKEN`, `GATEWAY_METRICS_TOKEN`,
-`APP_BUILDER_TOKEN_ENCRYPTION_KEY`, and the MongoDB credentials. Changing one
+`APP_BUILDER_TOKEN_ENCRYPTION_KEY`, `AGENT_CONNECTOR_KEY_V1`, and the MongoDB
+credentials. Changing one
 by hand after the fact breaks something: editing `MONGODB_PASSWORD` on a database
 that already exists locks every service out, because the image only reads it when
 it creates the data directory. `ut-install --rotate-database-password` changes it
@@ -82,7 +83,15 @@ hexadecimal:
 sed -i "s|^APP_BUILDER_TOKEN_ENCRYPTION_KEY=.*|APP_BUILDER_TOKEN_ENCRYPTION_KEY=\"$(openssl rand -base64 32 | tr '+/' '-_')\"|" /etc/understandtech/local.env
 ```
 
-**Three of them cannot be rotated by hand afterwards.**
+`AGENT_CONNECTOR_KEY_V1` is the other exception. UT Agent reads it as standard
+base64 of 32 random bytes and refuses the URL-safe alphabet of the key above, so
+the two are not made the same way:
+
+```bash
+sed -i "s|^AGENT_CONNECTOR_KEY_V1=.*|AGENT_CONNECTOR_KEY_V1=\"$(openssl rand -base64 32)\"|" /etc/understandtech/local.env
+```
+
+**Four of them cannot be rotated by hand afterwards.**
 
 `MONGODB_PASSWORD` is only read when the database is first created. Changing it
 in `local.env` changes nothing in the database and stops every service from
@@ -99,6 +108,19 @@ the offsite copy is exactly what you reach for when this machine is gone.
 `APP_BUILDER_TOKEN_ENCRYPTION_KEY` encrypts the GitLab tokens the App Builder
 stores. Changing it makes every stored connection unreadable, and every user has
 to connect GitLab again.
+
+`AGENT_CONNECTOR_KEY_V1` encrypts the connection tokens UT Agent keeps when a
+user connects an account (a mailbox, a Jira site). Only the API reads it.
+`ut-install` generates it once, on a first install and on the first update that
+finds it missing, and never replaces a value that is set. Changing it, or
+losing it, makes every stored connection unreadable: the connection routes
+answer `503 connector_key_unavailable` until each user connects the account
+again. Nothing else is affected. It lives in `local.env`, which
+[no backup carries](backup.md#the-two-secrets-kept-away-from-the-machine), so
+keep a copy of it with the other values you keep away from the machine if
+connections must survive a rebuild on another machine. On an install that is
+not run through `ut-install`, set it in `local.env` as above, or leave it empty:
+UT Agent still works, and only the connection routes answer 503.
 
 `JWT_SECRET` is shared by four services, so a token minted at one customer
 would be accepted at another if the value were the same. That is why nothing
