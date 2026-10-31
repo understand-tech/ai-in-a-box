@@ -2995,6 +2995,24 @@ ut_install_answers() {
     )
 }
 
+# Inside ut-install: what generate_application_secrets says of JWT_SECRET, given
+# the settings file it starts from.
+jwt_secret_warning_from() {
+    local file="$WORK_DIR/jwt-secret-$1.env"
+    printf '%b' "$2" > "$file"
+    if generate_application_secrets "$file" 2>&1 | grep -q 'tokens were forgeable'; then echo warned; else echo silent; fi
+}
+
+# A first install has no JWT_SECRET yet: calling the one it draws a replaced
+# shipped value told every new box its tokens had been forgeable.
+a_shipped_jwt_secret_is_named_and_a_missing_one_is_not() {
+    local first shipped
+    first=$(ut_install_answers jwt_secret_warning_from first '')
+    shipped=$(ut_install_answers jwt_secret_warning_from shipped 'JWT_SECRET="SECRET"\n')
+    [[ "$first" == silent ]] || { echo "a first install was told its JWT_SECRET was the shipped one (${first})"; return 1; }
+    [[ "$shipped" == warned ]] || { echo "a shipped JWT_SECRET was replaced without a word (${shipped})"; return 1; }
+}
+
 the_relay_destinations_written_in() {
     local repository expected got
     while IFS='|' read -r repository expected; do
@@ -3623,6 +3641,8 @@ fi
 
 if [[ -x "$REPO_ROOT/bin/ut-get" ]]; then
     group "Installing from a release"
+    capability "a shipped JWT_SECRET replaced is named, and a first install's new one is not" \
+        a_shipped_jwt_secret_is_named_and_a_missing_one_is_not
     capability "with no network at all, a release we signed is installed, then handed to ut-install" \
         a_signed_release_is_installed_then_handed_to_ut_install
     capability "nothing is installed from a release that was altered, signed by another key, or not signed at all" \
