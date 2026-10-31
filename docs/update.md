@@ -10,12 +10,13 @@ doing in the order below rather than the order that seems quicker.
 <!-- Scope: the order of the steps below, as one sequence. Not what each step
      checks internally — that is the rest of this page. -->
 <!-- Source of truth: this page's own numbered sections -->
-<!-- Date: 2026-10-29 -->
-<!-- Target: portal — status of "flowchart": not verified, no rendering engine
-     installed here. -->
+<!-- Date: 2026-10-31 -->
+<!-- Target: portal — status of "flowchart": parsed and rendered with
+     Mermaid 11.17.2, the portal's, on 2026-10-31. -->
 
 ```mermaid
 flowchart LR
+    AGREE["notice to the customer, written consent to any model change"]
     BACKUP["back up now, and verify the backup"]
     FETCH["get and verify the new package"]
     INSTALL["apt-get install - replaces /usr/share/understandtech only"]
@@ -23,22 +24,52 @@ flowchart LR
     SPLIT["split .env into release.env + local.env"]
     RESTART["restart what changed, remove retired containers"]
     VERIFY["docker compose ps - every service healthy"]
-    BACKUP --> FETCH --> INSTALL --> RUN --> SPLIT --> RESTART --> VERIFY
+    RECORD["record the update"]
+    AGREE --> BACKUP --> FETCH --> INSTALL --> RUN --> SPLIT --> RESTART --> VERIFY --> RECORD
 ```
 
 **Description** — Each step below is this diagram's box, in the same order:
-back up and verify first, since an update is the one operation that can cost a
-customer their data; then get and verify the new package exactly as an install
+the customer is told what changes and agrees in writing to any change of model
+before anything is touched; back up and verify first, since an update is the
+one operation that can cost a customer their data; then get and verify the new package exactly as an install
 does; `apt-get install` replaces the release directory only, never `/etc` or
 `/var/lib`; `ut-install` then rebuilds `.env` from the release's own
 `release.env` and the operator's `local.env`, restarts whatever a new value or
-a removed service requires, and the operator verifies every service is
-healthy.
+a removed service requires, the operator verifies every service is healthy, and
+writes down what was done.
 
 **Gaps** — Not drawn: what each step does when it finds the work already done,
 or what [an update does to your settings](#what-an-update-does-to-your-settings)
-in detail. Not verified: not seen rendered — no Mermaid engine is installed
-here.
+in detail.
+
+## Before: tell the customer, and agree on the model
+
+Send the customer the release notes, and the date of the update, before the
+window. The notes open with a **Models** line: unchanged since the previous
+release, or the list of model and engine settings that changed.
+
+**A change of model or engine needs the customer's written consent** — an email
+is enough — before the update. The answers a model gives change with it.
+
+The model a box serves is the one `local.env` names, or the release's when it
+names none:
+
+```bash
+grep '^UT_MODEL' /etc/understandtech/local.env
+```
+
+**If the customer refuses**, keep their model by name, before or with the
+update: `sudo ut-install --model <id>`, or `--model <id>` on `ut-get`. The name
+is kept by every later run. What is kept is the model, not its engine: the
+release's entry for it is applied again, so an engine image the notes list as
+changed still changes. A customer who refuses that too stays on the version in
+service until the installer can hold the engine back
+([#242](https://github.com/understand-tech/ai-in-a-box/issues/242)).
+
+**How far a kept model is tested.** The installer refuses a model the release
+has not proven on this machine's GPU (`sudo ut-install --list-models` shows
+which are). A proven model was qualified on that GPU; the rest of the release
+was tested with the release's own model.
 
 ## 1 · Back up first, and check the backup
 
@@ -47,8 +78,12 @@ Not the scheduled one — a fresh one, now.
 ```bash
 docker exec ut-mongodb-backup backup-now
 docker exec ut-mongodb-backup sh -c 'ls -lt /backup/*.archive.gz | head -1'
-docker exec ut-files-backup restic backup /data --tag pre-update
+docker exec ut-files-backup backup-files
 ```
+
+The last command runs the scheduled files backup now — the database dump just
+made included — checks the repository and copies it to the destination. It ends
+with `done`; any other last line is a backup that did not happen.
 
 An archive you have not verified is not a backup. See
 [restoring](restore.md#1--the-database) for the checksum check.
@@ -91,6 +126,18 @@ removed.
 and restarts the stack. Caddy, the metrics recorder, the files backup and the App
 Builder's proxy read a file from the release, so every new version recreates
 them: a changed file reaches them without a reboot.
+
+### A box with no network
+
+Prepare the release on a connected machine and carry it in, as for an
+[install with no network](install.md#in-one-command):
+
+```bash
+bash ut-get --prepare <folder> --version "$VERSION" --license-file license.key
+sudo bash ut-get --from <folder>
+```
+
+A customer who refused a change of model: add `--model <id>` to both.
 
 ### Installed from a git checkout
 
@@ -337,12 +384,31 @@ reason. Reach the database with `docker compose exec mongodb mongosh`; a
 Nothing is rolled back and nothing is lost: re-running the same command resumes.
 
 To go back to the previous version, install the package you came from and run
-the installer again:
+the installer again. A release `ut-get` installed is still in its cache,
+already verified:
 
 ```bash
-sudo apt-get install ./understandtech_<previous>_all.deb
+sudo apt-get install --allow-downgrades \
+    /var/cache/understandtech/releases/<previous>/understandtech_<previous>_all.deb
 sudo ut-install
 ```
+
+`apt-get` refuses to install an older version without `--allow-downgrades`.
+
+**How long it takes.** Measured on a GB10 holding 5,000 documents (15 GB) and
+50,000 conversations, in October 2026:
+
+| | Release with a new engine image | Release with the same images |
+|---|---|---|
+| Fresh backup, checked | 47 s | 47 s |
+| Update, until `ut-install` ends | 9 min 22 s | 38 s |
+| Until every service is healthy, the engine serving | 7 min 01 s | already |
+| Back to the previous version, until `ut-install` ends | 56 s | 36 s |
+| Until every service is healthy again, the engine serving | 6 min 00 s | already |
+
+The documents and conversations were identical after the update and after
+going back. Count on the engine for most of the wait: it loads its weights
+again whenever its image changes.
 
 `.env` stays one flat, complete file at the same path, so a version that knows
 nothing of `local.env` reads it anyway. Two checks in `test/migration.sh` hold
@@ -354,6 +420,39 @@ followed by `docker compose up -d` does the same thing.
 
 The data is untouched either way — volumes and `DATA_ROOT` are not versioned. If
 the data itself is wrong, see [restoring](restore.md).
+
+## After: record the update
+
+Each run of `ut-install` adds a line to
+`/var/lib/understandtech/install-history.jsonl`: when, the release, and whether
+it ended `done` or `failed` at which step. What the machine cannot know goes in
+the customer's record, one entry an update:
+
+| Date | Version before → after | Model before → after | Consent (who, when, how) | Operator | Backup checked | Result |
+|---|---|---|---|---|---|---|
+
+The result is the last line of `install-history.jsonl` and
+`docker compose ps` with every service healthy; a rollback is an entry of its
+own.
+
+## Holding the host's versions
+
+An update of the appliance changes the appliance, never the host. The kernel,
+the GPU driver, Docker and the NVIDIA container toolkit the release was
+qualified on stay where they are until a release says otherwise:
+
+```bash
+# Ubuntu and DGX OS
+sudo apt-mark hold docker-ce containerd.io nvidia-container-toolkit \
+    $(dpkg-query -W -f '${db:Status-Abbrev}${Package}\n' 'linux-image-*' 'linux-headers-*' 'nvidia-driver-*' \
+      | awk '/^ii/ { print substr($0, 4) }')
+# RHEL, on an Extended Update Support stream
+sudo dnf install python3-dnf-plugin-versionlock
+sudo dnf versionlock add kernel docker-ce containerd.io nvidia-container-toolkit 'nvidia-driver*'
+```
+
+No minor version of the host — an RHEL point release, a new driver branch — goes
+on a box in service before it has been qualified on a machine of the same kind.
 
 ## Rehearsing an update
 
