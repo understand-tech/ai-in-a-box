@@ -2995,6 +2995,21 @@ ut_install_answers() {
     )
 }
 
+# A customer agrees to a change of model on what the release notes say: they
+# name every setting that changes what a box serves, and say nothing changed
+# when nothing did.
+the_release_notes_say_when_the_model_changes() {
+    local previous="$WORK_DIR/notes-previous.env" current="$WORK_DIR/notes-current.env" same changed
+    cp "$REPO_ROOT/release.env" "$previous"
+    cp "$REPO_ROOT/release.env" "$current"
+    same=$(bash "$REPO_ROOT/packaging/model-changes.sh" "$previous" "$current" 2026.10.0-rc0)
+    grep -q '^\*\*Models: unchanged since 2026.10.0-rc0' <<< "$same" || { echo "unchanged settings read as: ${same}"; return 1; }
+    sed -i.bak 's|^NIM_LLM_MODEL_PATH=.*|NIM_LLM_MODEL_PATH="hf://Example/Another-Model"|' "$current"
+    changed=$(bash "$REPO_ROOT/packaging/model-changes.sh" "$previous" "$current" 2026.10.0-rc0)
+    grep -q '^\*\*Models: changed since 2026.10.0-rc0' <<< "$changed" && grep -q 'NIM_LLM_MODEL_PATH.*hf://Example/Another-Model' <<< "$changed" \
+        || { echo "a changed model read as: ${changed}"; return 1; }
+}
+
 # Inside ut-install: the NIM path a settings file ends with, given what it held.
 nim_path_from() {
     local file="$WORK_DIR/nim-path-$1.env"
@@ -3664,6 +3679,8 @@ fi
 
 if [[ -x "$REPO_ROOT/bin/ut-get" ]]; then
     group "Installing from a release"
+    capability "the release notes say when the model changes, and what changes" \
+        the_release_notes_say_when_the_model_changes
     capability "with the weights placed, NIM reads their snapshot rather than asking Hugging Face" \
         nim_reads_the_weights_it_was_given
     capability "a shipped JWT_SECRET replaced is named, and a first install's new one is not" \
