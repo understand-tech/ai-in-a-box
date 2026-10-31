@@ -95,6 +95,9 @@ the old one back if a step fails — see
 snapshot unreadable — including the offsite copies, including the certificate
 authority's root. **Write it down somewhere other than this machine**, because
 the offsite copy is exactly what you reach for when this machine is gone.
+When a backup repository already exists and `local.env` holds no
+`BACKUP_FILES_PASSWORD`, or a shipped one, `ut-install` stops rather than draw a
+new password: put back the one the repository was created with.
 
 `APP_BUILDER_TOKEN_ENCRYPTION_KEY` encrypts the GitLab tokens the App Builder
 stores. Changing it makes every stored connection unreadable, and every user has
