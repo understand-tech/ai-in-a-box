@@ -219,6 +219,10 @@ if grep -q 'check_the_first_backup_is_not_deferred_to_a_clock_time' "$REPO_ROOT/
         "sed -i.bak 's|\${BACKUP_BEGIN:-+0}|\${BACKUP_BEGIN:-1520}|' compose.yaml"
 fi
 
+capability_discriminates "a first install told its new JWT_SECRET was the shipped one" \
+    "a first install's new one is not" \
+    "sed -i.bak 's/\\[\\[ \"\\\$key\" == JWT_SECRET \&\& -n \"\\\$value\" \\]\\]/[[ \"\\\$key\" == JWT_SECRET ]]/' bin/ut-install"
+
 discriminates "one variable with two different defaults" \
     "divergent-default:MONGODB_HOST" \
     "sed -i.bak 's|\${MONGODB_HOST:-mongodb}|\${MONGODB_HOST:-}|' compose.appbuilder.yaml"

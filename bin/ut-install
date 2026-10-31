@@ -1022,10 +1022,13 @@ generate_database_credentials() {
 }
 
 generate_application_secrets() {
-    local local_file=$1 key rotated=()
+    local local_file=$1 key value rotated=() forgeable=false
 
     for key in "${GENERATED_SECRET_KEYS[@]}"; do
-        if is_shipped_placeholder "$(env_get "$local_file" "$key" || true)"; then
+        value=$(env_get "$local_file" "$key" || true)
+        if is_shipped_placeholder "$value"; then
+            # An empty value is a first install, not a secret others shared.
+            [[ "$key" == JWT_SECRET && -n "$value" ]] && forgeable=true
             case "$key" in
                 JWT_SECRET|BACKUP_FILES_PASSWORD) env_set "$local_file" "$key" "$(random_alphanumeric 64)" ;;
                 APP_BUILDER_TOKEN_ENCRYPTION_KEY) env_set "$local_file" "$key" "$(random_fernet_key)" ;;
@@ -1041,8 +1044,7 @@ generate_application_secrets() {
     fi
 
     log_info "Generated: ${rotated[*]}"
-    [[ " ${rotated[*]} " == *" JWT_SECRET "* ]] \
-        && log_warn "JWT_SECRET was the shipped value — tokens were forgeable across deployments"
+    $forgeable && log_warn "JWT_SECRET was the shipped value — tokens were forgeable across deployments"
     return 0
 }
 
