@@ -95,7 +95,15 @@ log()       { printf '%s\n' "$*"; }
 log_info()  { printf '%s[ ok ]%s %s\n' "$GREEN" "$NC" "$*"; say_message ok "$*"; }
 log_warn()  { printf '%s[warn]%s %s\n' "$YELLOW" "$NC" "$*"; say_message warn "$*"; }
 log_error() { printf '%s[fail]%s %s\n' "$RED" "$NC" "$*" >&2; say_message fail "$*"; }
-log_step()  { CURRENT_STEP=$*; printf '\n%s==>%s %s%s%s\n' "$CYAN" "$NC" "$BOLD" "$*" "$NC"; say_message step "$*"; }
+log_step()  { CURRENT_STEP=$(the_step_running); printf '\n%s==>%s %s%s%s\n' "$CYAN" "$NC" "$BOLD" "$*" "$NC"; say_message step "$*"; }
+# The install history leaves the box in the usage report, so it names a step by
+# its function: the text shown can carry the domain or a path.
+the_step_running() {
+    local name
+    for name in "${FUNCNAME[@]}"; do
+        [[ "$name" == step_* ]] && { printf '%s' "$name"; return 0; }
+    done
+}
 
 # --events writes each of these beside the text, never instead of it: ut-setup
 # reads the events, a person reads the text, and neither changes the other.
