@@ -88,8 +88,13 @@ base64 of 32 random bytes and refuses the URL-safe alphabet of the key above, so
 the two are not made the same way:
 
 ```bash
-sed -i "s|^AGENT_CONNECTOR_KEY_V1=.*|AGENT_CONNECTOR_KEY_V1=\"$(openssl rand -base64 32)\"|" /etc/understandtech/local.env
+if ! grep -q '^AGENT_CONNECTOR_KEY_V1=' /etc/understandtech/local.env; then
+    printf '\nAGENT_CONNECTOR_KEY_V1="%s"\n' "$(openssl rand -base64 32)" >> /etc/understandtech/local.env
+fi
 ```
+
+This command adds the setting when it is absent and preserves every existing
+entry. If the file already has an empty entry, run `sudo ut-install` to fill it.
 
 **Four of them cannot be rotated by hand afterwards.**
 
