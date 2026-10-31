@@ -1141,14 +1141,14 @@ checkout_logged_in_debug_by_the_old_default() {
 # Lines are carried over verbatim, never re-quoted: GATEWAY_MODELS holds JSON
 # inside single quotes, which env_set would rewrite as KEY="value" and corrupt.
 migrate_existing_settings_into_local() {
-    local env_file=$1 local_file=$2 release line key kept=0 diverged=0 left=0 left_names="" debug_log_level_left_behind=0
+    local env_file=$1 local_file=$2 release line key kept=0 diverged=0 left=0 left_names="" debug_log_level_left_behind=0 split
     release="$INSTALL_DIR/release.env"
 
     [[ -s "$env_file" ]] || return 0
     [[ -s "$local_file" ]] && return 0
 
     install -m 600 "$env_file" "${local_file%/*}/env.before-split"
-    install -m 600 /dev/null "$local_file"
+    split=$(mktemp)
 
     while IFS= read -r line || [[ -n "$line" ]]; do
         case "$line" in
@@ -1166,9 +1166,12 @@ migrate_existing_settings_into_local() {
             continue
         fi
         if grep -qE "^${key}=" "$release" 2>/dev/null; then diverged=$((diverged + 1)); fi
-        printf '%s\n' "$line" >> "$local_file"
+        printf '%s\n' "$line" >> "$split"
         kept=$((kept + 1))
     done < "$env_file"
+    # The next run splits again only while local.env is empty, so it appears whole.
+    replace_file_with "$local_file" < "$split"
+    rm -f "$split"
 
     log_info "Split the settings: ${kept} kept as yours, ${diverged} of them differing from this release"
     if (( left > 0 )); then

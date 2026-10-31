@@ -11,8 +11,6 @@ def Settings.Key.label : Key → String
 
 def Settings.Event.label : Event → String
   | .copyBefore => "keeping the old file as env.before-split"
-  | .createLocal => "creating local.env"
-  | .appendLine (key, _) => s!"carrying over {key.label}"
   | .writeLocal _ => "writing local.env"
   | .renderEnv => "rendering .env"
 

@@ -38,8 +38,10 @@ each step. `SettingsProofs.lean` states the rule:
 > After any cut and one more run, every setting compose reads is the one an
 > uncut migration gives: the operator's values kept, the release's for the rest.
 
-The next run splits again only while `local.env` is empty, so a `local.env`
-written line by line and cut halfway is taken as complete.
+The next run splits again only while `local.env` is empty, so the split writes
+it in one rename (`replace_file_with`). Before that it appended line by line,
+and this check found the cut that left a partial `local.env` the next run took
+as complete.
 
 ## What each check does
 

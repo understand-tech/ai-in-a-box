@@ -27,29 +27,25 @@ def migrated : List Line := mainEnv.filter keptByMigration
 
 structure State where
   localEnv : List Line
-  localExists : Bool
 deriving Repr
 
 inductive Event
   | copyBefore
-  | createLocal
-  | appendLine (line : Line)
   | writeLocal (lines : List Line)
   | renderEnv
 deriving Repr
 
 def apply (s : State) : Event → State
-  | .createLocal => { s with localExists := true }
-  | .appendLine line => { s with localEnv := s.localEnv.concat line }
-  | .writeLocal lines => { localEnv := lines, localExists := true }
+  | .writeLocal lines => { localEnv := lines }
   | .copyBefore | .renderEnv => s
 
 def migration : List Event :=
-  [.copyBefore, .createLocal] ++ migrated.map .appendLine ++ [.renderEnv]
+  [.copyBefore, .writeLocal migrated, .renderEnv]
 
-def initial : State := ⟨[], false⟩
+def initial : State := ⟨[]⟩
 
--- A cut before step k leaves the steps before it done and nothing of step k.
+-- A cut before step k leaves the steps before it done and nothing of step k:
+-- the split writes local.env in one rename.
 def crashAt (k : Nat) : State := (migration.take k).foldl apply initial
 
 -- The next run migrates again only while local.env is empty.
