@@ -32,18 +32,12 @@ def apply (s : State) : Event → State
   | .removeRecord => { s with record := false }
   | .syncRecord | .attemptChange | .writeEnv => s
 
--- A file rewritten with `cat tmp > file` is already truncated when the cut lands.
-def cutDuring (s : State) : Event → State
-  | .writeLocal _ => { s with localEnv := .empty }
-  | _ => s
-
 def initial : State := ⟨.old, .holds .old, false⟩
 
+-- A cut before step k leaves the steps before it done and nothing of step k:
+-- local.env and .env are replaced by renaming a synced copy over them.
 def crashAt (path : List Event) (k : Nat) : State :=
-  let done := (path.take k).foldl apply initial
-  match path[k]? with
-  | some e => cutDuring done e
-  | none => done
+  (path.take k).foldl apply initial
 
 def recover (s : State) : Outcome × State :=
   if !s.record then (.settled, s)

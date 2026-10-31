@@ -15,8 +15,10 @@ next run. `Proofs.lean` states the rule they must all satisfy:
 > database takes and the change record is gone, or the run stops with the
 > record kept and local.env intact.
 
-A file rewritten with `cat tmp > file` is already empty when a cut lands during
-the write, and the model treats it so.
+A cut before a step leaves nothing of it: `ut-install` replaces local.env and
+.env by renaming a synced copy over them (`replace_file_with`), so a cut during
+the write leaves the old content. Before that, `cat tmp > file` emptied the
+file first, and this check found the cuts that left local.env empty.
 
 ## What the `database password rotation` check does
 

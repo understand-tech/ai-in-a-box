@@ -13,7 +13,9 @@ with_fakes() {
     UT_INSTALL_DIR="$work" source "$REPO_ROOT/bin/ut-install" >/dev/null 2>&1
     set +e
     trap - ERR
-    EVENTS=0
+    ROOT=$BASHPID
+    CUTS_COUNTER="$work/cuts-counter"
+    echo 0 > "$CUTS_COUNTER"
     CUT=$cut
     REPLAYED_PATH=$path
     WORK=$work
@@ -22,7 +24,13 @@ with_fakes() {
     RECORD="$work/database-password-change"
     COMPOSE_UPS=0
 
-    event() { (( EVENTS == CUT )) && exit 99; EVENTS=$((EVENTS + 1)); }
+    # A cut stops the whole run, pipeline subshells included, so the count lives in a file.
+    event() {
+        local events
+        events=$(<"$CUTS_COUNTER")
+        (( events == CUT )) && { kill -KILL "$ROOT"; exit 99; }
+        echo $((events + 1)) > "$CUTS_COUNTER"
+    }
     writing_to() { [[ "$(readlink "/proc/$1/fd/1")" == "$2" ]]; }
 
     cat() {
@@ -35,8 +43,13 @@ with_fakes() {
         if writing_to "$me" "$LOCAL_FILE"; then event; fi
         builtin printf "$@"
     }
+    mv() {
+        local destination="${*: -1}"
+        if [[ "$destination" == "$LOCAL_FILE" || "$destination" == "$ENV_FILE" ]]; then event; fi
+        command mv "$@"
+    }
     install() { event; : > "${*: -1}"; }
-    sync() { event; }
+    sync() { [[ "$1" == "$RECORD" ]] && event; return 0; }
     rm() {
         local arg
         for arg in "$@"; do [[ "$arg" == "$RECORD" ]] && event; done
