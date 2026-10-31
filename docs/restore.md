@@ -343,10 +343,15 @@ the copy.
 | 2 · Read the latest snapshot | 6 min |
 | 3 · Put the files and the authority in place | 4 min |
 | 4 · Restore the database | 1 min 15 s |
-| 5 · Start again | 22 s |
-| **From the first command to a platform that answers** | **20 min 38 s** |
+| 5 · Start again, until the API and the front door were healthy | 22 s |
+| **From the first command** | **at least 20 min 38 s** |
 
-Not counted: downloading the images and the model's weights, which a machine
+Step 5 waited for the API and the front door only, not for every service as
+the page says: the other services were not timed, and the inference engine never
+became healthy there, held by weights a cancelled trial had left in its cache.
+The time to a platform whose every service is healthy was not measured.
+
+Not counted either: downloading the images and the model's weights, which a machine
 installed for the first time needs as well — minutes to over an hour depending
 on the connection, none with a [prepared folder](install.md#in-one-command) —
 and the time the inference engine takes to load its model. The database there
