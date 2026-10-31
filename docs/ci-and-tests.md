@@ -10,7 +10,7 @@ this page is the trigger map, that one is the reference.
 
 | Workflow | Trigger | Runs | Takes |
 |---|---|---|---|
-| `checks.yml` | every pull request, and a push to `main`, `hotfix/**` or `2026-**` | `invariants.sh`, `capabilities.sh`, `migration.sh`, the database rotation model and `database-rotation-cuts.sh` | under a minute |
+| `checks.yml` | every pull request, and a push to `main`, `hotfix/**` or `2026-**` | `invariants.sh`, `capabilities.sh`, `migration.sh`, the installer models with `database-rotation-cuts.sh` and `settings-migration-cuts.sh` | under a minute |
 | `nightly.yml` | 3 a.m. and manual — **neither works yet**, see below | `database-restore.sh` | about a minute |
 | `release.yml` | a tag matching `v*` | the checks, then a fresh install walked end to end, then the package is built, signed and published | longer |
 
@@ -90,6 +90,7 @@ only as an index, from the project's own `CLAUDE.md`:
 | `migration.sh` | Docker, full git history | ~1 min, `MIGRATION_FROM` to set |
 | `migration-on-data.sh` | Docker, private images | long, manual — not without a precise reason |
 | `database-rotation-cuts.sh` | Linux, and the cases from `formal/` (`lake exe rotation_cases`) | a few seconds |
+| `settings-migration-cuts.sh` | Linux, and the cases from `formal/` (`lake exe settings_cases`) | a few seconds |
 
 ## What this document does not cover
 
