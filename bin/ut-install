@@ -378,6 +378,14 @@ database_already_initialised() {
     docker volume inspect "${prefix:-ut}-mongodb-data" >/dev/null 2>&1
 }
 
+# The backup volume also holds the database dumps, which main wrote without
+# restic: only a repository's config says there are snapshots to open.
+files_backup_repository_exists() {
+    local mountpoint
+    mountpoint=$(docker volume inspect -f '{{ .Mountpoint }}' "$(volume_named mongodb-backups)" 2>/dev/null) || return 1
+    [[ -f "$mountpoint/restic/config" ]]
+}
+
 compose_in_dir() { ( cd "$INSTALL_DIR" && docker compose "$@" ); }
 
 appbuilder_enabled() {
@@ -1041,6 +1049,9 @@ generate_application_secrets() {
     for key in "${GENERATED_SECRET_KEYS[@]}"; do
         value=$(env_get "$local_file" "$key" || true)
         if is_shipped_placeholder "$value"; then
+            if [[ "$key" == BACKUP_FILES_PASSWORD ]] && files_backup_repository_exists; then
+                die "A backup repository is already here, and ${local_file} holds no BACKUP_FILES_PASSWORD for it, or a shipped one. A new password would leave every snapshot unreadable: put back the one it was created with, then run ut-install again."
+            fi
             # An empty value is a first install, not a secret others shared.
             [[ "$key" == JWT_SECRET && -n "$value" ]] && forgeable=true
             case "$key" in

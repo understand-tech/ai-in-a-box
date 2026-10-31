@@ -3051,6 +3051,32 @@ a_shipped_jwt_secret_is_named_and_a_missing_one_is_not() {
     [[ "$shipped" == warned ]] || { echo "a shipped JWT_SECRET was replaced without a word (${shipped})"; return 1; }
 }
 
+# Inside ut-install: what generate_application_secrets leaves in an empty
+# BACKUP_FILES_PASSWORD when the backup volume holds a restic repository, or
+# only the database dumps main wrote there.
+backup_password_after() {
+    local file="$WORK_DIR/backup-password-$1.env" volume="$WORK_DIR/backup-volume-$1"
+    mkdir -p "$volume"
+    [[ "$1" == repository ]] && mkdir -p "$volume/restic" && : > "$volume/restic/config"
+    printf 'BACKUP_FILES_PASSWORD=""\n' > "$file"
+    docker() { [[ "$1 $2" == "volume inspect" ]] && echo "$volume"; }
+    if ( generate_application_secrets "$file" ) >/dev/null 2>&1; then
+        env_get "$file" BACKUP_FILES_PASSWORD
+    else
+        echo "refused:$(env_get "$file" BACKUP_FILES_PASSWORD)"
+    fi
+}
+
+# A new BACKUP_FILES_PASSWORD over an existing repository leaves every snapshot
+# unreadable; an upgrade from main, whose volume holds only dumps, still gets one.
+a_backup_repository_keeps_its_password() {
+    local dumps repository
+    dumps=$(ut_install_answers backup_password_after dumps)
+    repository=$(ut_install_answers backup_password_after repository)
+    [[ ${#dumps} == 64 ]] || { echo "beside database dumps alone, as main left them, no password was drawn (${dumps:-none})"; return 1; }
+    [[ "$repository" == "refused:" ]] || { echo "an existing repository was given a new password (${repository:-none})"; return 1; }
+}
+
 the_relay_destinations_written_in() {
     local repository expected got
     while IFS='|' read -r repository expected; do
@@ -3871,6 +3897,8 @@ if [[ -f "$REPO_ROOT/backup-files.sh" ]]; then
         an_unreachable_destination_is_named
     capability "a password that does not open the repository is named as such" \
         a_password_that_does_not_open_the_repository_is_named
+    capability "a reinstall never draws a new password over an existing repository" \
+        a_backup_repository_keeps_its_password
     capability "the database leaves with them, not only the files" \
         the_database_leaves_the_machine_with_the_files
 fi
