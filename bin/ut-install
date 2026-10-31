@@ -66,7 +66,7 @@ SHIPPED_PLACEHOLDERS=(
     "" "12345678" "password" "SECRET" "SJKFVK" "FVVE" "SJBVSJB" "ut"
     "czIzgahTJGzdG3b1XtEgGIWPvwhdfBvhVd1JjzetjWQ" "EMPTY"
 )
-GENERATED_SECRET_KEYS=(JWT_SECRET STATE_SECRET OPENID_SECRET_KEY ADMIN_SETUP_PASSWORD BACKUP_FILES_PASSWORD GPU_VM_API_TOKEN GATEWAY_METRICS_TOKEN APP_BUILDER_TOKEN_ENCRYPTION_KEY VLLM_API_KEY)
+GENERATED_SECRET_KEYS=(JWT_SECRET STATE_SECRET OPENID_SECRET_KEY ADMIN_SETUP_PASSWORD BACKUP_FILES_PASSWORD GPU_VM_API_TOKEN GATEWAY_METRICS_TOKEN APP_BUILDER_TOKEN_ENCRYPTION_KEY AGENT_CONNECTOR_KEY_V1 VLLM_API_KEY)
 # SHA-256 of every database password main's .env.example has held, and of the
 # examples the installation guide printed beside it.
 PUBLISHED_DATABASE_PASSWORD_SUMS=(
@@ -296,6 +296,16 @@ random_fernet_key() {
         openssl rand -base64 32 | tr '+/' '-_'
     else
         head -c 32 /dev/urandom | base64 | tr '+/' '-_'
+    fi
+}
+
+# The agent connectors' key is read as standard base64 of 32 bytes, strictly:
+# the URL-safe alphabet of a Fernet key would be refused.
+random_base64_32() {
+    if command -v openssl >/dev/null 2>&1; then
+        openssl rand -base64 32
+    else
+        head -c 32 /dev/urandom | base64
     fi
 }
 
@@ -1029,6 +1039,7 @@ generate_application_secrets() {
             case "$key" in
                 JWT_SECRET|BACKUP_FILES_PASSWORD) env_set "$local_file" "$key" "$(random_alphanumeric 64)" ;;
                 APP_BUILDER_TOKEN_ENCRYPTION_KEY) env_set "$local_file" "$key" "$(random_fernet_key)" ;;
+                AGENT_CONNECTOR_KEY_V1)           env_set "$local_file" "$key" "$(random_base64_32)" ;;
                 *)                                env_set "$local_file" "$key" "$(random_alphanumeric 32)" ;;
             esac
             rotated+=("$key")
