@@ -57,6 +57,8 @@ appliance. Which six names, and who serves each one:
 |---|---|
 | `compose.yaml` | Docker Compose stack — all services, networks, volumes |
 | `compose.appbuilder.yaml` | App Builder add-on — enabled by `COMPOSE_FILE` in `.env`, which `release.env` ships switched on |
+| `compose.appbuilder-nested.yaml` | The rootless Docker the App Builder's apps run in, reached through a socket only the App Builder mounts. `ut-install` adds it with the add-on |
+| `compose.appbuilder-on-host.yaml` | The App Builder on this machine's Docker instead, with `APP_BUILDER_DOCKER="host"`: the way back while the move proves itself |
 | `Caddyfile` | Reverse proxy config — one site block per surface, hostnames from `UT_DOMAIN` |
 | `caddy/ingress-*.caddy` | One per ingress mode — global options and the `(tls)` snippets |
 | `caddy/certs/` | Where a `custom`-mode certificate goes (gitignored) |
@@ -75,6 +77,8 @@ appliance. Which six names, and who serves each one:
 | `packaging/pin-images.sh` | Rewrites every image in `release.env` as `name:tag@sha256:…`, so a version names one exact image and not whatever the tag points at today. `--check` reports without changing anything |
 | `packaging/release-bom.sh` | Writes what a release is made of, as CycloneDX: one component per image, named by digest. Reads `release.env` and nothing else — no registry, no pull |
 | `appbuilder/traefik/` | Static routing config for the App Builder's per-app router |
+| `appbuilder/apparmor/` | The AppArmor profile `ut-install` loads for the apps' Docker. It confines nothing: it is how Ubuntu 24.04 grants it a user namespace |
+| `appbuilder/seccomp/` | The apps' Docker's seccomp profile: Docker's default, with the namespace and mount calls rootless needs allowed |
 | `test/` | The checks, and what each one exists to catch — see `test/README.md` |
 
 ## Documentation

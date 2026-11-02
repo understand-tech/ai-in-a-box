@@ -156,7 +156,7 @@ renders_valid_configuration() {
 # A panel with no GPU runs no llm. The builder waited for it, so the whole
 # project was refused and nothing started — the App Builder included.
 app_builder_runs_without_a_gpu() {
-    local files=(-f compose.yaml -f compose.no-gpu.yaml -f compose.appbuilder.yaml)
+    local files=(-f compose.yaml -f compose.no-gpu.yaml -f compose.appbuilder.yaml -f compose.appbuilder-nested.yaml)
     renders_valid_configuration "${files[@]}" && lists_service app-builder "${files[@]}" && return 0
     ( cd "$WORK_DIR" && docker compose "${files[@]}" config 2>&1 >/dev/null | tail -3 )
     return 1
@@ -472,6 +472,8 @@ the_bill_says_which_role_runs_each_image() {
         && grep -q '"purl": "pkg:oci/model-free-nim@[^"]*&roles=appliance+compute"' <<< "$bill" \
         && grep -q '"purl": "pkg:oci/caddy@[^"]*&roles=appliance+compute+control-plane"' <<< "$bill" \
         && grep -q '"purl": "pkg:oci/socat@[^"]*&roles=appliance+control-plane"' <<< "$bill" \
+        && grep -q '"purl": "pkg:oci/docker@[^"]*&roles=appliance+control-plane"' <<< "$bill" \
+        && grep -q '"purl": "pkg:oci/traefik@[^"]*&roles=appliance+control-plane"' <<< "$bill" \
         && grep -q 'weights=platform[^#]*&roles=appliance+control-plane#' <<< "$bill" \
         && grep -q 'weights=qwen3.8-27b-nvfp4[^#]*&roles=appliance+compute#' <<< "$bill" && return 0
     grep -oE '"pkg:oci/[a-z-]+@[^"]*roles=[^"]*"' <<< "$bill" | sed 's/@sha256:[^?]*//' | head -6
@@ -2419,7 +2421,8 @@ each_argument_reaches_vllm_intact() {
 no_port_is_declared_where_docker_publishes_none() {
     command -v jq >/dev/null || { echo "jq absent"; return 1; }
     local files config dead=""
-    for files in "compose.yaml" "compose.yaml compose.appbuilder.yaml" "compose.yaml compose.compute.yaml"; do
+    for files in "compose.yaml" "compose.yaml compose.appbuilder.yaml compose.appbuilder-nested.yaml" \
+        "compose.yaml compose.appbuilder.yaml compose.appbuilder-on-host.yaml" "compose.yaml compose.compute.yaml"; do
         config=$( cd "$WORK_DIR" && COMPOSE_PROFILES=nim VLLM_API_KEY=k \
             docker compose $(printf -- '-f %s ' $files) config --format json 2>/dev/null )
         [[ -n "$config" ]] || { echo "nothing rendered from ${files}"; return 1; }
@@ -2437,7 +2440,7 @@ no_port_is_declared_where_docker_publishes_none() {
 app_builder_traefik_calls_no_one() {
     command -v jq >/dev/null || { echo "jq absent"; return 1; }
     local command
-    command=$( cd "$WORK_DIR" && docker compose -f compose.yaml -f compose.appbuilder.yaml config --format json 2>/dev/null \
+    command=$( cd "$WORK_DIR" && docker compose -f compose.yaml -f compose.appbuilder.yaml -f compose.appbuilder-on-host.yaml config --format json 2>/dev/null \
         | jq -r '.services["app-builder-traefik"].command | join(" ")' )
     [[ "$command" == *"--global.checknewversion=false"* && "$command" == *"--global.sendanonymoususage=false"* ]] && return 0
     echo "app-builder-traefik runs: ${command:-nothing rendered}"
@@ -4468,6 +4471,273 @@ an_install_to_import_into() {
 }
 
 # One service from an image the release already pulls: nothing to build.
+app_builder_config() {
+    ( cd "$WORK_DIR" && docker compose -f compose.yaml -f compose.appbuilder.yaml -f "$1" config --format json 2>/dev/null )
+}
+
+the_apps_get_a_docker_of_their_own() {
+    command -v jq >/dev/null || { echo "jq absent"; return 1; }
+    local config
+    config=$(app_builder_config compose.appbuilder-nested.yaml)
+    [[ -n "$config" ]] || { echo "nothing rendered"; return 1; }
+    jq -e '(.services["app-builder"].volumes | map(.source) | index("/var/run/docker.sock") | not)
+        and .services["app-builder"].environment.DOCKER_HOST == "unix:///run/app-builder-docker/docker.sock"
+        and .services["app-builder-traefik"] == null
+        and (((.services["app-builder-docker"].networks | keys) - ["proxy", "ut-app-builder-network"]) | length == 0)
+        and .services["app-builder-docker"].privileged != true
+        and .services["app-builder-docker"].user == "2375:2375"
+        and .services["app-builder-docker"].ports == null
+        and (.services.caddy.networks["ut-app-builder-network"].aliases | length == 1)' <<< "$config" >/dev/null && return 0
+    jq -c '{builder: .services["app-builder"].volumes, docker: (.services["app-builder-docker"] | {user, privileged, ports, networks})}' <<< "$config"
+    return 1
+}
+
+the_app_builder_can_still_go_back_to_this_machine_s_docker() {
+    command -v jq >/dev/null || { echo "jq absent"; return 1; }
+    local config
+    config=$(app_builder_config compose.appbuilder-on-host.yaml)
+    jq -e '(.services["app-builder"].volumes | map(.source) | index("/var/run/docker.sock") != null)
+        and .services["app-builder-traefik"] != null and .services["app-builder-docker"] == null' <<< "$config" >/dev/null && return 0
+    echo "the way back renders: ${config:0:300}"
+    return 1
+}
+
+apps_docker_down() {
+    local probe=$1 made_proxy=$2
+    ( cd "$probe" && docker compose down -v --remove-orphans >/dev/null 2>&1 )
+    [[ "$made_proxy" == true ]] && docker network rm proxy >/dev/null 2>&1
+    docker run --rm -v "$probe":/w "$ALPINE_IMAGE" rm -rf /w/data /w/ids >/dev/null 2>&1
+    return 0
+}
+
+apps_docker_profile_loads() {
+    docker info --format '{{json .SecurityOptions}}' 2>/dev/null | grep -q apparmor || return 0
+    sudo -n apparmor_parser -r "$REPO_ROOT/appbuilder/apparmor/ut-app-builder-docker" >/dev/null 2>&1 && return 0
+    echo "Docker confines containers with AppArmor here and the profile could not be loaded (sudo -n apparmor_parser -r)"
+    return 1
+}
+
+# A folder ut-install's own steps run in against a real Docker: this project's
+# apps' Docker, the App Builder's data under data_root, and any more settings.
+an_apps_docker_folder() {
+    local probe=$1 project=$2 data_root=$3
+    shift 3
+    mkdir -p "$probe"
+    cp "$WORK_DIR"/compose*.yaml "$probe/"
+    cp -r "$REPO_ROOT/appbuilder" "$probe/"
+    grep -vE '^(COMPOSE_FILE|COMPOSE_PROJECT_NAME|RESOURCE_PREFIX|CONTAINER_PREFIX|APP_BUILDER_DOCKER_IMAGE|TRAEFIK_IMAGE|APP_BUILDER_DOCKER_IDS|DATA_ROOT)=' \
+        "$WORK_DIR/.env" > "$probe/.env"
+    printf '%s\n' "COMPOSE_FILE=compose.yaml:compose.appbuilder.yaml:compose.appbuilder-nested.yaml" \
+        "COMPOSE_PROJECT_NAME=$project" "RESOURCE_PREFIX=$project" "CONTAINER_PREFIX=$project" \
+        "APP_BUILDER_DOCKER_IMAGE=$(release_image APP_BUILDER_DOCKER_IMAGE)" "TRAEFIK_IMAGE=$(release_image TRAEFIK_IMAGE)" \
+        "APP_BUILDER_DOCKER_IDS=$probe/ids" "DATA_ROOT=$data_root" "$@" >> "$probe/.env"
+}
+
+as_ut_install_in() {
+    local probe=$1
+    shift
+    ( set +u; UT_INSTALL_DIR="$probe" source "$REPO_ROOT/bin/ut-install" >/dev/null 2>&1
+      set +eE; trap - ERR
+      INSTALL_DIR="$probe"
+      "$@" ) 2>&1
+}
+
+start_an_apps_docker() {
+    write_the_identities_of_the_app_builder_docker "$INSTALL_DIR/ids" && start_the_app_builder_docker
+}
+
+start_an_apps_docker_with_its_traefik() { start_an_apps_docker && give_the_app_builder_docker_its_traefik; }
+
+# ut-install's own steps against a real Docker: the daemon under its uid and
+# profiles, Traefik inside it, an app it routes, and what must stay closed.
+the_apps_docker_serves_an_app_and_lets_nothing_else_drive_it() {
+    local project="capapps$$" made_proxy=false said served="" refused listeners other healthy ceiling daemon_image
+    local probe="$WORK_DIR/capapps$$"
+    daemon_image=$(release_image APP_BUILDER_DOCKER_IMAGE)
+    apps_docker_profile_loads || return 1
+    an_apps_docker_folder "$probe" "$project" "$probe/data"
+    mkdir -p "$probe/data/appbuilder/traefik-dynamic"
+    docker pull -q "$(release_image TRAEFIK_IMAGE)" >/dev/null 2>&1
+    docker pull -q "$CADDY_IMAGE" >/dev/null 2>&1
+    docker network inspect proxy >/dev/null 2>&1 || { docker network create proxy >/dev/null && made_proxy=true; }
+
+    if ! said=$(as_ut_install_in "$probe" start_an_apps_docker_with_its_traefik); then
+        apps_docker_down "$probe" "$made_proxy"
+        echo "${said}" | tail -4
+        return 1
+    fi
+
+    nested() { ( cd "$probe" && docker compose exec -T app-builder-docker docker "$@" ); }
+    docker tag "$CADDY_IMAGE" capapps-app:local
+    docker save capapps-app:local | nested load -q >/dev/null
+    docker rmi capapps-app:local >/dev/null 2>&1
+    nested run -d --name app --network proxy capapps-app:local caddy respond --listen :80 "served by the apps' Docker" >/dev/null
+    printf 'http:\n  routers:\n    app:\n      rule: Host(`app.apps.test`)\n      service: app\n  services:\n    app:\n      loadBalancer:\n        servers:\n          - url: http://app:80\n' \
+        > "$probe/data/appbuilder/traefik-dynamic/app.yml"
+    for _ in $(seq 30); do
+        served=$(docker run --rm --network "${project}-app-builder-network" "$CURL_IMAGE" -s -m 5 -H 'Host: app.apps.test' \
+            http://app-builder-docker:8090/ 2>/dev/null)
+        [[ "$served" == "served by the apps' Docker" ]] && break
+        sleep 1
+    done
+    refused=$(nested run --rm --privileged capapps-app:local true >/dev/null 2>&1 && echo started || echo refused)
+    listeners=$(docker exec "${project}-app-builder-docker" sh -c 'netstat -ltn 2>/dev/null' | grep -cE ':237[56] ' || true)
+    other=$(docker run --rm --user 1000 -v "${project}-app-builder-docker-socket:/run/app-builder-docker" --entrypoint docker \
+        "$daemon_image" -H unix:///run/app-builder-docker/docker.sock version >/dev/null 2>&1 && echo answered || echo refused)
+    healthy=$(docker exec "${project}-app-builder-docker" sh -c 'docker version >/dev/null && wget -q -O /dev/null http://127.0.0.1:8090/ping' \
+        >/dev/null 2>&1 && echo yes || echo no)
+    ceiling=$(docker inspect --format '{{.HostConfig.Memory}} {{.HostConfig.NanoCpus}} {{.HostConfig.PidsLimit}}' "${project}-app-builder-docker" 2>/dev/null)
+    apps_docker_down "$probe" "$made_proxy"
+
+    [[ "$served" == "served by the apps' Docker" ]] || { echo "the app behind the apps' Traefik answered: ${served:-nothing}"; return 1; }
+    [[ "$refused" == refused ]] || { echo "a privileged container started inside the apps' Docker"; return 1; }
+    [[ "$listeners" == 0 ]] || { echo "the apps' Docker listens on TCP"; return 1; }
+    [[ "$other" == refused ]] || { echo "another account than root drove the apps' Docker through its socket"; return 1; }
+    [[ "$healthy" == yes ]] || { echo "the daemon's healthcheck fails while its Traefik serves"; return 1; }
+    [[ "$ceiling" == "8589934592 2000000000 4096" ]] || { echo "the apps' Docker runs with memory, CPU and process bounds '${ceiling}', not their floors 8 GiB, 2 and 4096"; return 1; }
+}
+
+# The move ut-install makes, both ways, on a real Docker: an image built for an
+# app, the image it names, its volume with files of two owners, and a container
+# that ran. No database: chown needs root here, and the walk checks it.
+the_apps_move_into_their_docker_and_back_with_their_volumes() {
+    local project="capmove$$" app="capmove$$a" made_proxy=false probe="$WORK_DIR/capmove$$" said
+    local built="capmove$$a-web:latest" base="capmove$$-base:1" volume="capmove$$a_data" id there kept back left taken
+    apps_docker_profile_loads || return 1
+    an_apps_docker_folder "$probe" "$project" "$probe/data"
+    mkdir -p "$probe/data/appbuilder/workspaces/$app"
+    printf 'services:\n  db:\n    image: %s\n' "$base" > "$probe/data/appbuilder/workspaces/$app/docker-compose.yml"
+    docker network inspect proxy >/dev/null 2>&1 || { docker network create proxy >/dev/null && made_proxy=true; }
+    docker tag "$ALPINE_IMAGE" "$base"
+    printf 'FROM %s\nLABEL com.docker.compose.project=%s\n' "$base" "$app" | docker build -q -t "$built" - >/dev/null
+    id=$(as_ut_install_in "$probe" image_content docker "$built")
+    docker volume create --label "com.docker.compose.project=$app" --label com.docker.compose.volume=data "$volume" >/dev/null
+    docker run --rm -v "$volume:/v" "$ALPINE_IMAGE" sh -c 'echo rows > /v/db && chown 999:999 /v/db && mkdir /v/cache && touch /v/cache/kept' >/dev/null
+    docker run -d --name "$app-web-1" --label "com.docker.compose.project=$app" \
+        --label "com.docker.compose.project.working_dir=$probe/data/appbuilder/workspaces/$app" \
+        -v "$volume:/data" "$built" sleep 600 >/dev/null
+
+    # The free space is the walk's to check, with a disk it decides; macOS's df
+    # does not answer the question ut-install asks.
+    df() { printf 'Avail\n%s\n' 1000000000000; }
+    moved_in() {
+        start_an_apps_docker || return 1
+        move_the_apps docker in_the_app_builder_docker 999 237500998 && let_go_of_the_apps_on docker
+    }
+    moved_back() {
+        move_the_apps in_the_app_builder_docker docker 237500998 999 && let_go_of_the_apps_on in_the_app_builder_docker
+    }
+    said=$(as_ut_install_in "$probe" moved_in)
+    there=$(as_ut_install_in "$probe" image_content in_the_app_builder_docker "$built"
+        (cd "$probe" && docker compose exec -T app-builder-docker sh -c \
+        "docker run --rm -v $volume:/v $base sh -c 'stat -c \"%n %u\" /v/db /v/cache/kept'") 2>&1)
+    kept=$(docker ps -aq --filter "label=com.docker.compose.project=$app"; docker image ls -q "$built"; docker volume inspect --format '{{.Name}}' "$volume" 2>/dev/null)
+    said+=$'\n'$(as_ut_install_in "$probe" moved_back)
+    back=$(as_ut_install_in "$probe" image_content docker "$built"; docker run --rm -v "$volume:/v" "$base" stat -c '%n %u' /v/db /v/cache/kept 2>&1)
+    left=$(cd "$probe" && docker compose exec -T app-builder-docker sh -c "docker image ls -q $built; docker volume inspect --format '{{.Name}}' $volume 2>/dev/null")
+
+    (cd "$probe" && docker compose exec -T app-builder-docker sh -c "docker volume create --label com.docker.compose.project=$app $volume >/dev/null && docker run --rm -v $volume:/v $base touch /v/newer") >/dev/null 2>&1
+    said+=$'\n'$(as_ut_install_in "$probe" move_the_apps docker in_the_app_builder_docker 999 237500998)
+    taken=$(docker volume inspect --format '{{.Name}}' "$volume" 2>/dev/null; docker image ls -q "$built")
+
+    docker rm -f "$app-web-1" >/dev/null 2>&1
+    docker volume rm "$volume" >/dev/null 2>&1
+    docker image rm "$built" "$base" >/dev/null 2>&1
+    apps_docker_down "$probe" "$made_proxy"
+
+    [[ "$there" == "$id"$'\n'"/v/db 999"$'\n'"/v/cache/kept 0" ]] \
+        || { echo "in the apps' Docker, the image and the volume read: ${there}"; echo "${said}" | tail -6; return 1; }
+    [[ -z "$kept" ]] || { echo "this machine's Docker kept what the apps left there: ${kept//$'\n'/ }"; return 1; }
+    [[ "$back" == "$id"$'\n'"/v/db 999"$'\n'"/v/cache/kept 0" ]] \
+        || { echo "back on this machine's Docker, the image and the volume read: ${back}"; echo "${said}" | tail -6; return 1; }
+    [[ -z "$left" ]] || { echo "the apps' Docker kept what the apps left there: ${left//$'\n'/ }"; return 1; }
+    grep -q "volume ${volume} has files in the apps' Docker already: nothing was moved" <<< "$said" \
+        && [[ "$(wc -l <<< "$taken" | tr -d ' ')" == 2 ]] \
+        || { echo "a volume the apps' Docker already holds was not refused: ${taken//$'\n'/ } / $(echo "${said}" | tail -3)"; return 1; }
+}
+
+ceiling_for_a_machine() { ceiling_of_the_apps_docker "$(kind_of_machine_the_apps_share "$1" "$2")" "$3" "$4"; }
+
+# 128 GiB and 20 cores, as a GB10 has.
+a_gpu_sharing_the_machine_s_memory_leaves_the_apps_an_eighth_of_it() {
+    local name said
+    for name in "NVIDIA GB10" "NVIDIA GB200" "NVIDIA GB300" "NVIDIA GH200 480GB"; do
+        said=$(as_ut_install_in "$WORK_DIR" ceiling_for_a_machine "$name" yes 134217728 20)
+        [[ "$said" == "16384M 4 4096" ]] || { echo "${name}, 128 GiB and 20 cores: ${said}"; return 1; }
+    done
+}
+
+a_gpu_with_memory_of_its_own_leaves_the_apps_a_quarter() {
+    local said
+    said=$(as_ut_install_in "$WORK_DIR" ceiling_for_a_machine "NVIDIA H100 80GB HBM3" yes 536870912 64)
+    [[ "$said" == "131072M 12 4096" ]] || { echo "an H100, 512 GiB and 64 cores: ${said}"; return 1; }
+}
+
+serves_a_model_when_told() { INFERENCE_FROM=$1; this_machine_serves_a_model "$2"; }
+
+a_machine_serving_no_model_leaves_the_apps_half_its_memory() {
+    local dir="$WORK_DIR/serves-no-model" said
+    said=$(as_ut_install_in "$WORK_DIR" ceiling_for_a_machine "NVIDIA GB10" no 67108864 40)
+    [[ "$said" == "32768M 8 4096" ]] || { echo "no model served, 64 GiB and 40 cores: ${said}"; return 1; }
+    mkdir -p "$dir" && : > "$dir/.env" && : > "$dir/local.env"
+    as_ut_install_in "$dir" serves_a_model_when_told "" "$dir/local.env" >/dev/null \
+        || { echo "a machine told nothing said to serve no model"; return 1; }
+    ! as_ut_install_in "$dir" serves_a_model_when_told node.example.test "$dir/local.env" >/dev/null \
+        || { echo "a control plane given --inference-from said to serve a model"; return 1; }
+    printf 'COMPOSE_FILE="compose.yaml:compose.no-gpu.yaml:compose.appbuilder.yaml"\n' > "$dir/local.env"
+    ! as_ut_install_in "$dir" serves_a_model_when_told "" "$dir/local.env" >/dev/null \
+        || { echo "compose.no-gpu.yaml in local.env, yet said to serve a model"; return 1; }
+}
+
+what_the_apps_may_take_never_falls_below_its_floors() {
+    local said
+    said=$(as_ut_install_in "$WORK_DIR" ceiling_for_a_machine "NVIDIA GB10" yes 33554432 4)
+    [[ "$said" == "8192M 2 4096" ]] || { echo "a GB10 with 32 GiB and 4 cores: ${said}"; return 1; }
+}
+
+# A generated app turned hostile, in an apps' Docker whose data lies as on a box:
+# in a volume, where owners hold, the routes owned by root. What it does reach is
+# written in docs/configuration.md rather than checked here, where it would pass.
+a_hostile_app_reaches_neither_the_platform_nor_the_routes_nor_past_the_ceiling() {
+    local project="caphost$$" made_proxy=false probe="$WORK_DIR/caphost$$" data="caphost$$-data" root said
+    local platform="caphost$$-frontend-network" made_platform=false app="caphost$$-app:local" reached routes socket forks
+    apps_docker_profile_loads || return 1
+    docker volume create "$data" >/dev/null
+    root=$(docker volume inspect --format '{{.Mountpoint}}' "$data")
+    docker run --rm -v "$data:/d" "$ALPINE_IMAGE" sh -c \
+        'mkdir -p /d/appbuilder/traefik-dynamic /d/appbuilder/workspaces/app-a && chmod 755 /d/appbuilder/traefik-dynamic' >/dev/null
+    an_apps_docker_folder "$probe" "$project" "$root" "APP_BUILDER_DOCKER_PIDS=500"
+    docker network inspect proxy >/dev/null 2>&1 || { docker network create proxy >/dev/null && made_proxy=true; }
+
+    if said=$(as_ut_install_in "$probe" start_an_apps_docker); then
+        docker network inspect "$platform" >/dev/null 2>&1 || { docker network create "$platform" >/dev/null && made_platform=true; }
+        docker run -d --name "$project-platform" --network "$platform" --network-alias "$project-ut-api" \
+            "$CADDY_IMAGE" caddy respond --listen :8000 platform >/dev/null
+        nested() { ( cd "$probe" && docker compose exec -T app-builder-docker docker "$@" ); }
+        docker pull -q "$CURL_IMAGE" >/dev/null 2>&1
+        docker tag "$CURL_IMAGE" "$app"
+        docker save "$app" | nested load -q >/dev/null
+        docker rmi "$app" >/dev/null 2>&1
+        nested network inspect proxy >/dev/null 2>&1 || nested network create proxy >/dev/null
+        reached=$(nested run --rm --network proxy "$app" curl -s -m 5 -o /dev/null -w '%{http_code}' "http://$project-ut-api:8000/" 2>/dev/null)
+        routes=$(nested run --rm --user 0 -v "$root/appbuilder/traefik-dynamic:/routes" "$app" \
+            sh -c 'echo "http: {}" > /routes/hijack.yml && echo wrote || echo refused' 2>&1)
+        socket=$(nested run --rm --user 0 -v /var/run/docker.sock:/host.sock "$app" \
+            curl -s -m 5 --unix-socket /host.sock http://docker/version 2>/dev/null | grep -c ApiVersion)
+        forks=$(nested run --rm "$app" sh -c 'echo started; i=0; while [ $i -lt 600 ]; do sleep 30 & i=$((i+1)); done; echo all 600' 2>/dev/null)
+    fi
+    docker rm -f "$project-platform" >/dev/null 2>&1
+    apps_docker_down "$probe" "$made_proxy"
+    [[ "$made_platform" == true ]] && docker network rm "$platform" >/dev/null 2>&1
+    docker volume rm "$data" >/dev/null 2>&1
+
+    [[ -n "${forks:-}" ]] || { echo "the apps' Docker did not start: $(echo "$said" | tail -3)"; return 1; }
+    [[ "${reached:-}" == 000 ]] || { echo "an app reached a platform service on ${platform} by its name: HTTP ${reached:-}"; return 1; }
+    [[ "$routes" == *refused* ]] || { echo "an app that mounts the routes wrote one: ${routes}"; return 1; }
+    [[ "$socket" == 0 ]] || { echo "an app drove this machine's Docker"; return 1; }
+    [[ "$forks" == started* && "$forks" != *"all 600"* ]] || { echo "an app started 600 processes past a ceiling of 500: ${forks//$'\n'/ }"; return 1; }
+}
+
 an_app_to_import() {
     local dir=$1 more=${2:-}
     mkdir -p "$dir"
@@ -4545,6 +4815,68 @@ an_app_that_mounts_the_docker_socket_is_refused_before_anything_is_written() {
     [[ ! -e "$dir/data/appbuilder/traefik-dynamic/_imported-$id.yml" ]] || { echo "refused, after writing its route"; return 1; }
     ! grep -q '^EXTRA_ALLOWED_ORIGINS=' "$dir/local.env" || { echo "refused, after making it an origin the platform admits"; return 1; }
 }
+
+# ut-import-app, once the apps have their Docker: the app runs there, beside
+# them, and reaches the platform by the box's domain, which a stub answers to.
+an_imported_app_runs_in_the_apps_docker_and_reaches_the_platform_by_its_domain() {
+    local project="capimpn$$" id="capimpn$$a" made_proxy=false probe="$WORK_DIR/capimpn$$" said out status
+    local domain running_here running_there reached
+    apps_docker_profile_loads || return 1
+    an_apps_docker_folder "$probe" "$project" "$probe/data"
+    mkdir -p "$probe/data/appbuilder/traefik-dynamic" "$probe/app-builder-docker"
+    : > "$probe/app-builder-docker/holds-the-apps"
+    install -m 600 /dev/null "$probe/local.env"
+    domain=$(sed -n 's/^UT_DOMAIN="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$probe/.env" | head -1)
+    domain=${domain:-understand.local}
+    docker pull -q "$(release_image TRAEFIK_IMAGE)" >/dev/null 2>&1
+    docker pull -q "$CADDY_IMAGE" >/dev/null 2>&1
+    docker network inspect proxy >/dev/null 2>&1 || { docker network create proxy >/dev/null && made_proxy=true; }
+    if ! said=$(as_ut_install_in "$probe" start_an_apps_docker_with_its_traefik); then
+        apps_docker_down "$probe" "$made_proxy"
+        echo "${said}" | tail -4
+        return 1
+    fi
+    docker run -d --rm --name "${project}-platform" --network "${project}-app-builder-network" --network-alias "$domain" \
+        "$CADDY_IMAGE" caddy respond --listen :80 "the platform" >/dev/null
+    nested() { ( cd "$probe" && docker compose exec -T app-builder-docker docker "$@" ); }
+    an_app_to_import "$probe/source"
+
+    out=$(sudo -n env UT_INSTALL_DIR="$probe" "$REPO_ROOT/bin/ut-import-app" "$probe/source" "$id" --service web --port 8080 2>&1)
+    status=$?
+    running_there=$(nested ps --filter "label=com.docker.compose.project=$id" --format '{{.State}}' 2>/dev/null)
+    running_here=$(docker ps -q --filter "label=com.docker.compose.project=$id")
+    reached=$(nested exec "${id}-web-1" wget -q -O - "http://$domain/" 2>&1)
+
+    docker rm -f "${project}-platform" >/dev/null 2>&1
+    apps_docker_down "$probe" "$made_proxy"
+
+    (( status == 0 )) || { echo "ut-import-app failed: $(echo "$out" | tail -5)"; return 1; }
+    [[ "$running_there" == running ]] || { echo "in the apps' Docker, the imported app is ${running_there:-absent}"; return 1; }
+    [[ -z "$running_here" ]] || { echo "the imported app runs on this machine's Docker"; return 1; }
+    [[ "$reached" == "the platform" ]] || { echo "from the apps' Docker, $domain answered: ${reached:-nothing}"; return 1; }
+}
+
+group "The App Builder's apps in a Docker of their own"
+capability "the App Builder's apps get a rootless Docker that the App Builder alone reaches" \
+    the_apps_get_a_docker_of_their_own
+capability "the App Builder can still go back to this machine's Docker" \
+    the_app_builder_can_still_go_back_to_this_machine_s_docker
+capability "the apps' Docker serves an app through its own Traefik, and nothing else drives it" \
+    the_apps_docker_serves_an_app_and_lets_nothing_else_drive_it
+capability "an imported app runs in the apps' Docker and reaches the platform by the box's domain" \
+    an_imported_app_runs_in_the_apps_docker_and_reaches_the_platform_by_its_domain
+capability "beside a GPU that shares the machine's memory, the apps get an eighth of it and a fifth of the cores" \
+    a_gpu_sharing_the_machine_s_memory_leaves_the_apps_an_eighth_of_it
+capability "beside a GPU with memory of its own, the apps get a quarter of the machine's" \
+    a_gpu_with_memory_of_its_own_leaves_the_apps_a_quarter
+capability "on a machine that serves no model, the apps get half its memory" \
+    a_machine_serving_no_model_leaves_the_apps_half_its_memory
+capability "what the apps get never falls below 8 GiB and 2 CPUs" \
+    what_the_apps_may_take_never_falls_below_its_floors
+capability "the apps move into their Docker and back, with their images and their volumes' owners" \
+    the_apps_move_into_their_docker_and_back_with_their_volumes
+capability "a hostile app reaches neither the platform, nor the routes, nor past the apps' ceiling" \
+    a_hostile_app_reaches_neither_the_platform_nor_the_routes_nor_past_the_ceiling
 
 group "Importing an app the App Builder did not build"
 capability "an imported app is routed under a name the App Builder leaves alone, and started" \
