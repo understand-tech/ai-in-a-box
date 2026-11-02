@@ -8,6 +8,8 @@ PACKAGE_SHARE_DIR="/usr/share/understandtech"
 INSTALL_DIR="${UT_INSTALL_DIR:-}"
 DATA_ROOT_DEFAULT="/var/lib/understandtech"
 CONTAINER_PREFIX_DEFAULT="ut"
+APPS_DOCKER=this-machine
+APPS_DOCKER_UID=2375
 CA_MOUNT_PATH="/etc/understandtech/ut-root-ca.crt"
 
 if [[ -t 1 ]]; then
@@ -67,11 +69,15 @@ Environment
                lego.
 
 What it does
-  1. Copies <source> under $DATA_ROOT/imported-apps/<project-id>.
+  1. Copies <source> under $DATA_ROOT/imported-apps/<project-id>, or under
+     $DATA_ROOT/appbuilder/imported-apps/<project-id> once the App Builder's
+     apps have a Docker of their own: the app then runs in that Docker.
   2. Refuses it if a service mounts the Docker socket or runs privileged.
   3. Writes PROJECT_ID, and whatever --env-map asked for, into its .env.
   4. Writes a docker-compose.override.yml: every service gets a route back
-     to the platform (extra_hosts, and the box's root CA if it has one);
+     to the platform (extra_hosts on this machine's Docker — in the apps' own
+     Docker, the box's domain names the platform already — and the box's root
+     CA if it has one);
      only --service joins `proxy`, with an alias of <project-id> — the
      others stay off it. A generated app that put its database on `proxy`
      by mistake is reachable by every other app's alias on the same
@@ -156,6 +162,24 @@ declare_the_app_s_origin() {
     log_warn "The platform admits it once you run: sudo ut-install --skip-pull, then docker compose up -d in $INSTALL_DIR"
 }
 
+# The App Builder's apps live in a Docker of their own once ut-install moved them;
+# an imported app then goes there too, beside them.
+apps_have_their_own_docker() {
+    [[ -e "$(settings_directory "$INSTALL_DIR/.env")/app-builder-docker/holds-the-apps" ]]
+}
+
+# docker for the imported app, run from its folder, on the Docker its apps live on.
+# compose exec forwards its standard input; nothing here reads one.
+apps_docker() {
+    local dir=$1
+    shift
+    if [[ "$APPS_DOCKER" == own ]]; then
+        ( cd "$INSTALL_DIR" && docker compose exec -T -w "$dir" app-builder-docker docker "$@" < /dev/null )
+    else
+        ( cd "$dir" && docker "$@" )
+    fi
+}
+
 resolve_install_dir() {
     [[ -n "$INSTALL_DIR" ]] && return 0
     if [[ -f "$PACKAGE_SHARE_DIR/compose.yaml" ]]; then
@@ -199,8 +223,8 @@ mounts_the_docker_socket_or_runs_privileged() {
 }
 
 stage_source() {
-    local source=$1 project_id=$2 data_root=$3 dest
-    dest="$data_root/imported-apps/$project_id"
+    local source=$1 project_id=$2 imports_root=$3 dest
+    dest="$imports_root/$project_id"
     if [[ -d "$dest" ]]; then
         die "$dest already exists — import under a different project-id, or remove it first"
     fi
@@ -314,8 +338,12 @@ write_compose_override() {
         while IFS= read -r service; do
             [[ -n "$service" ]] || continue
             printf '  %s:\n' "$service"
-            printf '    extra_hosts:\n'
-            printf '      - "%s:host-gateway"\n' "$domain"
+            # In the apps' own Docker, the box's domain already names its front
+            # door (compose.appbuilder-nested.yaml); host-gateway would name that Docker.
+            if [[ "$APPS_DOCKER" != own ]]; then
+                printf '    extra_hosts:\n'
+                printf '      - "%s:host-gateway"\n' "$domain"
+            fi
             if [[ "$has_ca" == true ]]; then
                 printf '    volumes:\n'
                 printf '      - ./.ut-import/root-ca.crt:%s:ro\n' "$CA_MOUNT_PATH"
@@ -340,8 +368,9 @@ write_compose_override() {
 }
 
 ensure_proxy_network() {
-    docker network inspect proxy >/dev/null 2>&1 && return 0
-    docker network create proxy >/dev/null
+    local dir=$1
+    apps_docker "$dir" network inspect proxy >/dev/null 2>&1 && return 0
+    apps_docker "$dir" network create proxy >/dev/null
     log_info "Created network 'proxy'"
 }
 
@@ -372,9 +401,9 @@ EOF
 wait_for_service_healthy() {
     local app_dir=$1 project_id=$2 service=$3 tries=30 state container
     while (( tries-- > 0 )); do
-        container=$(cd "$app_dir" && docker compose -p "$project_id" ps -q "$service" 2>/dev/null)
+        container=$(apps_docker "$app_dir" compose -p "$project_id" ps -q "$service" 2>/dev/null)
         if [[ -n "$container" ]]; then
-            state=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container" 2>/dev/null)
+            state=$(apps_docker "$app_dir" inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container" 2>/dev/null)
             case "$state" in
                 healthy|running) return 0 ;;
             esac
@@ -387,7 +416,7 @@ wait_for_service_healthy() {
 smoke_test_outbound() {
     local app_dir=$1 project_id=$2 service=$3 public_url=$4
     local code
-    code=$(cd "$app_dir" && docker compose -p "$project_id" exec -T "$service" \
+    code=$(apps_docker "$app_dir" compose -p "$project_id" exec -T "$service" \
         curl -sk -o /dev/null -w '%{http_code}' --max-time 10 "$public_url" 2>/dev/null) || true
     [[ -n "$code" && "$code" != "000" ]]
 }
@@ -436,11 +465,17 @@ main() {
     container_prefix=$(platform_setting CONTAINER_PREFIX "$CONTAINER_PREFIX_DEFAULT")
     public_url="https://$domain"
     traefik_dir="$data_root/appbuilder/traefik-dynamic"
+    local imports_root="$data_root/imported-apps"
+    if apps_have_their_own_docker; then
+        APPS_DOCKER=own
+        imports_root="$data_root/appbuilder/imported-apps"
+        log_info "The App Builder's apps have a Docker of their own: $project_id goes there too"
+    fi
     [[ -e "$traefik_dir/${project_id}.yml" ]] \
         && die "$traefik_dir/${project_id}.yml already routes $project_id.apps.$domain — an App Builder project, or an import made before this version. Choose another project id, or move that file out of the directory first."
 
     local app_dir compose_file
-    app_dir=$(stage_source "$source" "$project_id" "$data_root")
+    app_dir=$(stage_source "$source" "$project_id" "$imports_root")
     compose_file=$(compose_file_in "$app_dir")
     log_info "Staged at $app_dir"
 
@@ -468,10 +503,15 @@ main() {
     override=$(write_compose_override "$app_dir" "$compose_file" "$service" "$domain" "$has_ca" "$project_id")
     log_info "Wrote $override"
 
-    ( cd "$app_dir" && docker compose -p "$project_id" -f "$compose_file" -f "$override" config >/dev/null ) \
+    if [[ "$APPS_DOCKER" == own ]]; then
+        chown -R "${APPS_DOCKER_UID}:${APPS_DOCKER_UID}" "$app_dir" \
+            || die "$app_dir could not be given to the apps' Docker (uid ${APPS_DOCKER_UID}): run ut-import-app as root"
+    fi
+
+    apps_docker "$app_dir" compose -p "$project_id" -f "$compose_file" -f "$override" config >/dev/null \
         || die "docker compose rejects the merged configuration — see the error above before retrying"
 
-    ensure_proxy_network
+    ensure_proxy_network "$app_dir"
 
     local traefik_file
     traefik_file=$(write_traefik_route "$traefik_dir" "$project_id" "$domain" "$port")
@@ -481,7 +521,7 @@ main() {
         "$domain" "https://$project_id.apps.$domain"
 
     log "Starting the stack…"
-    ( cd "$app_dir" && docker compose -p "$project_id" -f "$compose_file" -f "$override" up -d --build )
+    apps_docker "$app_dir" compose -p "$project_id" -f "$compose_file" -f "$override" up -d --build
 
     if wait_for_service_healthy "$app_dir" "$project_id" "$service"; then
         log_info "$service is up"

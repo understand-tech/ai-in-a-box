@@ -28,7 +28,7 @@ COPY="$WORK_DIR/repo"
 fresh_copy() {
     rm -rf "$COPY"
     mkdir -p "$COPY"
-    ( cd "$REPO_ROOT" && tar -cf - release.env compose.yaml compose.appbuilder.yaml \
+    ( cd "$REPO_ROOT" && tar -cf - release.env compose.yaml compose.appbuilder.yaml compose.appbuilder-nested.yaml compose.appbuilder-on-host.yaml \
         compose.compute.yaml compose.no-gpu.yaml compose.arbiter.yaml compose.arbiter-link.yaml compose.backup-mount.yaml compose.backup-local.yaml compose.backup-network.yaml compose.backup-relay.yaml compose.remote-inference.yaml compose.engine-vllm.yaml models \
         Caddyfile caddy metrics backup-files.sh \
         setup-autostart.sh bin go.mod cmd appbuilder docs \
@@ -154,6 +154,62 @@ discriminates "the backup let onto the relay's way out" \
 discriminates "a relay that sends elsewhere than the name the backup resolves to it" \
     "backup-relay-sends-elsewhere" \
     "sed -i.bak 's|- TCP:\${BACKUP_RELAY_HOST:-|- TCP:\${BACKUP_FILES_DESTINATION:-|' compose.backup-relay.yaml"
+
+discriminates "the apps' Docker given a TCP listener beside its socket" \
+    "apps-docker-listens-beyond-its-socket" \
+    "perl -pi -e 's|(--host=unix:///run/app-builder-docker/docker.sock)\"\]|\$1\", \"--host=tcp://0.0.0.0:2375\"]|' compose.appbuilder-nested.yaml"
+
+discriminates "the apps' Docker left to its entrypoint, which adds a TCP listener" \
+    "apps-docker-listens-beyond-its-socket" \
+    "perl -ni -e 'print unless /^    command: \[\"dockerd\"/' compose.appbuilder-nested.yaml"
+
+discriminates "this machine's Docker socket mounted for the nested App Builder" \
+    "docker-socket-mounted-by:compose.appbuilder-nested.yaml" \
+    "perl -0pi -e 's|(    volumes:\n      - app-builder-docker-socket:/run/app-builder-docker\n)|\$1      - /var/run/docker.sock:/var/run/docker.sock\n|' compose.appbuilder-nested.yaml"
+
+discriminates "the apps' Docker on the platform's frontend network" \
+    "apps-docker-joins:ut-frontend-network" \
+    "perl -0pi -e 's|(      - ut-app-builder-network\n      - proxy\n)|\$1      - ut-frontend-network\n|' compose.appbuilder-nested.yaml"
+
+discriminates "the apps' network given a way out" \
+    "apps-network-with-a-way-out" \
+    "perl -ni -e 'print unless /^    internal: true\$/' compose.appbuilder-nested.yaml"
+
+discriminates "a privileged Docker for the apps" \
+    "apps-docker-privileged" \
+    "perl -pi -e 's|^    user: \"2375:2375\"\$|    user: \"2375:2375\"\n    privileged: true|' compose.appbuilder-nested.yaml"
+
+discriminates "the apps' Docker out of its AppArmor profile" \
+    "apps-docker-without-its-profile" \
+    "perl -ni -e 'print unless /- apparmor=ut-app-builder-docker/' compose.appbuilder-nested.yaml"
+
+discriminates "a profile that no longer grants the user namespace" \
+    "apps-docker-without-its-profile" \
+    "perl -ni -e 'print unless /^  userns,/' appbuilder/apparmor/ut-app-builder-docker"
+
+discriminates "the apps' Docker left out of seccomp" \
+    "apps-docker-without-its-seccomp-profile" \
+    "perl -pi -e 's|seccomp=./appbuilder/seccomp/ut-app-builder-docker.json|seccomp=unconfined|' compose.appbuilder-nested.yaml"
+
+discriminates "the apps' databases owned one id off the daemon's range" \
+    "apps-docker-ids-disagree" \
+    "perl -pi -e 's/APPS_MONGO_UID:-237500998/APPS_MONGO_UID:-237500999/' compose.appbuilder-nested.yaml"
+
+discriminates "the daemon's uid changed in ut-install alone" \
+    "apps-docker-ids-disagree" \
+    "perl -pi -e 's/^APP_BUILDER_DOCKER_UID=2375\$/APP_BUILDER_DOCKER_UID=2376/' bin/ut-install.d/app-builder-docker.sh"
+
+discriminates "the apps' Docker given no ceiling on its processes" \
+    "apps-docker-without-a-ceiling:pids" \
+    "perl -ni -e 'print unless /APP_BUILDER_DOCKER_PIDS/' compose.appbuilder-nested.yaml"
+
+discriminates "the apps' Docker given no memory ceiling" \
+    "apps-docker-without-a-ceiling:memory" \
+    "perl -ni -e 'print unless /APP_BUILDER_DOCKER_MEMORY/' compose.appbuilder-nested.yaml"
+
+discriminates "the apps' Traefik left to check for new versions" \
+    "apps-traefik-calls-out" \
+    "perl -pi -e 's/--global.checknewversion=false //' bin/ut-install.d/app-builder-docker.sh"
 
 discriminates "a secret given a value by the release" \
     "plaintext-secret:OA_KEY" \
@@ -682,6 +738,50 @@ capability_discriminates "a folder's images all required, whatever the role" \
 capability_discriminates "a backup relay no role carries into a folder" \
     "the bill of materials says which role runs each image and each weight" \
     "sed -i.bak 's/:compose.backup-relay.yaml//g' packaging/release-bom.sh"
+
+capability_discriminates "the apps' Docker no role carries into a folder" \
+    "the bill of materials says which role runs each image and each weight" \
+    "sed -i.bak 's/:compose.appbuilder-nested.yaml//g' packaging/release-bom.sh"
+
+capability_discriminates "the apps' Traefik published elsewhere than Caddy calls it" \
+    "serves an app through its own Traefik" \
+    "perl -pi -e 's/-p 8090:80/-p 8091:80/' bin/ut-install.d/app-builder-docker.sh"
+
+capability_discriminates "the apps' Docker left without a ceiling on its processes" \
+    "serves an app through its own Traefik" \
+    "perl -ni -e 'print unless /APP_BUILDER_DOCKER_PIDS/' compose.appbuilder-nested.yaml"
+
+capability_discriminates "the apps' Docker handed the input of the loop that calls it" \
+    "the apps move into their Docker and back" \
+    "perl -pi -e 's|docker \"\\\$@\" < /dev/null; \\}|docker \"\\\$@\"; }|' bin/ut-install.d/app-builder-docker.sh"
+
+capability_discriminates "a move that copies no volume" \
+    "the apps move into their Docker and back" \
+    "perl -pi -e 's/^(\\s+)if ! move_a_volume /\$1if false \\&\\& move_a_volume /' bin/ut-install.d/app-builder-docker.sh"
+
+capability_discriminates "a move that overwrites a volume the other Docker holds" \
+    "the apps move into their Docker and back" \
+    "perl -pi -e 's/^(\\s+)taken=\\\$\\(volumes_the_other_side_holds_already .*/\$1taken=\"\"/' bin/ut-install.d/app-builder-docker.sh"
+
+capability_discriminates "volumes copied with the owners of whoever copies them" \
+    "the apps move into their Docker and back" \
+    "perl -pi -e 's/ --numeric-owner//g; s/nsenter -U --preserve-credentials -t \"\\\$\\(cat \"\\\$XDG_RUNTIME_DIR\\/docker.pid\"\\)\" //' bin/ut-install.d/app-builder-docker.sh"
+
+capability_discriminates "a hostile app let onto the platform's frontend network" \
+    "a hostile app reaches neither the platform" \
+    "perl -0pi -e 's|(      - ut-app-builder-network\\n      - proxy\\n)|\$1      - ut-frontend-network\\n|' compose.appbuilder-nested.yaml"
+
+capability_discriminates "the apps' Docker running its apps without a process ceiling" \
+    "a hostile app reaches neither the platform" \
+    "perl -ni -e 'print unless /APP_BUILDER_DOCKER_PIDS/' compose.appbuilder-nested.yaml"
+
+capability_discriminates "the apps' share computed as if every GPU had memory of its own" \
+    "beside a GPU that shares the machine's memory" \
+    "perl -pi -e 's/GB10\\|GB200\\|GB300\\|GH200/NO-SUCH-GPU/' bin/ut-install.d/app-builder-docker.sh"
+
+capability_discriminates "the apps' share left without its floor" \
+    "never falls below 8 GiB and 2 CPUs" \
+    "perl -ni -e 'print unless /APPS_MEMORY_FLOOR_MB \\)\\) \\|\\|/' bin/ut-install.d/app-builder-docker.sh"
 
 capability_discriminates "a bill that says no role runs anything" \
     "the bill of materials says which role runs each image and each weight" \
@@ -1793,6 +1893,54 @@ fi
     install_walk_discriminates "two backup destinations let through" \
         "naming two destinations stops the install" \
         "sed -i.bak '/both say where the backup goes/,/exit 1/ s/exit 1/:/' bin/ut-install"
+
+    install_walk_discriminates "apps moved whatever the space left on the disk" \
+        "apps too big for the disk are not moved" \
+        "perl -pi -e 's/\\(\\( free < needed \\)\\)/false/' bin/ut-install.d/app-builder-docker.sh"
+
+    install_walk_discriminates "a failed move that leaves the databases to the apps' Docker" \
+        "a start that fails after the move puts every app back" \
+        "perl -pi -e 's/chown -R/: chown -R/ if /chown -R \"\\\$\\{owner\\}:/' bin/ut-install.d/app-builder-docker.sh"
+
+    install_walk_discriminates "a move that forgets the archived apps" \
+        "archived ones too" \
+        "perl -pi -e 's/^(\\s+for root in ).*(; do)\$/\$1\$2/' bin/ut-install.d/app-builder-docker.sh"
+
+    install_walk_discriminates "the apps moved without their databases" \
+        "hands them their databases" \
+        "perl -pi -e 's/if ! chown -R /if false \&\& chown -R /' bin/ut-install.d/app-builder-docker.sh"
+
+    install_walk_discriminates "a move that leaves the apps' volumes behind" \
+        "their named volumes go with them" \
+        "perl -pi -e 's/^(\\s+)volumes=\\\$\\(volumes_of_the_apps \"\\\$from\" .*/\$1volumes=\"\"/' bin/ut-install.d/app-builder-docker.sh"
+
+    install_walk_discriminates "a move over a volume the apps' Docker already holds" \
+        "a volume that both Dockers hold stops the move" \
+        "perl -pi -e 's/^(\\s+)taken=\\\$\\(volumes_the_other_side_holds_already .*/\$1taken=\"\"/' bin/ut-install.d/app-builder-docker.sh"
+
+    install_walk_discriminates "this machine's copies let go of before the platform starts" \
+        "a start that fails after the move puts every app back" \
+        "perl -pi -e 's/^(\\s+)APPS_MOVED_INTO_THEIR_DOCKER=\\\$APPS_MOVED\$/\$1APPS_MOVED_INTO_THEIR_DOCKER=\\\$APPS_MOVED; let_go_of_the_apps_on docker/' bin/ut-install.d/app-builder-docker.sh"
+
+    install_walk_discriminates "a start that fails after the move, and leaves the apps in their Docker" \
+        "a start that fails after the move puts every app back" \
+        "perl -pi -e 's/^(\\s+)\\[\\[ -n \"\\\$APPS_MOVED_INTO_THEIR_DOCKER\" \\]\\] \\|\\| return 1\$/\$1return 1/' bin/ut-install.d/app-builder-docker.sh"
+
+    install_walk_discriminates "a way back that only swaps the compose file" \
+        "the way back brings every app" \
+        "perl -pi -e 's/the_apps_live_in_their_docker \&\& bring_the_apps_back_to_this_machine_s_docker/:/' bin/ut-install.d/app-builder-docker.sh"
+
+    install_walk_discriminates "a way back that fails, and still writes host" \
+        "a way back that fails leaves the apps in their own Docker" \
+        "perl -pi -e 's/^(\\s+)fall_forward_to_the_apps_docker\$/\$1:/' bin/ut-install.d/app-builder-docker.sh"
+
+    install_walk_discriminates "an apps' Docker holding the apps swapped for this machine's when it does not start" \
+        "holds the apps and does not start stops the install" \
+        "perl -pi -e 's/^(\\s+)if the_apps_live_in_their_docker; then\$/\$1if false; then/' bin/ut-install.d/app-builder-docker.sh"
+
+    install_walk_discriminates "a share local.env sets, computed over" \
+        "set in local.env, wins" \
+        "perl -pi -e 's/key_is_overridden_locally \"\\\$\\{line%%=\\*\\}\" \"\\\$overridden\" \\|\\| printf/printf/' bin/ut-install"
 fi
 
 if grep -q 'step_rotate_a_published_database_password' "$REPO_ROOT/bin/ut-install"; then
@@ -1849,6 +1997,10 @@ if [[ -x "$REPO_ROOT/test/ingress.sh" ]]; then
     ingress_discriminates "a surface whose upstream no longer exists" \
         "https://llms.box.example.test is served" \
         "sed -i.bak 's|reverse_proxy app-llms:80|reverse_proxy nowhere:80|' Caddyfile"
+
+    ingress_discriminates "the generated apps sent to this machine's Traefik whatever the mode" \
+        "reaches the Traefik inside the apps' Docker" \
+        "perl -pi -e 's/\\{\\\$APP_BUILDER_APPS_UPSTREAM:app-builder-traefik:80\\}/app-builder-traefik:80/' Caddyfile"
 
     ingress_discriminates "a front door that counts nothing" \
         "Caddy counts what each surface answered" \
