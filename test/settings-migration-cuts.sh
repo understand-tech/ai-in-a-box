@@ -61,7 +61,7 @@ replay() {
     UT_INSTALL_DIR="$WORK" source "$REPO_ROOT/bin/ut-install" >/dev/null 2>&1
     set +e
     for key in "${KEYS[@]}"; do
-        values+=("$(setting_as_compose_reads_it "$WORK/.env" "$key" || echo unset)")
+        values+=("$(env_get "$WORK/.env" "$key" || echo unset)")
     done
     command rm -rf "$WORK"
     echo "$cut ${values[*]}"

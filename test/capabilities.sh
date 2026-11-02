@@ -2998,6 +2998,103 @@ ut_install_answers() {
     )
 }
 
+# What docker compose itself reads for KEY in FILE, interpolated, as a plain value.
+compose_reads() {
+    local file=$1 key=$2 dir config
+    dir=$(mktemp -d "$WORK_DIR/compose-reads.XXXXXX")
+    printf 'services:\n  probe:\n    image: alpine\n    environment:\n      V: "${%s-unset}"\n' "$key" > "$dir/compose.yaml"
+    config=$(docker compose --project-directory "$dir" -f "$dir/compose.yaml" --env-file "$file" config --format json 2>/dev/null) \
+        || { printf '(compose refuses the file)'; return 0; }
+    python3 -c 'import json, sys; print(json.loads(sys.argv[1])["services"]["probe"]["environment"]["V"].replace("$$", "$"), end="")' "$config"
+}
+
+# Every way an operator may write a line, read by ut-install and by compose.
+ut_install_reads_a_setting_as_compose_does() {
+    local file="$WORK_DIR/as-compose.env" line ours theirs differ=""
+    while IFS= read -r line; do
+        printf '%s\n' "$line" > "$file"
+        ours=$(ut_install_answers env_get "$file" V)
+        theirs=$(compose_reads "$file" V)
+        [[ "$ours" == "$theirs" ]] || differ+=$'\n'"  ${line} → ut-install «${ours}», compose «${theirs}»"
+    done <<'LINES'
+V="plain"
+V='single $x "quoted"'
+V=unquoted # a comment
+V="double" # a comment
+   V="indented"
+export V="exported"
+V="escaped \" quote"
+V=a$$b
+V="a$$b"
+LINES
+    printf 'V="first"\nV="last"\n' > "$file"
+    ours=$(ut_install_answers env_get "$file" V)
+    theirs=$(compose_reads "$file" V)
+    [[ "$ours" == "$theirs" ]] || differ+=$'\n'"  a key twice → ut-install «${ours}», compose «${theirs}»"
+    [[ -z "$differ" ]] && return 0
+    echo "read differently:${differ}"
+    return 1
+}
+
+# Whatever env_set writes, compose reads back the value it was given.
+what_ut_install_writes_compose_reads_back() {
+    local file="$WORK_DIR/written.env" value theirs differ=""
+    while IFS= read -r value; do
+        printf 'V="before"\n' > "$file"
+        ut_install_answers env_set "$file" V "$value"
+        theirs=$(compose_reads "$file" V)
+        [[ "$theirs" == "$value" ]] || differ+=$'\n'"  «${value}» written as $(cat "$file"), read «${theirs}»"
+    done <<'VALUES'
+plain
+a$bc
+say "hi"
+it's $5
+back\slash
+mix ' and $ and "
+VALUES
+    [[ -z "$differ" ]] && return 0
+    echo "not read back:${differ}"
+    return 1
+}
+
+# Inside ut-install, with the destination taken as a mounted disk.
+backup_destination_written_to() {
+    backup_destination_problem() { :; }
+    write_the_settings_a_backup_destination_needs "$1"
+}
+
+# Inside ut-install: main's .env split into local.env, then .env rendered.
+settings_split_and_rendered() {
+    INSTALL_DIR=$1
+    migrate_existing_settings_into_local "$1/main.env" "$1/local.env"
+    render_settings "$1/.env" "$1/local.env"
+}
+
+# Lines main's .env held with blanks or `export ` before the key, which compose
+# read, are the operator's after the upgrade too.
+an_indented_or_exported_setting_survives_the_upgrade() {
+    local dir
+    dir=$(mktemp -d "$WORK_DIR/indented.XXXXXX")
+    printf 'UT_RELEASE_VERSION="test"\nFOO="release"\nBAR="release"\n' > "$dir/release.env"
+    printf '  FOO="mine"\nexport BAR="mine"\n' > "$dir/main.env"
+    ut_install_answers settings_split_and_rendered "$dir" >/dev/null 2>&1
+    [[ "$(compose_reads "$dir/.env" FOO) $(compose_reads "$dir/.env" BAR)" == "mine mine" ]] && return 0
+    echo "after the upgrade compose reads FOO=$(compose_reads "$dir/.env" FOO) BAR=$(compose_reads "$dir/.env" BAR)"
+    return 1
+}
+
+# A comment the operator left on COMPOSE_FILE: the backup destination's overlay
+# is still the one compose applies.
+a_commented_compose_file_still_gets_the_backup_overlay() {
+    local file="$WORK_DIR/commented-compose-file.env" theirs
+    printf 'COMPOSE_FILE="compose.yaml:compose.appbuilder.yaml" # the builder\nBACKUP_FILES_DESTINATION="/mnt/backup"\n' > "$file"
+    ut_install_answers backup_destination_written_to "$file" >/dev/null 2>&1
+    theirs=$(compose_reads "$file" COMPOSE_FILE)
+    [[ "$theirs" == "compose.yaml:compose.appbuilder.yaml:compose.backup-mount.yaml" ]] && return 0
+    echo "compose applies ${theirs:-nothing}"
+    return 1
+}
+
 # A customer agrees to a change of model on what the release notes say: they
 # name every setting that changes what a box serves, and say nothing changed
 # when nothing did.
@@ -4898,6 +4995,16 @@ capability "an imported app becomes an origin the platform admits, listed once" 
     an_imported_app_becomes_an_origin_the_platform_admits_once
 capability "an app that mounts the Docker socket is refused before anything is written" \
     an_app_that_mounts_the_docker_socket_is_refused_before_anything_is_written
+
+group "Settings as Compose reads them"
+capability "ut-install reads every way of writing a setting as compose does" \
+    ut_install_reads_a_setting_as_compose_does
+capability "whatever ut-install writes, compose reads back the value it was given" \
+    what_ut_install_writes_compose_reads_back
+capability "a comment left on COMPOSE_FILE does not keep the backup overlay out" \
+    a_commented_compose_file_still_gets_the_backup_overlay
+capability "a setting main's .env held indented or exported is still the operator's after the upgrade" \
+    an_indented_or_exported_setting_survives_the_upgrade
 
 group "Keeping the history of an install"
 capability "logging before a named step preserves installer progress" \
