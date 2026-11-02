@@ -4627,12 +4627,12 @@ the_apps_move_into_their_docker_and_back_with_their_volumes() {
         move_the_apps in_the_app_builder_docker docker 237500998 999 && let_go_of_the_apps_on in_the_app_builder_docker
     }
     said=$(as_ut_install_in "$probe" moved_in)
-    there=$(as_ut_install_in "$probe" image_content in_the_app_builder_docker "$built"; echo
+    there=$(as_ut_install_in "$probe" image_content in_the_app_builder_docker "$built"
         (cd "$probe" && docker compose exec -T app-builder-docker sh -c \
         "docker run --rm -v $volume:/v $base sh -c 'stat -c \"%n %u\" /v/db /v/cache/kept'") 2>&1)
     kept=$(docker ps -aq --filter "label=com.docker.compose.project=$app"; docker image ls -q "$built"; docker volume inspect --format '{{.Name}}' "$volume" 2>/dev/null)
     said+=$'\n'$(as_ut_install_in "$probe" moved_back)
-    back=$(as_ut_install_in "$probe" image_content docker "$built"; echo; docker run --rm -v "$volume:/v" "$base" stat -c '%n %u' /v/db /v/cache/kept 2>&1)
+    back=$(as_ut_install_in "$probe" image_content docker "$built"; docker run --rm -v "$volume:/v" "$base" stat -c '%n %u' /v/db /v/cache/kept 2>&1)
     left=$(cd "$probe" && docker compose exec -T app-builder-docker sh -c "docker image ls -q $built; docker volume inspect --format '{{.Name}}' $volume 2>/dev/null")
 
     (cd "$probe" && docker compose exec -T app-builder-docker sh -c "docker volume create --label com.docker.compose.project=$app $volume >/dev/null && docker run --rm -v $volume:/v $base touch /v/newer") >/dev/null 2>&1
