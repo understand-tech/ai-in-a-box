@@ -4609,7 +4609,7 @@ the_apps_move_into_their_docker_and_back_with_their_volumes() {
     docker network inspect proxy >/dev/null 2>&1 || { docker network create proxy >/dev/null && made_proxy=true; }
     docker tag "$ALPINE_IMAGE" "$base"
     printf 'FROM %s\nLABEL com.docker.compose.project=%s\n' "$base" "$app" | docker build -q -t "$built" - >/dev/null
-    id=$(docker image inspect --format '{{.Id}}' "$built")
+    id=$(docker image inspect --format '{{json .RootFS.Layers}} {{json .Config}}' "$built")
     docker volume create --label "com.docker.compose.project=$app" --label com.docker.compose.volume=data "$volume" >/dev/null
     docker run --rm -v "$volume:/v" "$ALPINE_IMAGE" sh -c 'echo rows > /v/db && chown 999:999 /v/db && mkdir /v/cache && touch /v/cache/kept' >/dev/null
     docker run -d --name "$app-web-1" --label "com.docker.compose.project=$app" \
@@ -4628,10 +4628,10 @@ the_apps_move_into_their_docker_and_back_with_their_volumes() {
     }
     said=$(as_ut_install_in "$probe" moved_in)
     there=$( (cd "$probe" && docker compose exec -T app-builder-docker sh -c \
-        "docker image inspect --format '{{.Id}}' $built && docker run --rm -v $volume:/v $base sh -c 'stat -c \"%n %u\" /v/db /v/cache/kept'") 2>&1)
+        "docker image inspect --format '{{json .RootFS.Layers}} {{json .Config}}' $built && docker run --rm -v $volume:/v $base sh -c 'stat -c \"%n %u\" /v/db /v/cache/kept'") 2>&1)
     kept=$(docker ps -aq --filter "label=com.docker.compose.project=$app"; docker image ls -q "$built"; docker volume inspect --format '{{.Name}}' "$volume" 2>/dev/null)
     said+=$'\n'$(as_ut_install_in "$probe" moved_back)
-    back=$(docker image inspect --format '{{.Id}}' "$built" 2>&1; docker run --rm -v "$volume:/v" "$base" stat -c '%n %u' /v/db /v/cache/kept 2>&1)
+    back=$(docker image inspect --format '{{json .RootFS.Layers}} {{json .Config}}' "$built" 2>&1; docker run --rm -v "$volume:/v" "$base" stat -c '%n %u' /v/db /v/cache/kept 2>&1)
     left=$(cd "$probe" && docker compose exec -T app-builder-docker sh -c "docker image ls -q $built; docker volume inspect --format '{{.Name}}' $volume 2>/dev/null")
 
     (cd "$probe" && docker compose exec -T app-builder-docker sh -c "docker volume create --label com.docker.compose.project=$app $volume >/dev/null && docker run --rm -v $volume:/v $base touch /v/newer") >/dev/null 2>&1

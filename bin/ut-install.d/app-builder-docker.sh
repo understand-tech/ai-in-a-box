@@ -183,6 +183,14 @@ write_the_settings_the_app_builder_s_docker_needs() {
 # it would take the lines the loop has yet to read.
 in_the_app_builder_docker() { compose_in_dir exec -T app-builder-docker docker "$@" < /dev/null; }
 
+# An image's layers and configuration: the same on both Dockers, whereas its ID
+# is not once one of them keeps its images in containerd (Docker 29's default).
+image_content() {
+    local side=$1 reference=$2 said
+    said=$("$side" image inspect --format '{{json .RootFS.Layers}} {{json .Config}}' "$reference" 2>/dev/null) || return 0
+    printf '%s' "$said" | sha256sum | cut -d' ' -f1
+}
+
 load_into() {
     if [[ "$1" == docker ]]; then docker load -q; else compose_in_dir exec -T app-builder-docker docker load -q; fi
 }
@@ -228,11 +236,12 @@ give_the_app_builder_docker_its_traefik() {
     install -d "$routes"
     install -m 644 "$INSTALL_DIR/appbuilder/traefik/_orchestrator.yml" "$routes/_orchestrator.yml"
 
-    if ! wanted=$(docker image inspect --format '{{.Id}}' "$image" 2>/dev/null); then
+    wanted=$(image_content docker "$image")
+    if [[ -z "$wanted" ]]; then
         log_error "Traefik's image ${image} is not on this machine, so the App Builder's Docker cannot be given it."
         return 1
     fi
-    have=$(in_the_app_builder_docker image inspect --format '{{.Id}}' "$APP_BUILDER_TRAEFIK_IMAGE" 2>/dev/null || true)
+    have=$(image_content in_the_app_builder_docker "$APP_BUILDER_TRAEFIK_IMAGE")
     if [[ "$have" != "$wanted" ]]; then
         if ! { docker tag "$image" "$APP_BUILDER_TRAEFIK_IMAGE" \
                 && docker save "$APP_BUILDER_TRAEFIK_IMAGE" | load_into in_the_app_builder_docker >/dev/null; }; then
@@ -310,20 +319,24 @@ containers_of_the_apps() {
         | awk 'NR == FNR { wanted[$1] = 1; next } wanted[$3]' <(printf '%s\n' "$projects") - || true
 }
 
-# "<reference> <id> <size>", for each image compose built for these projects.
+# "<reference> <content> <size>", for each image compose built for these projects.
 images_built_for_the_apps() {
     local side=$1 projects=$2 built
     built=$("$side" image ls -q --filter label=com.docker.compose.project 2>/dev/null | sort -u || true)
     [[ -n "$built" ]] || return 0
-    "$side" image inspect --format '{{index .Config.Labels "com.docker.compose.project"}} {{.Id}} {{.Size}} {{join .RepoTags " "}}' $built 2>/dev/null \
-        | awk 'NR == FNR { wanted[$1] = 1; next } wanted[$1] { for (i = 4; i <= NF; i++) print $i, $2, $3 }' <(printf '%s\n' "$projects") - || true
+    "$side" image inspect --format '{{index .Config.Labels "com.docker.compose.project"}} {{.Size}} {{join .RepoTags " "}}' $built 2>/dev/null \
+        | awk 'NR == FNR { wanted[$1] = 1; next } wanted[$1] { for (i = 3; i <= NF; i++) print $i, $2 }' <(printf '%s\n' "$projects") - \
+        | while read -r reference size; do
+            printf '%s %s %s\n' "$reference" "$(image_content "$side" "$reference")" "$size"
+        done || true
 }
 
 images_of_the_apps() {
-    local side=$1 projects=$2 reference
+    local side=$1 projects=$2 reference size
     images_built_for_the_apps "$side" "$projects"
     images_the_apps_name | while IFS= read -r reference; do
-        "$side" image inspect --format "${reference} {{.Id}} {{.Size}}" "$reference" 2>/dev/null || true
+        size=$("$side" image inspect --format '{{.Size}}' "$reference" 2>/dev/null) || continue
+        printf '%s %s %s\n' "$reference" "$(image_content "$side" "$reference")" "$size"
     done
 }
 
@@ -331,7 +344,7 @@ images_the_other_side_lacks() {
     local side=$1 images=$2 reference id size
     while read -r reference id size; do
         [[ -n "$reference" ]] || continue
-        [[ "$("$side" image inspect --format '{{.Id}}' "$reference" 2>/dev/null || true)" == "$id" ]] \
+        [[ "$(image_content "$side" "$reference")" == "$id" ]] \
             || printf '%s %s %s\n' "$reference" "$id" "$size"
     done <<< "$images"
 }
@@ -456,7 +469,7 @@ move_the_apps() {
         return 1
     fi
     while read -r reference id size; do
-        [[ -z "$reference" || "$("$to" image inspect --format '{{.Id}}' "$reference" 2>/dev/null || true)" == "$id" ]] \
+        [[ -z "$reference" || "$(image_content "$to" "$reference")" == "$id" ]] \
             || missing+=" ${reference}"
     done <<< "$images"
     if [[ -n "$missing" ]]; then
