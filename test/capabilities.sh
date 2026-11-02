@@ -4841,7 +4841,7 @@ an_imported_app_runs_in_the_apps_docker_and_reaches_the_platform_by_its_domain()
     nested() { ( cd "$probe" && docker compose exec -T app-builder-docker docker "$@" ); }
     an_app_to_import "$probe/source"
 
-    out=$(UT_INSTALL_DIR="$probe" "$REPO_ROOT/bin/ut-import-app" "$probe/source" "$id" --service web --port 8080 2>&1)
+    out=$(sudo -n env UT_INSTALL_DIR="$probe" "$REPO_ROOT/bin/ut-import-app" "$probe/source" "$id" --service web --port 8080 2>&1)
     status=$?
     running_there=$(nested ps --filter "label=com.docker.compose.project=$id" --format '{{.State}}' 2>/dev/null)
     running_here=$(docker ps -q --filter "label=com.docker.compose.project=$id")

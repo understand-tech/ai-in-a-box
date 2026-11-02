@@ -9,6 +9,7 @@ INSTALL_DIR="${UT_INSTALL_DIR:-}"
 DATA_ROOT_DEFAULT="/var/lib/understandtech"
 CONTAINER_PREFIX_DEFAULT="ut"
 APPS_DOCKER=this-machine
+APPS_DOCKER_UID=2375
 CA_MOUNT_PATH="/etc/understandtech/ut-root-ca.crt"
 
 if [[ -t 1 ]]; then
@@ -501,6 +502,11 @@ main() {
     local override
     override=$(write_compose_override "$app_dir" "$compose_file" "$service" "$domain" "$has_ca" "$project_id")
     log_info "Wrote $override"
+
+    if [[ "$APPS_DOCKER" == own ]]; then
+        chown -R "${APPS_DOCKER_UID}:${APPS_DOCKER_UID}" "$app_dir" \
+            || die "$app_dir could not be given to the apps' Docker (uid ${APPS_DOCKER_UID}): run ut-import-app as root"
+    fi
 
     apps_docker "$app_dir" compose -p "$project_id" -f "$compose_file" -f "$override" config >/dev/null \
         || die "docker compose rejects the merged configuration — see the error above before retrying"
