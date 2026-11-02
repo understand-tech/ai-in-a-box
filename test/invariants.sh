@@ -433,7 +433,12 @@ apps_docker_service() {
 # arguments: a listener every app on its networks would drive.
 check_the_apps_docker_listens_on_its_socket_alone() {
     [[ -f "$APPS_DOCKER_OVERLAY" ]] || return 0
-    grep -qF 'command: ["dockerd", "--host=unix:///run/app-builder-docker/docker.sock"]' <<< "$(apps_docker_service)" \
+    local service
+    service=$(apps_docker_service)
+    grep -qE '^    command:' <<< "$service" \
+        && grep -qE '^      - dockerd$' <<< "$service" \
+        && [[ "$(grep -cE -- '--host|(^|[ "])-H( |=)' <<< "$service")" == 1 ]] \
+        && grep -qF -- '--host=unix:///run/app-builder-docker/docker.sock' <<< "$service" \
         && ! grep -qE 'tcp://|DOCKER_TLS' "$APPS_DOCKER_OVERLAY" "$APPS_DOCKER_SETUP" && return 0
     report "apps-docker-listens-beyond-its-socket" \
         "the App Builder's Docker in compose.appbuilder-nested.yaml listens elsewhere than its Unix socket: any app it runs could drive it, and reach every other one"
