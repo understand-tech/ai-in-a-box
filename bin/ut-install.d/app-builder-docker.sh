@@ -327,14 +327,24 @@ containers_of_the_apps() {
 
 # "<reference> <content> <size>", for each image compose built for these projects.
 images_built_for_the_apps() {
-    local side=$1 projects=$2 built
-    built=$("$side" image ls -q --filter label=com.docker.compose.project 2>/dev/null | sort -u || true)
-    [[ -n "$built" ]] || return 0
-    "$side" image inspect --format '{{index .Config.Labels "com.docker.compose.project"}} {{.Size}} {{join .RepoTags " "}}' $built 2>/dev/null \
-        | awk 'NR == FNR { wanted[$1] = 1; next } wanted[$1] { for (i = 3; i <= NF; i++) print $i, $2 }' <(printf '%s\n' "$projects") - \
-        | while read -r reference size; do
-            printf '%s %s %s\n' "$reference" "$(image_content "$side" "$reference")" "$size"
-        done || true
+    local side=$1 projects=$2 built reference size
+    {
+        built=$("$side" image ls -q --filter label=com.docker.compose.project 2>/dev/null | sort -u || true)
+        [[ -z "$built" ]] || "$side" image inspect --format '{{index .Config.Labels "com.docker.compose.project"}} {{join .RepoTags " "}}' $built 2>/dev/null \
+            | awk 'NR == FNR { wanted[$1] = 1; next } wanted[$1] { for (i = 2; i <= NF; i++) print $i }' <(printf '%s\n' "$projects") -
+        # Compose names what it builds <project>-<service>:latest, and older Compose
+        # left no project label on it.
+        "$side" image ls --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
+            | awk 'NR == FNR { wanted[$1] = 1; next }
+                   $1 !~ /\// && $1 ~ /:latest$/ {
+                       name = substr($1, 1, length($1) - 7)
+                       for (cut = length(name); cut > 1; cut--)
+                           if (substr(name, cut, 1) == "-" && wanted[substr(name, 1, cut - 1)]) { print $1; next }
+                   }' <(printf '%s\n' "$projects") -
+    } | sort -u | while read -r reference; do
+        size=$("$side" image inspect --format '{{.Size}}' "$reference" 2>/dev/null) || continue
+        printf '%s %s %s\n' "$reference" "$(image_content "$side" "$reference")" "$size"
+    done || true
 }
 
 images_of_the_apps() {

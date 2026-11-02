@@ -2022,7 +2022,8 @@ in_their_docker() {
 size=300000000
 [ "$state" = app_builder_too_big_to_move ] && size=600000000000
 id_of() { case "$1" in app-a-*) echo sha256:img-a ;; app-b-*) echo sha256:img-b ;; mongo:7) echo sha256:mongo ;; esac; }
-built() { echo "app-a $size app-a-backend:latest app-a-frontend:latest"; echo "app-b $size app-b-frontend:latest"; }
+built() { echo "app-a app-a-backend:latest app-a-frontend:latest"; echo "app-b app-b-frontend:latest"; }
+named() { printf 'app-a-backend:latest\napp-a-frontend:latest\napp-b-frontend:latest\nmongo:7\nut-app-builder-traefik:local\n'; }
 labels() { printf -- '--label=com.docker.compose.project=app-a\n--label=com.docker.compose.volume=frontend-node-modules\n'; }
 in_a_volume() {
     side=$1; shift
@@ -2046,6 +2047,8 @@ case "$*" in
     "image ls -q --filter label=com.docker.compose.project") on_this_machine && printf 'img-a\nimg-b\n' ;;
     "image inspect --format {{index .Config.Labels"*) on_this_machine && built ;;
     "image inspect --format {{.Size}} mongo:7") echo 100000000 ;;
+    "image inspect --format {{.Size}} app-"*) on_this_machine && echo "$size" ;;
+    "image ls --format {{.Repository}}:{{.Tag}}") on_this_machine && named ;;
     "image inspect --format {{json .RootFS.Layers}}"*" app-"*|"image inspect --format {{json .RootFS.Layers}}"*" mongo:7")
         ref=$(last "$@")
         if on_this_machine || [ "$ref" = mongo:7 ]; then id_of "$ref"
@@ -2070,6 +2073,8 @@ case "$*" in
     "compose exec -T app-builder-docker docker image ls -q --filter label=com.docker.compose.project") in_their_docker && printf 'img-a\nimg-b\n' ;;
     "compose exec -T app-builder-docker docker image inspect --format {{index .Config.Labels"*) in_their_docker && built ;;
     "compose exec -T app-builder-docker docker image inspect --format {{.Size}} mongo:7") in_their_docker && echo 100000000 ;;
+    "compose exec -T app-builder-docker docker image inspect --format {{.Size}} app-"*) in_their_docker && echo "$size" ;;
+    "compose exec -T app-builder-docker docker image ls --format {{.Repository}}:{{.Tag}}") in_their_docker && named ;;
     "compose exec -T app-builder-docker docker volume ls --filter"*) in_their_docker && echo "app-a_frontend-node-modules app-a" ;;
     "compose exec -T app-builder-docker docker volume inspect --format {{.Mountpoint}} "*) echo /home/abuilder/.local/share/docker/volumes/app-a_frontend-node-modules/_data ;;
     "compose exec -T app-builder-docker docker volume inspect --format {{range"*) labels ;;

@@ -24,6 +24,7 @@ services:
       UT_LLM_BASE_URL: http://app-builder:8001/api/llm/anthropic
       APPS_MONGO_UID: ${APPS_MONGO_UID:-237500998}
       APPS_MONGO_GID: ${APPS_MONGO_GID:-237500998}
+      APPS_ROOT_UID: "2375"
     volumes:
       - app-builder-docker-socket:/run/app-builder-docker
     networks:

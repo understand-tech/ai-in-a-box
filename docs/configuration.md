@@ -174,8 +174,11 @@ share, restarts it: the apps in it stop, and start again when opened in the App
 Builder.
 
 **The first update moves the apps that ran on this machine's Docker**, archived
-ones included, so that they restore without the network: their images and named
-volumes go across, their databases change owner. It needs their size free on the
+ones included, so that they restore without the network: their images (the ones
+Compose labelled with the app, and the `<app>-<service>:latest` it built before it
+labelled them) and named volumes go across, their databases change owner, and
+the App Builder gives each app's folders to root inside its containers before
+starting it. It needs their size free on the
 disk. A named volume that both Dockers hold already stops the move, naming its
 app: remove the copy that is out of date. The apps that ran stop, and start again
 when opened. This machine's Docker keeps its copies until the platform has
