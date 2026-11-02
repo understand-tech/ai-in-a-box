@@ -4609,7 +4609,7 @@ the_apps_move_into_their_docker_and_back_with_their_volumes() {
     docker network inspect proxy >/dev/null 2>&1 || { docker network create proxy >/dev/null && made_proxy=true; }
     docker tag "$ALPINE_IMAGE" "$base"
     printf 'FROM %s\nLABEL com.docker.compose.project=%s\n' "$base" "$app" | docker build -q -t "$built" - >/dev/null
-    id=$(docker image inspect --format '{{json .RootFS.Layers}} {{json .Config}}' "$built")
+    id=$(as_ut_install_in "$probe" image_content docker "$built")
     docker volume create --label "com.docker.compose.project=$app" --label com.docker.compose.volume=data "$volume" >/dev/null
     docker run --rm -v "$volume:/v" "$ALPINE_IMAGE" sh -c 'echo rows > /v/db && chown 999:999 /v/db && mkdir /v/cache && touch /v/cache/kept' >/dev/null
     docker run -d --name "$app-web-1" --label "com.docker.compose.project=$app" \
@@ -4627,17 +4627,12 @@ the_apps_move_into_their_docker_and_back_with_their_volumes() {
         move_the_apps in_the_app_builder_docker docker 237500998 999 && let_go_of_the_apps_on in_the_app_builder_docker
     }
     said=$(as_ut_install_in "$probe" moved_in)
-    local seen
-    seen=$( { echo "host: $(docker image inspect --format '{{json .RootFS.Layers}} {{json .Config}}' "$base" 2>&1 | head -c 300)"
-              echo "apps raw: $( (cd "$probe" && docker compose exec -T app-builder-docker docker image inspect --format '{{json .RootFS.Layers}} {{json .Config}}' "$base") 2>&1 | head -c 300)"
-              echo "apps ls: $( (cd "$probe" && docker compose exec -T app-builder-docker docker image ls --format '{{.Repository}}:{{.Tag}} {{.ID}}') 2>&1 | head -c 300)"
-              echo "content host: $(as_ut_install_in "$probe" image_content docker "$base" 2>&1)"
-              echo "content apps: $(as_ut_install_in "$probe" image_content in_the_app_builder_docker "$base" 2>&1)"; } )
-    there=$( (cd "$probe" && docker compose exec -T app-builder-docker sh -c \
-        "docker image inspect --format '{{json .RootFS.Layers}} {{json .Config}}' $built && docker run --rm -v $volume:/v $base sh -c 'stat -c \"%n %u\" /v/db /v/cache/kept'") 2>&1)
+    there=$(as_ut_install_in "$probe" image_content in_the_app_builder_docker "$built"; echo
+        (cd "$probe" && docker compose exec -T app-builder-docker sh -c \
+        "docker run --rm -v $volume:/v $base sh -c 'stat -c \"%n %u\" /v/db /v/cache/kept'") 2>&1)
     kept=$(docker ps -aq --filter "label=com.docker.compose.project=$app"; docker image ls -q "$built"; docker volume inspect --format '{{.Name}}' "$volume" 2>/dev/null)
     said+=$'\n'$(as_ut_install_in "$probe" moved_back)
-    back=$(docker image inspect --format '{{json .RootFS.Layers}} {{json .Config}}' "$built" 2>&1; docker run --rm -v "$volume:/v" "$base" stat -c '%n %u' /v/db /v/cache/kept 2>&1)
+    back=$(as_ut_install_in "$probe" image_content docker "$built"; echo; docker run --rm -v "$volume:/v" "$base" stat -c '%n %u' /v/db /v/cache/kept 2>&1)
     left=$(cd "$probe" && docker compose exec -T app-builder-docker sh -c "docker image ls -q $built; docker volume inspect --format '{{.Name}}' $volume 2>/dev/null")
 
     (cd "$probe" && docker compose exec -T app-builder-docker sh -c "docker volume create --label com.docker.compose.project=$app $volume >/dev/null && docker run --rm -v $volume:/v $base touch /v/newer") >/dev/null 2>&1
@@ -4650,7 +4645,7 @@ the_apps_move_into_their_docker_and_back_with_their_volumes() {
     apps_docker_down "$probe" "$made_proxy"
 
     [[ "$there" == "$id"$'\n'"/v/db 999"$'\n'"/v/cache/kept 0" ]] \
-        || { echo "in the apps' Docker, the image and the volume read: ${there}"; echo "${said}" | tail -6; echo "${seen}"; return 1; }
+        || { echo "in the apps' Docker, the image and the volume read: ${there}"; echo "${said}" | tail -6; return 1; }
     [[ -z "$kept" ]] || { echo "this machine's Docker kept what the apps left there: ${kept//$'\n'/ }"; return 1; }
     [[ "$back" == "$id"$'\n'"/v/db 999"$'\n'"/v/cache/kept 0" ]] \
         || { echo "back on this machine's Docker, the image and the volume read: ${back}"; echo "${said}" | tail -6; return 1; }

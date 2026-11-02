@@ -183,11 +183,15 @@ write_the_settings_the_app_builder_s_docker_needs() {
 # it would take the lines the loop has yet to read.
 in_the_app_builder_docker() { compose_in_dir exec -T app-builder-docker docker "$@" < /dev/null; }
 
-# An image's layers and configuration: the same on both Dockers, whereas its ID
-# is not once one of them keeps its images in containerd (Docker 29's default).
+# An image's layers and what its configuration runs: the same on both Dockers,
+# whereas its ID is not once one of them keeps its images in containerd (Docker
+# 29's default), nor its whole configuration, which Docker 28 writes with empty
+# legacy fields that 29 leaves out.
+IMAGE_CONTENT_FORMAT='{{json .RootFS.Layers}} {{json .Config.Env}} {{json .Config.Cmd}} {{json .Config.Entrypoint}} {{json .Config.WorkingDir}} {{json .Config.User}} {{json .Config.Labels}}'
+
 image_content() {
     local side=$1 reference=$2 said
-    said=$("$side" image inspect --format '{{json .RootFS.Layers}} {{json .Config}}' "$reference" 2>/dev/null) || return 0
+    said=$("$side" image inspect --format "$IMAGE_CONTENT_FORMAT" "$reference" 2>/dev/null) || return 0
     printf '%s' "$said" | sha256sum | cut -d' ' -f1
 }
 
