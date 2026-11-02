@@ -308,14 +308,56 @@ random_fernet_key() {
     fi
 }
 
+# Read as Compose reads it: the last line for the key, `export ` and blanks
+# allowed before it; single quotes literal; double quotes ending at the first
+# unescaped one, with \" \\ and $$ unescaped; unquoted, cut at " #" and trimmed.
 env_get() {
-    local file=$1 key=$2 value
+    local file=$1 key=$2 value rest char
     [[ -f "$file" ]] || return 1
-    value=$(grep -m1 -E "^[[:space:]]*${key}=" "$file" 2>/dev/null) || return 1
+    value=$(grep -E "^[[:space:]]*(export[[:space:]]+)?${key}=" "$file" 2>/dev/null | tail -1)
+    [[ -n "$value" ]] || return 1
     value=${value#*=}
-    value=${value%\"}; value=${value#\"}
-    value=${value%\'}; value=${value#\'}
+    value=${value#"${value%%[![:space:]]*}"}
+    case "$value" in
+        \'*)
+            rest=${value#\'}
+            value=${rest%%\'*} ;;
+        \"*)
+            rest=${value#\"}
+            value=""
+            while [[ -n "$rest" ]]; do
+                char=${rest:0:1}
+                rest=${rest:1}
+                case "$char" in
+                    \") break ;;
+                    \\) value+=${rest:0:1}; rest=${rest:1} ;;
+                    *) value+=$char ;;
+                esac
+            done
+            value=${value//\$\$/\$} ;;
+        *)
+            value=${value%%[[:space:]]#*}
+            value=${value%"${value##*[![:space:]]}"}
+            value=${value//\$\$/\$} ;;
+    esac
     printf '%s' "$value"
+}
+
+# Written so that Compose reads back exactly the value given: double quotes as
+# before for a plain value, single quotes, which Compose takes literally, for one
+# holding $ " or \, and escaped double quotes when it also holds a single quote.
+env_line() {
+    local key=$1 value=$2
+    if [[ "$value" != *[\$\"\\]* ]]; then
+        printf '%s="%s"\n' "$key" "$value"
+    elif [[ "$value" != *\'* ]]; then
+        printf "%s='%s'\n" "$key" "$value"
+    else
+        value=${value//\\/\\\\}
+        value=${value//\"/\\\"}
+        value=${value//\$/\$\$}
+        printf '%s="%s"\n' "$key" "$value"
+    fi
 }
 
 # A cut while a file is written in place leaves it empty. A copy beside it,
@@ -336,9 +378,9 @@ replace_file_with() {
 
 env_drop() {
     local file=$1 key=$2 tmp
-    grep -qE "^[[:space:]]*${key}=" "$file" 2>/dev/null || return 0
+    grep -qE "^[[:space:]]*(export[[:space:]]+)?${key}=" "$file" 2>/dev/null || return 0
     tmp=$(mktemp)
-    grep -vE "^[[:space:]]*${key}=" "$file" > "$tmp" || true
+    grep -vE "^[[:space:]]*(export[[:space:]]+)?${key}=" "$file" > "$tmp" || true
     replace_file_with "$file" < "$tmp"
     rm -f "$tmp"
 }
@@ -361,14 +403,14 @@ env_set() {
     local file=$1 key=$2 value=$3 tmp found=0 line
     tmp=$(mktemp)
     while IFS= read -r line || [[ -n "$line" ]]; do
-        if [[ "$line" =~ ^[[:space:]]*${key}= ]]; then
-            printf '%s="%s"\n' "$key" "$value" >> "$tmp"
+        if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?${key}= ]]; then
+            env_line "$key" "$value" >> "$tmp"
             found=1
         else
             printf '%s\n' "$line" >> "$tmp"
         fi
     done < "$file"
-    (( found )) || printf '%s="%s"\n' "$key" "$value" >> "$tmp"
+    (( found )) || env_line "$key" "$value" >> "$tmp"
     replace_file_with "$file" < "$tmp"
     rm -f "$tmp"
 }
@@ -1171,6 +1213,9 @@ migrate_existing_settings_into_local() {
     split=$(mktemp)
 
     while IFS= read -r line || [[ -n "$line" ]]; do
+        # Compose reads a line with blanks or `export ` before the key, so it is the operator's too.
+        line=${line#"${line%%[![:space:]]*}"}
+        [[ "$line" =~ ^export[[:space:]]+ ]] && line=${line#"${BASH_REMATCH[0]}"}
         case "$line" in
             [A-Za-z_]*=*) key=${line%%=*} ;;
             *) continue ;;
@@ -1813,7 +1858,7 @@ render_settings() {
     release="$INSTALL_DIR/release.env"
     [[ -f "$release" ]] || die "No release.env in ${INSTALL_DIR}."
 
-    overridden=$(grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' "$local_file" 2>/dev/null | tr -d '=' || true)
+    overridden=$(sed -nE 's/^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)=.*/\2/p' "$local_file" 2>/dev/null || true)
     tmp=$(mktemp)
     while IFS= read -r line || [[ -n "$line" ]]; do
         case "$line" in
@@ -2755,21 +2800,6 @@ password_was_published() {
     return 1
 }
 
-# env_get keeps what Compose drops: blanks or a CR around the value, and after
-# an unquoted one, a " #" comment.
-setting_as_compose_reads_it() {
-    local value
-    value=$(grep -m1 -E "^[[:space:]]*$2=" "$1" 2>/dev/null) || return 1
-    value=${value#*=}
-    value=${value#"${value%%[![:space:]]*}"}
-    case "$value" in
-        \"*) value=${value#\"}; value=${value%%\"*} ;;
-        \'*) value=${value#\'}; value=${value%%\'*} ;;
-        *)   value=${value%%[[:space:]]#*}; value=${value%"${value##*[![:space:]]}"} ;;
-    esac
-    printf '%s' "$value"
-}
-
 the_database_runs_here() { [[ -n "$(compose_in_dir ps -q mongodb 2>/dev/null)" ]]; }
 
 waited_for_services_not_ready() {
@@ -2899,7 +2929,7 @@ step_finish_an_interrupted_database_password_change() {
     { read -r old || true; read -r new || true; } < "$record"
     [[ -n "$new" ]] || { rm -f "$record"; log_info "It was cut off before the database changed: nothing to do"; return 0; }
     local_file="$(settings_directory "$INSTALL_DIR/.env")/local.env"
-    user=$(setting_as_compose_reads_it "$local_file" MONGODB_USERNAME || true)
+    user=$(env_get "$local_file" MONGODB_USERNAME || true)
     compose_in_dir up -d --no-deps mongodb >/dev/null 2>&1 || true
     the_database_answers \
         || die "The database does not answer, so which password it took is unknown. ${record} keeps both; run ut-install again once it answers."
@@ -2917,7 +2947,7 @@ step_finish_an_interrupted_database_password_change() {
 step_rotate_a_published_database_password() {
     local local_file user old new saved archive after
     local_file="$(settings_directory "$INSTALL_DIR/.env")/local.env"
-    old=$(setting_as_compose_reads_it "$local_file" MONGODB_PASSWORD || true)
+    old=$(env_get "$local_file" MONGODB_PASSWORD || true)
     $ROTATE_DATABASE_PASSWORD || { password_was_published "$old" && the_database_runs_here; } || return 0
 
     log_step "The database password"
@@ -2926,7 +2956,7 @@ step_rotate_a_published_database_password() {
     the_database_runs_here || die "No database runs on this machine, so there is no password to change."
     the_services_that_read_it_are_ready_now || return 0
     $ROTATE_DATABASE_PASSWORD || the_operator_wants_the_published_password_changed || return 0
-    user=$(setting_as_compose_reads_it "$local_file" MONGODB_USERNAME || true)
+    user=$(env_get "$local_file" MONGODB_USERNAME || true)
     database_opens_with "$user" "$old" \
         || die "The password is unchanged: the one in ${local_file} does not open the database."
     archive=$(take_a_verified_database_backup) \

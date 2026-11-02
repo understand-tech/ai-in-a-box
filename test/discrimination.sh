@@ -1926,9 +1926,9 @@ if grep -q 'step_rotate_a_published_database_password' "$REPO_ROOT/bin/ut-instal
         "a service not ready yet leaves the password as it is" \
         "sed -i.bak '/^    the_services_that_read_it_are_ready_now || return 0\$/d' bin/ut-install"
 
-    install_walk_discriminates "a published password read as env_get reads it" \
+    install_walk_discriminates "a published password read without cutting the comment after it" \
         "a box taken over from a checkout has its published password changed" \
-        "sed -i.bak 's/^    old=\$(setting_as_compose_reads_it /    old=\$(env_get /' bin/ut-install"
+        "sed -i.bak '/value%%\\[\\[:space:\\]\\]#\\*/d' bin/ut-install"
 fi
 
 if grep -q 'step_retire_the_portainer_the_guide_started' "$REPO_ROOT/bin/ut-install"; then

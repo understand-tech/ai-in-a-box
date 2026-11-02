@@ -1553,7 +1553,7 @@ a_takeover_changes_the_password_compose_reads() {
 taken_for_published() {
     printf '%s\n' "$1" > "$WORK_DIR/settings-line"
     docker run --rm -v "$REPO_ROOT/bin":/ut:ro -v "$WORK_DIR/settings-line":/line:ro "$WITH_OPENSSL_IMAGE" bash -c \
-        '. /ut/ut-install && if password_was_published "$(setting_as_compose_reads_it /line MONGODB_PASSWORD)"; then echo published; fi' 2>&1
+        '. /ut/ut-install && if password_was_published "$(env_get /line MONGODB_PASSWORD)"; then echo published; fi' 2>&1
 }
 
 published_in_every_one_of() {
