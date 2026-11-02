@@ -4446,6 +4446,17 @@ EOF
     return 1
 }
 
+# preflight shows its title before any step_ function runs, under set -e.
+a_title_before_the_first_step_does_not_stop_the_install() {
+    local said
+    said=$( ( UT_INSTALL_DIR="$WORK_DIR" source "$REPO_ROOT/bin/ut-install" >/dev/null 2>&1
+              set -Eeuo pipefail; trap - ERR
+              before() { the_step_running; echo "[before:$?]"; }
+              step_x() { the_step_running; echo "[x:$?]"; }
+              before; step_x ) 2>&1 )
+    [[ "$said" == *"[before:0]"* && "$said" == *"step_x[x:0]"* ]] || { echo "the step named before and inside a step: ${said}"; return 1; }
+}
+
 group "Metrics the box's own Prometheus keeps"
 capability "the gateway job keeps ut_cost_* alongside ut_inference_*, and drops everything else" \
     the_box_prometheus_keeps_cost_alongside_inference_and_drops_the_rest
@@ -4464,6 +4475,8 @@ if [[ -x "$REPO_ROOT/bin/ut-report" ]]; then
         the_report_names_no_user
     capability "a failed install's report names its step, never the box's domain, folders or registry" \
         the_report_names_no_address_of_the_box
+    capability "a title shown before the first step does not stop the install" \
+        a_title_before_the_first_step_does_not_stop_the_install
     capability "requests served with no user counted are flagged" \
         requests_served_with_no_user_counted_are_flagged
     capability "a series the recorder does not have is flagged" \
