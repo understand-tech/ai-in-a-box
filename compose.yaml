@@ -353,6 +353,8 @@ services:
       EXTRA_ALLOWED_ORIGINS: *url-allowed-origins
       JWT_SECRET: ${JWT_SECRET:?ut-install generates it}
       APP_BUILDER_BASE_URL: *url-app-builder
+      # Encrypts the connection tokens of UT Agent's connectors. The API alone reads it.
+      AGENT_CONNECTOR_KEY_V1: ${AGENT_CONNECTOR_KEY_V1:-}
     volumes:
       - uploads-data:/tmp/uploads
       - ${DATA_ROOT:-/var/lib/understandtech}/app-data:/app/storage
