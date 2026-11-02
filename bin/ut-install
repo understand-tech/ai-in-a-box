@@ -103,6 +103,7 @@ the_step_running() {
     for name in "${FUNCNAME[@]}"; do
         [[ "$name" == step_* ]] && { printf '%s' "$name"; return 0; }
     done
+    return 0
 }
 
 # --events writes each of these beside the text, never instead of it: ut-setup
