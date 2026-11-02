@@ -4486,7 +4486,8 @@ the_apps_get_a_docker_of_their_own() {
         and (((.services["app-builder-docker"].networks | keys) - ["proxy", "ut-app-builder-network"]) | length == 0)
         and .services["app-builder-docker"].privileged != true
         and .services["app-builder-docker"].user == "2375:2375"
-        and .services["app-builder-docker"].ports == null' <<< "$config" >/dev/null && return 0
+        and .services["app-builder-docker"].ports == null
+        and (.services.caddy.networks["ut-app-builder-network"].aliases | length == 1)' <<< "$config" >/dev/null && return 0
     jq -c '{builder: .services["app-builder"].volumes, docker: (.services["app-builder-docker"] | {user, privileged, ports, networks})}' <<< "$config"
     return 1
 }
@@ -4815,6 +4816,46 @@ an_app_that_mounts_the_docker_socket_is_refused_before_anything_is_written() {
     ! grep -q '^EXTRA_ALLOWED_ORIGINS=' "$dir/local.env" || { echo "refused, after making it an origin the platform admits"; return 1; }
 }
 
+# ut-import-app, once the apps have their Docker: the app runs there, beside
+# them, and reaches the platform by the box's domain, which a stub answers to.
+an_imported_app_runs_in_the_apps_docker_and_reaches_the_platform_by_its_domain() {
+    local project="capimpn$$" id="capimpn$$a" made_proxy=false probe="$WORK_DIR/capimpn$$" said out status
+    local domain running_here running_there reached
+    apps_docker_profile_loads || return 1
+    an_apps_docker_folder "$probe" "$project" "$probe/data"
+    mkdir -p "$probe/data/appbuilder/traefik-dynamic" "$probe/app-builder-docker"
+    : > "$probe/app-builder-docker/holds-the-apps"
+    install -m 600 /dev/null "$probe/local.env"
+    domain=$(sed -n 's/^UT_DOMAIN="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$probe/.env" | head -1)
+    domain=${domain:-understand.local}
+    docker pull -q "$(release_image TRAEFIK_IMAGE)" >/dev/null 2>&1
+    docker pull -q "$CADDY_IMAGE" >/dev/null 2>&1
+    docker network inspect proxy >/dev/null 2>&1 || { docker network create proxy >/dev/null && made_proxy=true; }
+    if ! said=$(as_ut_install_in "$probe" start_an_apps_docker_with_its_traefik); then
+        apps_docker_down "$probe" "$made_proxy"
+        echo "${said}" | tail -4
+        return 1
+    fi
+    docker run -d --rm --name "${project}-platform" --network "${project}-app-builder-network" --network-alias "$domain" \
+        "$CADDY_IMAGE" caddy respond --listen :80 "the platform" >/dev/null
+    nested() { ( cd "$probe" && docker compose exec -T app-builder-docker docker "$@" ); }
+    an_app_to_import "$probe/source"
+
+    out=$(UT_INSTALL_DIR="$probe" "$REPO_ROOT/bin/ut-import-app" "$probe/source" "$id" --service web --port 8080 2>&1)
+    status=$?
+    running_there=$(nested ps --filter "label=com.docker.compose.project=$id" --format '{{.State}}' 2>/dev/null)
+    running_here=$(docker ps -q --filter "label=com.docker.compose.project=$id")
+    reached=$(nested exec "${id}-web-1" wget -q -O - "http://$domain/" 2>&1)
+
+    docker rm -f "${project}-platform" >/dev/null 2>&1
+    apps_docker_down "$probe" "$made_proxy"
+
+    (( status == 0 )) || { echo "ut-import-app failed: $(echo "$out" | tail -5)"; return 1; }
+    [[ "$running_there" == running ]] || { echo "in the apps' Docker, the imported app is ${running_there:-absent}"; return 1; }
+    [[ -z "$running_here" ]] || { echo "the imported app runs on this machine's Docker"; return 1; }
+    [[ "$reached" == "the platform" ]] || { echo "from the apps' Docker, $domain answered: ${reached:-nothing}"; return 1; }
+}
+
 group "The App Builder's apps in a Docker of their own"
 capability "the App Builder's apps get a rootless Docker that the App Builder alone reaches" \
     the_apps_get_a_docker_of_their_own
@@ -4822,6 +4863,8 @@ capability "the App Builder can still go back to this machine's Docker" \
     the_app_builder_can_still_go_back_to_this_machine_s_docker
 capability "the apps' Docker serves an app through its own Traefik, and nothing else drives it" \
     the_apps_docker_serves_an_app_and_lets_nothing_else_drive_it
+capability "an imported app runs in the apps' Docker and reaches the platform by the box's domain" \
+    an_imported_app_runs_in_the_apps_docker_and_reaches_the_platform_by_its_domain
 capability "beside a GPU that shares the machine's memory, the apps get an eighth of it and a fifth of the cores" \
     a_gpu_sharing_the_machine_s_memory_leaves_the_apps_an_eighth_of_it
 capability "beside a GPU with memory of its own, the apps get a quarter of the machine's" \

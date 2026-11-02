@@ -122,6 +122,8 @@ services:
       APP_BUILDER_APPS_UPSTREAM: app-builder-docker:8090
     networks:
       ut-app-builder-network:
+        aliases:
+          - ${UT_DOMAIN:-understand.local}
 
   api-customer:
     networks:

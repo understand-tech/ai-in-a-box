@@ -133,7 +133,7 @@ mounts its socket; it listens on no port.
 | What an app reaches | |
 |---|---|
 | This machine | Neither its Docker nor its disks: that Docker is a user with no capability here, and root inside it is root over its own ids only |
-| The platform | By name, `app-builder`, `api-customer` and `caddy`, which it is meant to call, and nothing else. By address, what keeps it from the platform's other networks is this machine's Docker, as for any container |
+| The platform | By name, `app-builder`, `api-customer` and `caddy`, which it is meant to call, and nothing else; the box's domain names `caddy` too, so an app calls the platform at its public address. By address, what keeps it from the platform's other networks is this machine's Docker, as for any container |
 | The outside | Whatever this machine routes to, through `proxy`: the LAN, and the internet if the box has it |
 | Other apps and their Docker | Kept apart by the App Builder, which checks each app's compose file before it starts it. That Docker itself would let an app mount its socket, or another app's files |
 | The routes | Nothing: the files Traefik routes the apps by belong to root here, and an app cannot write them |
@@ -184,6 +184,13 @@ it cannot, the apps stay in their own Docker, and `ut-install` writes
 `APP_BUILDER_DOCKER="nested"` in `local.env` and says why. The App Builder then
 drives this machine's Docker again, which makes it root here. Remove the line to
 move the apps back into their own Docker.
+
+
+**Imported apps go there too.** Once the generated apps live in their own
+Docker, `ut-import-app` stages an app under `$DATA_ROOT/appbuilder/imported-apps`
+and runs it in that Docker, beside them. It reaches the platform at
+`https://<domain>`. An app imported before keeps running on this machine's
+Docker, where it was started.
 
 ### Pushing apps to GitLab
 
