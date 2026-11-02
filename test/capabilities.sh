@@ -4712,7 +4712,7 @@ the_apps_docker_serves_an_app_and_lets_nothing_else_drive_it() {
 # that ran. No database: chown needs root here, and the walk checks it.
 the_apps_move_into_their_docker_and_back_with_their_volumes() {
     local project="capmove$$" app="capmove$$a" made_proxy=false probe="$WORK_DIR/capmove$$" said
-    local built="capmove$$a-web:latest" base="capmove$$-base:1" volume="capmove$$a_data" id there kept back left taken
+    local built="capmove$$a-web:latest" base="capmove$$-base:1" volume="capmove$$a_data" id there kept back left taken legacy
     apps_docker_profile_loads || return 1
     an_apps_docker_folder "$probe" "$project" "$probe/data"
     mkdir -p "$probe/data/appbuilder/workspaces/$app"
@@ -4720,6 +4720,7 @@ the_apps_move_into_their_docker_and_back_with_their_volumes() {
     docker network inspect proxy >/dev/null 2>&1 || { docker network create proxy >/dev/null && made_proxy=true; }
     docker tag "$ALPINE_IMAGE" "$base"
     printf 'FROM %s\nLABEL com.docker.compose.project=%s\n' "$base" "$app" | docker build -q -t "$built" - >/dev/null
+    printf 'FROM %s\nENV BUILT_BEFORE_COMPOSE_LABELLED_IMAGES=1\n' "$base" | docker build -q -t "$app-legacy:latest" - >/dev/null
     id=$(as_ut_install_in "$probe" image_content docker "$built")
     docker volume create --label "com.docker.compose.project=$app" --label com.docker.compose.volume=data "$volume" >/dev/null
     docker run --rm -v "$volume:/v" "$ALPINE_IMAGE" sh -c 'echo rows > /v/db && chown 999:999 /v/db && mkdir /v/cache && touch /v/cache/kept' >/dev/null
@@ -4741,7 +4742,8 @@ the_apps_move_into_their_docker_and_back_with_their_volumes() {
     there=$(as_ut_install_in "$probe" image_content in_the_app_builder_docker "$built"
         (cd "$probe" && docker compose exec -T app-builder-docker sh -c \
         "docker run --rm -v $volume:/v $base sh -c 'stat -c \"%n %u\" /v/db /v/cache/kept'") 2>&1)
-    kept=$(docker ps -aq --filter "label=com.docker.compose.project=$app"; docker image ls -q "$built"; docker volume inspect --format '{{.Name}}' "$volume" 2>/dev/null)
+    legacy=$( (cd "$probe" && docker compose exec -T app-builder-docker docker image ls -q "$app-legacy:latest") 2>/dev/null)
+    kept=$(docker ps -aq --filter "label=com.docker.compose.project=$app"; docker image ls -q "$built"; docker image ls -q "$app-legacy:latest"; docker volume inspect --format '{{.Name}}' "$volume" 2>/dev/null)
     said+=$'\n'$(as_ut_install_in "$probe" moved_back)
     back=$(as_ut_install_in "$probe" image_content docker "$built"; docker run --rm -v "$volume:/v" "$base" stat -c '%n %u' /v/db /v/cache/kept 2>&1)
     left=$(cd "$probe" && docker compose exec -T app-builder-docker sh -c "docker image ls -q $built; docker volume inspect --format '{{.Name}}' $volume 2>/dev/null")
@@ -4752,11 +4754,12 @@ the_apps_move_into_their_docker_and_back_with_their_volumes() {
 
     docker rm -f "$app-web-1" >/dev/null 2>&1
     docker volume rm "$volume" >/dev/null 2>&1
-    docker image rm "$built" "$base" >/dev/null 2>&1
+    docker image rm "$built" "$base" "$app-legacy:latest" >/dev/null 2>&1
     apps_docker_down "$probe" "$made_proxy"
 
     [[ "$there" == "$id"$'\n'"/v/db 999"$'\n'"/v/cache/kept 0" ]] \
         || { echo "in the apps' Docker, the image and the volume read: ${there}"; echo "${said}" | tail -6; return 1; }
+    [[ -n "$legacy" ]] || { echo "an image Compose named after the app, without its label, stayed on this machine's Docker"; return 1; }
     [[ -z "$kept" ]] || { echo "this machine's Docker kept what the apps left there: ${kept//$'\n'/ }"; return 1; }
     [[ "$back" == "$id"$'\n'"/v/db 999"$'\n'"/v/cache/kept 0" ]] \
         || { echo "back on this machine's Docker, the image and the volume read: ${back}"; echo "${said}" | tail -6; return 1; }
