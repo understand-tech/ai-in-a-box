@@ -40,7 +40,10 @@ services:
     restart: unless-stopped
     user: "2375:2375"
     # Given its own arguments, the image's entrypoint adds no TCP listener.
-    command: ["dockerd", "--host=unix:///run/app-builder-docker/docker.sock"]
+    command:
+      - dockerd
+      - --host=unix:///run/app-builder-docker/docker.sock
+      - --default-address-pool=base=${APP_BUILDER_DOCKER_APP_NETWORKS:-198.18.0.0/16},size=26
     environment:
       HOME: /home/abuilder
       XDG_RUNTIME_DIR: /run/app-builder-docker

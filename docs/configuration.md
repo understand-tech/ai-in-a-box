@@ -147,6 +147,20 @@ mounts its socket; it listens on no port.
 | What the apps take | all of them together, computed at each install: of the memory, 12.5 % beside a GPU that shares it (GB10, GB200, GB300, GH200), 25 % beside a GPU with memory of its own, 50 % on a machine that serves no model; 20 % of the cores; 4096 processes; never less than 8 GiB and 2 CPUs. `ut-install` says what it chose. The caps an app's own compose file sets are not applied |
 | Where the apps are | `/etc/understandtech/app-builder-docker/holds-the-apps` exists while they live in their own Docker: `ut-install` reads it to know which way to move them |
 
+**Their addresses.** Inside their Docker, each app's network takes 64 addresses
+from `198.18.0.0/16`, 1 024 networks in all, and the `proxy` network every routed
+app joins takes `198.19.0.0/16`. Those ranges are kept for network benchmarks and
+are not routed: they overlap neither the platform's networks, which this
+machine's Docker draws from `172.17.0.0/12` and `192.168.0.0/16`, nor a usual
+LAN. An app could not reach an address of a range its own Docker also uses. If
+the box's network uses them, choose others in `local.env`, before the apps'
+Docker is first started:
+
+```bash
+APP_BUILDER_DOCKER_APP_NETWORKS="10.200.0.0/16"
+APP_BUILDER_DOCKER_PROXY_NETWORK="10.201.0.0/16"
+```
+
 To give the apps another share, in `local.env`, each one on its own:
 
 ```bash

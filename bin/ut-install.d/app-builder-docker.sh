@@ -257,7 +257,9 @@ give_the_app_builder_docker_its_traefik() {
     fi
 
     if ! in_the_app_builder_docker network inspect proxy >/dev/null 2>&1 \
-            && ! in_the_app_builder_docker network create proxy >/dev/null 2>&1; then
+            && ! in_the_app_builder_docker network create \
+                --subnet "$(env_get "$INSTALL_DIR/.env" APP_BUILDER_DOCKER_PROXY_NETWORK 2>/dev/null || echo 198.19.0.0/16)" \
+                proxy >/dev/null 2>&1; then
         log_error "The App Builder's Docker has no proxy network for its apps, and could not create one."
         return 1
     fi
