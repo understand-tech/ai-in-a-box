@@ -2022,7 +2022,7 @@ in_their_docker() {
 size=300000000
 [ "$state" = app_builder_too_big_to_move ] && size=600000000000
 id_of() { case "$1" in app-a-*) echo sha256:img-a ;; app-b-*) echo sha256:img-b ;; mongo:7) echo sha256:mongo ;; esac; }
-built() { echo "app-a sha256:img-a $size app-a-backend:latest app-a-frontend:latest"; echo "app-b sha256:img-b $size app-b-frontend:latest"; }
+built() { echo "app-a $size app-a-backend:latest app-a-frontend:latest"; echo "app-b $size app-b-frontend:latest"; }
 labels() { printf -- '--label=com.docker.compose.project=app-a\n--label=com.docker.compose.volume=frontend-node-modules\n'; }
 in_a_volume() {
     side=$1; shift
@@ -2045,13 +2045,13 @@ case "$*" in
     "ps -a --filter label=com.docker.compose.project --format"*) on_this_machine && echo "c0ffee running app-a" ;;
     "image ls -q --filter label=com.docker.compose.project") on_this_machine && printf 'img-a\nimg-b\n' ;;
     "image inspect --format {{index .Config.Labels"*) on_this_machine && built ;;
-    "image inspect --format mongo:7 {{.Id}} {{.Size}} mongo:7") echo "mongo:7 sha256:mongo 100000000" ;;
-    "image inspect --format {{.Id}} app-"*|"image inspect --format {{.Id}} mongo:7")
+    "image inspect --format {{.Size}} mongo:7") echo 100000000 ;;
+    "image inspect --format {{json .RootFS.Layers}}"*" app-"*|"image inspect --format {{json .RootFS.Layers}}"*" mongo:7")
         ref=$(last "$@")
         if on_this_machine || [ "$ref" = mongo:7 ]; then id_of "$ref"
         elif [ -f /stub/loaded-here ] && ! { [ "$state" = app_builder_brought_back_fails ] && [ "$ref" = app-b-frontend:latest ]; }; then id_of "$ref"
         else exit 1; fi ;;
-    "image inspect --format {{.Id}} "*) echo "sha256:the-release-traefik" ;;
+    "image inspect --format {{json .RootFS.Layers}}"*) echo "sha256:the-release-traefik" ;;
     "volume ls --filter label=com.docker.compose.project --format"*) on_this_machine && echo "app-a_frontend-node-modules app-a" ;;
     "volume inspect --format {{range"*) labels ;;
     "volume inspect app-a_frontend-node-modules") on_this_machine || [ -f /stub/volume-here ] ;;
@@ -2059,8 +2059,8 @@ case "$*" in
     "run --rm -i --user 0 --network none -v "*) in_a_volume here "$@" ;;
     "save "*) record "$*"; echo images ;;
     "load -q") record "$*"; cat > /dev/null; touch /stub/loaded-here ;;
-    "compose exec -T app-builder-docker docker image inspect --format {{.Id}} ut-app-builder-traefik:local") echo "sha256:the-release-traefik" ;;
-    "compose exec -T app-builder-docker docker image inspect --format {{.Id}} "*)
+    "compose exec -T app-builder-docker docker image inspect --format {{json .RootFS.Layers}}"*" ut-app-builder-traefik:local") echo "sha256:the-release-traefik" ;;
+    "compose exec -T app-builder-docker docker image inspect --format {{json .RootFS.Layers}}"*)
         ref=$(last "$@")
         in_their_docker || exit 1
         [ "$state" = app_builder_move_fails ] && [ "$ref" = app-b-frontend:latest ] && exit 1
@@ -2069,7 +2069,7 @@ case "$*" in
     "compose exec -T app-builder-docker docker ps -a --filter"*) ;;
     "compose exec -T app-builder-docker docker image ls -q --filter label=com.docker.compose.project") in_their_docker && printf 'img-a\nimg-b\n' ;;
     "compose exec -T app-builder-docker docker image inspect --format {{index .Config.Labels"*) in_their_docker && built ;;
-    "compose exec -T app-builder-docker docker image inspect --format mongo:7 {{.Id}} {{.Size}} mongo:7") in_their_docker && echo "mongo:7 sha256:mongo 100000000" ;;
+    "compose exec -T app-builder-docker docker image inspect --format {{.Size}} mongo:7") in_their_docker && echo 100000000 ;;
     "compose exec -T app-builder-docker docker volume ls --filter"*) in_their_docker && echo "app-a_frontend-node-modules app-a" ;;
     "compose exec -T app-builder-docker docker volume inspect --format {{.Mountpoint}} "*) echo /home/abuilder/.local/share/docker/volumes/app-a_frontend-node-modules/_data ;;
     "compose exec -T app-builder-docker docker volume inspect --format {{range"*) labels ;;
