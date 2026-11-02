@@ -66,7 +66,6 @@ services:
       ORCHESTRATOR_INTERNAL_URL: http://app-builder:8001
       ORCHESTRATOR_TRAEFIK_SERVICE: builder-api
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
       - ${DATA_ROOT:-/var/lib/understandtech}/appbuilder:${DATA_ROOT:-/var/lib/understandtech}/appbuilder
     networks:
       - ut-frontend-network
@@ -93,49 +92,6 @@ services:
           cpus: ${APP_BUILDER_CPU_LIMIT:-2}
         reservations:
           memory: 1G
-
-  app-builder-traefik:
-    labels:
-      ut.release: "${UT_RELEASE_VERSION:-}"
-    image: ${TRAEFIK_IMAGE:-traefik:v3.2@sha256:e561a37f8710d9cf41c78bdf421d822b2c0b48267ec0552e644565fb55466ea9}
-    container_name: ${CONTAINER_PREFIX:-ut}-app-builder-traefik
-    restart: unless-stopped
-    command:
-      # Traefik checks for a new version by default: measured on .31 on 2026-10-21,
-      # its calls out were the ones a box with no network refused.
-      - "--global.checknewversion=false"
-      - "--global.sendanonymoususage=false"
-      - "--providers.file.directory=/etc/traefik/dynamic"
-      - "--providers.file.watch=true"
-      - "--entrypoints.web.address=:80"
-      - "--ping=true"
-    volumes:
-      - ${DATA_ROOT:-/var/lib/understandtech}/appbuilder/traefik-dynamic:/etc/traefik/dynamic
-      - ./appbuilder/traefik/_orchestrator.yml:/etc/traefik/dynamic/_orchestrator.yml:ro
-    networks:
-      ut-frontend-network:
-        aliases:
-          - ut-api-v3
-      proxy:
-        aliases:
-          - ut-api-v3
-    healthcheck:
-      test: ["CMD", "traefik", "healthcheck", "--ping"]
-      <<: *healthcheck-defaults
-      start_period: 10s
-    logging: *default-logging
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-          cpus: '0.5'
-        reservations:
-          memory: 128M
-
-networks:
-  proxy:
-    name: proxy
-    external: true
 
 volumes:
   app-builder-claude-state:

@@ -117,13 +117,94 @@ Once the platform is up:
 
 1. In the platform UI, **DEVELOPER → API keys**, create one.
 2. Set `APP_BUILDER_GATEWAY_API_KEY` in `local.env`.
-3. `docker network create proxy`
-4. Uncomment `COMPOSE_FILE`.
-5. `docker compose up -d`
+3. Set `COMPOSE_FILE="compose.yaml:compose.appbuilder.yaml"` in `local.env`.
+4. `sudo ut-install`
 
-Step 3 is not optional. The overlay declares that network `external`, generated
-apps join it from their own compose projects, so no project owns it and compose
-refuses to start without it.
+`ut-install`, not `docker compose up -d`: it is what gives the generated apps
+their Docker, below, and creates the `proxy` network they share with the apps
+`ut-import-app` runs.
+
+### Where the generated apps run
+
+The generated apps run in a Docker of their own, `app-builder-docker`: rootless,
+under the uid `2375`, which has no account on the machine. The App Builder alone
+mounts its socket; it listens on no port.
+
+| What an app reaches | |
+|---|---|
+| This machine | Neither its Docker nor its disks: that Docker is a user with no capability here, and root inside it is root over its own ids only |
+| The platform | By name, `app-builder`, `api-customer` and `caddy`, which it is meant to call, and nothing else; the box's domain names `caddy` too, so an app calls the platform at its public address. By address, what keeps it from the platform's other networks is this machine's Docker, as for any container |
+| The outside | Whatever this machine routes to, through `proxy`: the LAN, and the internet if the box has it |
+| Other apps and their Docker | Kept apart by the App Builder, which checks each app's compose file before it starts it. That Docker itself would let an app mount its socket, or another app's files |
+| The routes | Nothing: the files Traefik routes the apps by belong to root here, and an app cannot write them |
+
+| | |
+|---|---|
+| The ids it takes | uid `2375`, and `237500000` to `237565535` for what its containers run as. `ut-install` stops if an account or `/etc/subuid` already holds them |
+| Its profiles | `ut-install` installs `/etc/apparmor.d/ut-app-builder-docker`, which confines nothing: it is how Ubuntu 24.04 grants a user namespace. Its seccomp profile, `appbuilder/seccomp/ut-app-builder-docker.json`, is Docker's default with namespaces and mounts allowed |
+| The apps' databases | owned by `237500998` on this machine, the `999` MongoDB runs as inside |
+| The admin page | lists the generated apps and their volumes, no longer the platform's containers |
+| What the apps take | all of them together, computed at each install: of the memory, 12.5 % beside a GPU that shares it (GB10, GB200, GB300, GH200), 25 % beside a GPU with memory of its own, 50 % on a machine that serves no model; 20 % of the cores; 4096 processes; never less than 8 GiB and 2 CPUs. `ut-install` says what it chose. The caps an app's own compose file sets are not applied |
+| Where the apps are | `/etc/understandtech/app-builder-docker/holds-the-apps` exists while they live in their own Docker: `ut-install` reads it to know which way to move them |
+
+**Their addresses.** Inside their Docker, each app's network takes 64 addresses
+from `198.18.0.0/16`, 1 024 networks in all, and the `proxy` network every routed
+app joins takes `198.19.0.0/16`. Those ranges are kept for network benchmarks and
+are not routed: they overlap neither the platform's networks, which this
+machine's Docker draws from `172.17.0.0/12` and `192.168.0.0/16`, nor a usual
+LAN. An app could not reach an address of a range its own Docker also uses. If
+the box's network uses them, choose others in `local.env`, before the apps'
+Docker is first started:
+
+```bash
+APP_BUILDER_DOCKER_APP_NETWORKS="10.200.0.0/16"
+APP_BUILDER_DOCKER_PROXY_NETWORK="10.201.0.0/16"
+```
+
+To give the apps another share, in `local.env`, each one on its own:
+
+```bash
+APP_BUILDER_DOCKER_MEMORY="24G"
+APP_BUILDER_DOCKER_CPUS="6"
+APP_BUILDER_DOCKER_PIDS="8192"
+```
+
+then `sudo ut-install`. An install that changes that Docker, its image or its
+share, restarts it: the apps in it stop, and start again when opened in the App
+Builder.
+
+**The first update moves the apps that ran on this machine's Docker**, archived
+ones included, so that they restore without the network: their images and named
+volumes go across, their databases change owner. It needs their size free on the
+disk. A named volume that both Dockers hold already stops the move, naming its
+app: remove the copy that is out of date. The apps that ran stop, and start again
+when opened. This machine's Docker keeps its copies until the platform has
+started with the apps in their own; if anything fails before, every app is put
+back where it ran, and `ut-install` writes `APP_BUILDER_DOCKER="host"` in
+`local.env` and says why. Once that Docker holds the apps, an install where it
+does not start stops there, rather than go back without them.
+
+**The way back, while this proves itself:**
+
+```bash
+APP_BUILDER_DOCKER="host"
+```
+
+in `local.env`, then `sudo ut-install`. It starts the apps' Docker once more and
+brings every app back to this machine's, with the same checks as the move: their
+images and named volumes, their databases given back to `999`. Then it removes
+them from the apps' Docker, whose volume `ut-app-builder-docker-data` stays. If
+it cannot, the apps stay in their own Docker, and `ut-install` writes
+`APP_BUILDER_DOCKER="nested"` in `local.env` and says why. The App Builder then
+drives this machine's Docker again, which makes it root here. Remove the line to
+move the apps back into their own Docker.
+
+
+**Imported apps go there too.** Once the generated apps live in their own
+Docker, `ut-import-app` stages an app under `$DATA_ROOT/appbuilder/imported-apps`
+and runs it in that Docker, beside them. It reaches the platform at
+`https://<domain>`. An app imported before keeps running on this machine's
+Docker, where it was started.
 
 ### Pushing apps to GitLab
 
