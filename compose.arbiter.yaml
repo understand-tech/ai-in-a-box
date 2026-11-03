@@ -74,6 +74,8 @@ services:
     profiles: ["control-plane-only"]
   llm:
     profiles: ["gpu-only"]
+  embeddings:
+    profiles: ["gpu-only"]
   nim-llm:
     profiles: ["gpu-only"]
   metrics:

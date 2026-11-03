@@ -770,7 +770,7 @@ services:
     restart: unless-stopped
     command:
       - "-m"
-      - "/models/${EMBED_MODEL_NAME:-nomic-embed-text-v1.5.f32.gguf}"
+      - "/models/${EMBED_MODEL_NAME:-}"
       - "--embedding"
       - "--host"
       - "0.0.0.0"
