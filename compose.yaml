@@ -125,6 +125,7 @@ x-pgbackrest: &pgbackrest
   PGBACKREST_REPO1_CIPHER_TYPE: aes-256-cbc
   PGBACKREST_REPO1_CIPHER_PASS: ${POSTGRES_BACKUP_PASSWORD:?ut-install generates it - losing it makes every Postgres backup unreadable}
   PGBACKREST_REPO1_RETENTION_FULL: ${POSTGRES_BACKUP_KEEP_FULL:-2}
+  PGBACKREST_PROCESS_MAX: ${POSTGRES_BACKUP_PROCESSES:-2}
   PGBACKREST_LOG_LEVEL_CONSOLE: info
   PGBACKREST_LOG_LEVEL_FILE: "off"
 
@@ -263,19 +264,23 @@ services:
     restart: unless-stopped
     environment:
       <<: *pgbackrest
+      PGBACKREST_ARCHIVE_ASYNC: "y"
+      PGBACKREST_SPOOL_PATH: /var/spool/pgbackrest
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?ut-install generates it}
     command: >
       postgres
       -c shared_buffers=1GB
+      -c maintenance_work_mem=${POSTGRES_MAINTENANCE_WORK_MEM:-256MB}
       -c max_connections=100
       -c archive_mode=on
       -c archive_command='pgbackrest archive-push %p'
       -c archive_timeout=60
-    shm_size: 256m
+    shm_size: ${POSTGRES_SHM_SIZE:-256m}
     volumes:
       - postgres-data:/var/lib/postgresql
       - postgres-socket:/var/run/postgresql
       - postgres-backup:/var/lib/pgbackrest
+      - postgres-spool:/var/spool/pgbackrest
     networks:
       - ut-data-network
     healthcheck:
@@ -336,7 +341,7 @@ services:
       resources:
         limits:
           memory: 512M
-          cpus: '0.5'
+          cpus: '${POSTGRES_BACKUP_PROCESSES:-2}'
         reservations:
           memory: 128M
 
@@ -952,6 +957,8 @@ volumes:
     name: ${RESOURCE_PREFIX:-ut}-postgres-socket
   postgres-backup:
     name: ${RESOURCE_PREFIX:-ut}-postgres-backup
+  postgres-spool:
+    name: ${RESOURCE_PREFIX:-ut}-postgres-spool
   llm-models:
     name: ${RESOURCE_PREFIX:-ut}-llm-models
   vllm-models:
