@@ -47,7 +47,7 @@ env_keys() {
 keys_the_installer_generates() {
     grep -o 'GENERATED_SECRET_KEYS=([^)]*)' "$REPO_ROOT/bin/ut-install" 2>/dev/null \
         | sed 's/.*(//; s/)//' | tr ' ' '\n'
-    printf 'MONGODB_USERNAME\nMONGODB_PASSWORD\n'
+    printf 'MONGODB_USERNAME\nMONGODB_PASSWORD\nPOSTGRES_PASSWORD\n'
 }
 
 keys_a_machine_will_have() {
