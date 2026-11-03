@@ -45,3 +45,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: ./test/stub-stack.sh
+
+  tell:
+    needs: [database-restore, stub-stack]
+    if: ${{ always() && github.event_name == 'schedule' }}
+    uses: ./.github/workflows/tell-when-red.yml
+    with:
+      check: nightly
+      result: ${{ contains(needs.*.result, 'failure') && 'failure' || 'success' }}
+    permissions:
+      issues: write

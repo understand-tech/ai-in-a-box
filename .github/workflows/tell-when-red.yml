@@ -1,0 +1,47 @@
+name: tell when red
+
+# One open issue per check and branch while it fails: opened on the first
+# failure, commented on the next ones, closed by the first run that passes.
+on:
+  workflow_call:
+    inputs:
+      check:
+        type: string
+        required: true
+      result:
+        type: string
+        required: true
+
+permissions:
+  issues: write
+
+jobs:
+  tell:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CHECK: ${{ inputs.check }}
+          RESULT: ${{ inputs.result }}
+          BRANCH: ${{ github.ref_name }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="${CHECK} fails on ${BRANCH}"
+          open=$(gh issue list --state open --search "\"${title}\" in:title" --json number,title \
+            --jq "map(select(.title == \"${title}\")) | .[0].number // empty")
+          case "$RESULT" in
+            failure)
+              if [ -n "$open" ]; then
+                gh issue comment "$open" --body "Still failing at ${GITHUB_SHA::7}: ${RUN}"
+              else
+                body=$(printf 'The %s check failed on `%s` at %s: %s\n\nThis issue closes itself when the check passes again.' \
+                  "$CHECK" "$BRANCH" "${GITHUB_SHA::7}" "$RUN")
+                gh issue create --title "$title" --label bug --body "$body"
+              fi ;;
+            success)
+              if [ -n "$open" ]; then
+                gh issue close "$open" --comment "Passes again at ${GITHUB_SHA::7}: ${RUN}"
+              fi ;;
+          esac

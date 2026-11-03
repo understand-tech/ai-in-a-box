@@ -1,0 +1,43 @@
+name: install walk
+
+# Pull requests do not walk a whole install: it takes 25 minutes. The release
+# does, and refuses to publish when it fails, which is late to learn it. This
+# walks it after every merge that can change an install, so a break shows in
+# the half hour after the merge rather than on the day of a release.
+on:
+  push:
+    branches: [main, "2026-**"]
+    paths:
+      - "bin/**"
+      - "packaging/**"
+      - "compose*.yaml"
+      - "release.env"
+      - "models/**"
+      - "appbuilder/**"
+      - "Caddyfile"
+      - "test/fresh-install.sh"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  walk:
+    name: a fresh install, walked
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - run: ./test/fresh-install.sh
+
+  tell:
+    needs: walk
+    if: ${{ always() && github.event_name == 'push' }}
+    uses: ./.github/workflows/tell-when-red.yml
+    with:
+      check: install walk
+      result: ${{ needs.walk.result }}
+    permissions:
+      issues: write
