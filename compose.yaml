@@ -790,6 +790,49 @@ services:
               count: 1
               capabilities: [gpu]
 
+  # The model gateway's embedding engine: llama.cpp's server on the GGUF ut-llm
+  # loads, from ut-llm's own volume, so a text gives the vectors it gives today.
+  embeddings:
+    labels:
+      ut.role: "inference"
+    image: ${EMBEDDINGS_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-b12063@sha256:10a38e6cc91760ab157f0a0a8546218d35f4a314432a70298abfa3d096829ad7}
+    container_name: ${CONTAINER_PREFIX:-ut}-embeddings
+    restart: unless-stopped
+    command:
+      - "-m"
+      - "/models/${EMBED_MODEL_NAME:-}"
+      - "--embedding"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "-c"
+      - "2048"
+      - "-b"
+      - "2048"
+      - "-ub"
+      - "2048"
+      - "--threads"
+      - "${EMBEDDINGS_THREADS:-4}"
+    expose:
+      - "8080"
+    volumes:
+      - llm-models:/models:ro
+    networks:
+      - ut-backend-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      <<: *healthcheck-defaults
+      start_period: 120s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: ${EMBEDDINGS_MEMORY:-2G}
+          cpus: '${EMBEDDINGS_THREADS:-4}'
+        reservations:
+          memory: 768M
+
 networks:
   ut-backend-network:
     name: ${RESOURCE_PREFIX:-ut}-backend-network

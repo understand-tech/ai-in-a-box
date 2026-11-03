@@ -74,3 +74,5 @@ services:
     profiles: ["control-plane-only"]
   llm:
     profiles: ["control-plane-only"]
+  embeddings:
+    profiles: ["control-plane-only"]
