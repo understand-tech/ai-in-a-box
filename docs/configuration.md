@@ -564,9 +564,9 @@ It runs llama.cpp's server with the settings its documentation asks of an embedd
   the model file;
 - `-b` and `-ub` at 2048: a whole text has to fit in one physical batch, so 2048 tokens is the
   longest text it embeds;
-- `EMBEDDINGS_SLOTS` (4) requests at once, and `EMBEDDINGS_CONTEXT` (8192) for all of them: each
-  slot gets the context divided by the number of slots, so keep `EMBEDDINGS_CONTEXT` at 2048 times
-  `EMBEDDINGS_SLOTS`, or a long text is refused;
+- `EMBEDDINGS_SLOTS` (4) requests at once, sharing one context of `EMBEDDINGS_CONTEXT` tokens
+  (8192): 2048 times `EMBEDDINGS_SLOTS` lets every slot hold the longest text at the same time, so
+  change both together;
 - `--metrics`: Prometheus metrics on `/metrics`.
 
 No API key: the service publishes no port and only the backend network reaches it.
