@@ -72,3 +72,6 @@ services:
 
   files-backup:
     profiles: ["not-in-the-stub-run"]
+
+  postgres-backup:
+    profiles: ["not-in-the-stub-run"]
