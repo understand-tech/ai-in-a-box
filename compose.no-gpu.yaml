@@ -25,3 +25,7 @@ name: ${COMPOSE_PROJECT_NAME:-understandtech}
 services:
   llm:
     profiles: ["gpu-only"]
+  # It needs no GPU, but it reads the GGUF that ut-llm downloads into its volume:
+  # without ut-llm, nothing puts the file there.
+  embeddings:
+    profiles: ["gpu-only"]
