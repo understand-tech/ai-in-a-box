@@ -12,6 +12,7 @@
 | `migration.sh` | Asks what an upgrade does to an install that already runs, starting from the environment file the earlier version shipped. Needs Docker and the git history. |
 | `migration-on-data.sh` | Runs that upgrade on a real database and document tree, beside whatever else the machine runs. Manual, not in CI. |
 | `database-restore.sh` | Proves a backup archive restores, end to end. Nightly. |
+| `postgres-restore.sh` | Proves PostgreSQL comes back to an instant from its pgBackRest repository, with the release's image. Nightly. |
 | `database-rotation-cuts.sh` | Cuts the database password rotation before each step on the real installer functions, runs the recovery, and compares the result with the formal model in [`formal/`](../formal/README.md). Linux, no Docker; a few seconds. |
 | `settings-migration-cuts.sh` | Cuts the split of main's `.env` into `local.env` before each step on the real installer functions, runs the next split, and compares the settings compose reads with the formal model in [`formal/`](../formal/README.md). Linux, no Docker; a few seconds. |
 | `known-issues.txt` | Problems that already exist and are accepted for now, with the reason next to each. |
@@ -120,6 +121,7 @@ It starts containers, so it is not on the push path:
 
 ```bash
 ./test/database-restore.sh     # about a minute
+./test/postgres-restore.sh     # about a minute, needs access to the postgres image
 ```
 
 It needs nothing but a Docker daemon — no secret, no registry credentials,
