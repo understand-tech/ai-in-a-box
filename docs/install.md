@@ -394,7 +394,8 @@ needs `sudo`: the settings file it reads is `0600`.
 
 ## 6 · Write down what it prints at the end
 
-The last screen opens on how long the install took and the address to open
+The last screen opens on how long the install took, counted from the moment
+`ut-get` started and with the time it started and ended, and the address to open
 first: the initial admin password opens the
 [first-run wizard](first-run-configuration.md) there. An inference engine still
 loading is named on an `Inference` line.
@@ -410,6 +411,10 @@ path. Put it wherever your organisation keeps such things before closing the
 terminal.
 
 ## 7 · Verify
+
+The install ends by running `ut-status` itself, and says so when something does
+not answer; the install is still done, and the box should not be handed over
+before that is looked at. Run it again at any time:
 
 ```bash
 sudo ut-status

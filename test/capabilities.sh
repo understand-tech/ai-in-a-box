@@ -1021,7 +1021,7 @@ trap - ERR
 DOMAIN=box.test
 INFERENCE_STILL_LOADING="$LOADING"
 LOG_FILE=/dev/null
-SECONDS=1530
+STARTED_AT=$(( $(date +%s) - 1530 ))
 print_summary
 EOF
     PROBE="$probe" REPO_ROOT="$REPO_ROOT" LOADING="$loading" bash "$probe/run.sh" 2>&1

@@ -10,6 +10,7 @@ REGISTRY_USER="${UT_REGISTRY_USER:-dgx-access}"
 PACKAGE_SHARE_DIR="/usr/share/understandtech"
 CHECKOUT_INSTALL_DIR="/opt/understandtech"
 INSTALL_DIR="${UT_INSTALL_DIR:-}"
+STARTED_AT="${UT_STARTED_AT:-$(date +%s)}"
 FROM_CHECKOUT="${UT_FROM_CHECKOUT:-}"
 DATA_DIR="/var/lib/understandtech"
 LOG_FILE="/var/log/ut-install.log"
@@ -3135,7 +3136,7 @@ print_compute_node_summary() {
     node=$(inference_surface_url); node=${node#https://}; node=${node%:8444}
     cat <<EOF
 
-${BOLD}Installation complete in $(( SECONDS / 60 )) min${NC}
+${BOLD}Installation complete in $(minutes_since_the_start) min${NC}, $(when_it_started_and_ended)
 
   This machine serves inference only: no platform, no admin password.
 
@@ -3157,6 +3158,10 @@ ${BOLD}Installation complete in $(( SECONDS / 60 )) min${NC}
 EOF
 }
 
+minutes_since_the_start() { printf '%s' $(( ($(date +%s) - STARTED_AT) / 60 )); }
+
+when_it_started_and_ended() { printf 'from %s to %s' "$(date -d "@$STARTED_AT" +%H:%M)" "$(date +%H:%M)"; }
+
 print_summary() {
     local env_file="$INSTALL_DIR/.env" inference=""
     if this_machine_is_a_compute_node; then
@@ -3171,7 +3176,7 @@ print_summary() {
 
     cat <<EOF
 
-${BOLD}Installation complete in $(( SECONDS / 60 )) min${NC}
+${BOLD}Installation complete in $(minutes_since_the_start) min${NC}, $(when_it_started_and_ended)
 
   Open https://${DOMAIN} — the initial admin password printed below opens
   the first-run wizard: models, sign-on, data sources.
@@ -3198,6 +3203,16 @@ ${BOLD}Installation complete in $(( SECONDS / 60 )) min${NC}
 EOF
 
     print_secrets_out_of_band "$env_file"
+}
+
+say_whether_it_serves() {
+    this_machine_is_a_compute_node && return 0
+    local status
+    status="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ut-status"
+    [[ -x "$status" ]] || status=$(command -v ut-status) || return 0
+    log_step "Checking that it serves (ut-status)"
+    "$status" --dir "$INSTALL_DIR" \
+        || log_warn "ut-status found something that does not answer, above. The install is done; look at it before handing the box over."
 }
 
 start_logging() {
@@ -3298,7 +3313,8 @@ main() {
     step_autostart
     step_reporting
     print_summary
-    [[ -z "$EVENTS_FILE" ]] || say_event done ",\"address\":$(json_string "https://${DOMAIN}"),\"minutes\":$(( SECONDS / 60 ))"
+    say_whether_it_serves
+    [[ -z "$EVENTS_FILE" ]] || say_event done ",\"address\":$(json_string "https://${DOMAIN}"),\"minutes\":$(minutes_since_the_start)"
 }
 
 # An `if` rather than `&&`: a false condition would otherwise be the script's

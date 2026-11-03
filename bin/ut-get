@@ -448,6 +448,7 @@ main() {
         return 0
     fi
     [[ $EUID -eq 0 ]] || fail "Run with sudo: sudo $0 $*"
+    export UT_STARTED_AT="${UT_STARTED_AT:-$(date +%s)}"
 
     if [[ -z "$RELEASE_DIR" ]]; then
         [[ -n "$VERSION" ]] || VERSION=$(latest_version) || exit 1
