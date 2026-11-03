@@ -555,8 +555,25 @@ memory.
 ### The embedding engine
 
 `EMBEDDINGS_THREADS` (4) is how many CPU cores the `embeddings` service computes with, and its CPU
-ceiling; `EMBEDDINGS_MEMORY` (2G) its memory ceiling. Set them in `local.env`. Nothing calls it yet:
-the model gateway that will is not shipped on the box.
+ceiling; `EMBEDDINGS_MEMORY` (2G) its memory ceiling. Nothing calls it yet: the model gateway that
+will is not shipped on the box.
+
+It runs llama.cpp's server with the settings its documentation asks of an embedding model:
+
+- `--pooling mean`, the pooling nomic-embed-text v1.5 is trained with, stated rather than read from
+  the model file;
+- `-b` and `-ub` at 2048: a whole text has to fit in one physical batch, so 2048 tokens is the
+  longest text it embeds;
+- `EMBEDDINGS_SLOTS` (4) requests at once, and `EMBEDDINGS_CONTEXT` (8192) for all of them: each
+  slot gets the context divided by the number of slots, so keep `EMBEDDINGS_CONTEXT` at 2048 times
+  `EMBEDDINGS_SLOTS`, or a long text is refused;
+- `--metrics`: Prometheus metrics on `/metrics`.
+
+No API key: the service publishes no port and only the backend network reaches it.
+
+Set them in `local.env`. Sources, read on 2026-11-03:
+[llama.cpp server](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md),
+[nomic-embed-text v1.5](https://huggingface.co/nomic-ai/nomic-embed-text-v1.5).
 
 ### Gateway limits
 
