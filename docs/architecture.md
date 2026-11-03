@@ -142,6 +142,7 @@ pins each one by digest — see
 | `admin-portal` | `ut-portal-customer` | administration dashboard |
 | `app-builder` | `agentic-app-builder-customer` | `agentic-app-builder` |
 | `llm` | `ut-llm-customers` | `ut-llm` |
+| `embeddings` | `ggml-org/llama.cpp` (`server`, a numbered build) | llama.cpp, public, not built by UnderstandTech |
 | `nim-llm` | `nim/nvidia/model-free-nim` | re-hosted NVIDIA NIM, not built by UnderstandTech |
 
 **Not verified**: the repository names in the right column are this

@@ -552,6 +552,12 @@ WORKER_CUSTOMER_REPLICAS="2"
 Background document processing. More replicas, more parallel ingestion, more
 memory.
 
+### The embedding engine
+
+`EMBEDDINGS_THREADS` (4) is how many CPU cores the `embeddings` service computes with, and its CPU
+ceiling; `EMBEDDINGS_MEMORY` (2G) its memory ceiling. Set them in `local.env`. Nothing calls it yet:
+the model gateway that will is not shipped on the box.
+
 ### Gateway limits
 
 ```bash
