@@ -1069,7 +1069,7 @@ die_on_a_database_nobody_has_the_password_for() {
     exit 1
 }
 
-generate_database_credentials() {
+generate_mongodb_credentials() {
     local env_file=$1 local_file=$2 user
 
     # The mongo image only reads MONGO_INITDB_ROOT_PASSWORD when it creates the
@@ -1122,6 +1122,11 @@ generate_postgres_password() {
     fi
     env_set "$local_file" POSTGRES_PASSWORD "$(random_alphanumeric 32)"
     log_info "Generated the Postgres password"
+}
+
+generate_database_credentials() {
+    generate_mongodb_credentials "$@"
+    generate_postgres_password "$@"
 }
 
 generate_application_secrets() {
@@ -2005,7 +2010,6 @@ step_configure() {
 
     render_settings "$env_file" "$local_file"
     generate_database_credentials "$env_file" "$local_file"
-    generate_postgres_password "$env_file" "$local_file"
     generate_application_secrets "$local_file"
     give_the_api_the_openai_key_it_needs_to_start "$env_file" "$local_file"
     render_settings "$env_file" "$local_file"
