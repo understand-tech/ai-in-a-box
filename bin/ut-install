@@ -1094,6 +1094,36 @@ generate_database_credentials() {
     log_info "Generated database credentials"
 }
 
+postgres_already_initialised() {
+    local env_file=$1 prefix
+    prefix=$(env_get "$env_file" RESOURCE_PREFIX 2>/dev/null || true)
+    docker volume inspect "${prefix:-ut}-postgres-data" >/dev/null 2>&1
+}
+
+# Like mongo, the postgres image only reads POSTGRES_PASSWORD when it creates the
+# cluster: a new one would not reach a database that already exists.
+generate_postgres_password() {
+    local env_file=$1 local_file=$2 prefix
+
+    if ! is_shipped_placeholder "$(env_get "$local_file" POSTGRES_PASSWORD || true)"; then
+        log_info "Postgres password already set"
+        return 0
+    fi
+    if postgres_already_initialised "$env_file"; then
+        prefix=$(env_get "$env_file" RESOURCE_PREFIX 2>/dev/null || true)
+        log_error "A Postgres volume is already here, and ${local_file} holds no POSTGRES_PASSWORD for it."
+        log_error "  volume: ${prefix:-ut}-postgres-data"
+        log_error ""
+        log_error "Either put back the password this database was created with, or discard the"
+        log_error "volume and everything in it:"
+        log_error ""
+        log_error "  docker volume rm ${prefix:-ut}-postgres-data"
+        exit 1
+    fi
+    env_set "$local_file" POSTGRES_PASSWORD "$(random_alphanumeric 32)"
+    log_info "Generated the Postgres password"
+}
+
 generate_application_secrets() {
     local local_file=$1 key value rotated=() forgeable=false
 
@@ -1975,6 +2005,7 @@ step_configure() {
 
     render_settings "$env_file" "$local_file"
     generate_database_credentials "$env_file" "$local_file"
+    generate_postgres_password "$env_file" "$local_file"
     generate_application_secrets "$local_file"
     give_the_api_the_openai_key_it_needs_to_start "$env_file" "$local_file"
     render_settings "$env_file" "$local_file"

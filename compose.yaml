@@ -244,6 +244,36 @@ services:
         reservations:
           memory: 1G
 
+  postgres:
+    labels:
+      ut.role: "control-plane"
+    image: ${POSTGRES_IMAGE:-ghcr.io/understand-tech/ut-postgres:2b3c887026cfe9fadeac0157b64bc4415dd7da6c@sha256:421a7900d84f6af5cd7d9e0b82b61b8ad56ba43e52a220579469f7d276096968}
+    container_name: ${CONTAINER_PREFIX:-ut}-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?ut-install generates it}
+    command: >
+      postgres
+      -c shared_buffers=1GB
+      -c max_connections=100
+    shm_size: 256m
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    networks:
+      - ut-data-network
+    healthcheck:
+      test: ["CMD", "pg_isready", "-q", "-U", "postgres"]
+      <<: *healthcheck-defaults
+      start_period: 30s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2'
+        reservations:
+          memory: 1G
+
   mongodb-backup:
     labels:
       ut.role: "backup"
@@ -801,6 +831,8 @@ volumes:
     name: ${RESOURCE_PREFIX:-ut}-mongodb-data
   mongodb-backups:
     name: ${RESOURCE_PREFIX:-ut}-mongodb-backup
+  postgres-data:
+    name: ${RESOURCE_PREFIX:-ut}-postgres-data
   llm-models:
     name: ${RESOURCE_PREFIX:-ut}-llm-models
   vllm-models:

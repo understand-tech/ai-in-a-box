@@ -34,10 +34,10 @@ Knowing which kind you are editing matters more than knowing the variable.
 **Generated at install, never edited.** `JWT_SECRET`, `STATE_SECRET`,
 `OPENID_SECRET_KEY`, `ADMIN_SETUP_PASSWORD`, `BACKUP_FILES_PASSWORD`,
 `GPU_VM_API_TOKEN`, `GATEWAY_METRICS_TOKEN`,
-`APP_BUILDER_TOKEN_ENCRYPTION_KEY`, and the MongoDB credentials. Changing one
-by hand after the fact breaks something: editing `MONGODB_PASSWORD` on a database
-that already exists locks every service out, because the image only reads it when
-it creates the data directory. `ut-install --rotate-database-password` changes it
+`APP_BUILDER_TOKEN_ENCRYPTION_KEY`, the MongoDB credentials and `POSTGRES_PASSWORD`.
+Changing one by hand after the fact breaks something: editing `MONGODB_PASSWORD`
+or `POSTGRES_PASSWORD` on a database that already exists locks every service out,
+because each image only reads it when it creates the data directory. `ut-install --rotate-database-password` changes it
 in the database as well, then everywhere it is read.
 
 **Required.** Six of them make the stack refuse to start when absent **or
