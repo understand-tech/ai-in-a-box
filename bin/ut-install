@@ -66,7 +66,7 @@ SHIPPED_PLACEHOLDERS=(
     "" "12345678" "password" "SECRET" "SJKFVK" "FVVE" "SJBVSJB" "ut"
     "czIzgahTJGzdG3b1XtEgGIWPvwhdfBvhVd1JjzetjWQ" "EMPTY"
 )
-GENERATED_SECRET_KEYS=(JWT_SECRET STATE_SECRET OPENID_SECRET_KEY ADMIN_SETUP_PASSWORD BACKUP_FILES_PASSWORD GPU_VM_API_TOKEN GATEWAY_METRICS_TOKEN APP_BUILDER_TOKEN_ENCRYPTION_KEY VLLM_API_KEY)
+GENERATED_SECRET_KEYS=(JWT_SECRET STATE_SECRET OPENID_SECRET_KEY ADMIN_SETUP_PASSWORD BACKUP_FILES_PASSWORD POSTGRES_BACKUP_PASSWORD GPU_VM_API_TOKEN GATEWAY_METRICS_TOKEN APP_BUILDER_TOKEN_ENCRYPTION_KEY VLLM_API_KEY)
 # SHA-256 of every database password main's .env.example has held, and of the
 # examples the installation guide printed beside it.
 PUBLISHED_DATABASE_PASSWORD_SUMS=(
@@ -431,6 +431,12 @@ database_already_initialised() {
 
 # The backup volume also holds the database dumps, which main wrote without
 # restic: only a repository's config says there are snapshots to open.
+postgres_backup_repository_exists() {
+    local mountpoint
+    mountpoint=$(docker volume inspect -f '{{ .Mountpoint }}' "$(volume_named postgres-backup)" 2>/dev/null) || return 1
+    [[ -d "$mountpoint/backup" ]]
+}
+
 files_backup_repository_exists() {
     local mountpoint
     mountpoint=$(docker volume inspect -f '{{ .Mountpoint }}' "$(volume_named mongodb-backups)" 2>/dev/null) || return 1
@@ -1138,10 +1144,13 @@ generate_application_secrets() {
             if [[ "$key" == BACKUP_FILES_PASSWORD ]] && files_backup_repository_exists; then
                 die "A backup repository is already here, and ${local_file} holds no BACKUP_FILES_PASSWORD for it, or a shipped one. A new password would leave every snapshot unreadable: put back the one it was created with, then run ut-install again."
             fi
+            if [[ "$key" == POSTGRES_BACKUP_PASSWORD ]] && postgres_backup_repository_exists; then
+                die "A Postgres backup repository is already here, and ${local_file} holds no POSTGRES_BACKUP_PASSWORD for it, or a shipped one. A new password would leave every Postgres backup unreadable: put back the one it was created with, then run ut-install again."
+            fi
             # An empty value is a first install, not a secret others shared.
             [[ "$key" == JWT_SECRET && -n "$value" ]] && forgeable=true
             case "$key" in
-                JWT_SECRET|BACKUP_FILES_PASSWORD) env_set "$local_file" "$key" "$(random_alphanumeric 64)" ;;
+                JWT_SECRET|BACKUP_FILES_PASSWORD|POSTGRES_BACKUP_PASSWORD) env_set "$local_file" "$key" "$(random_alphanumeric 64)" ;;
                 APP_BUILDER_TOKEN_ENCRYPTION_KEY) env_set "$local_file" "$key" "$(random_fernet_key)" ;;
                 *)                                env_set "$local_file" "$key" "$(random_alphanumeric 32)" ;;
             esac
@@ -3051,7 +3060,7 @@ step_autostart() {
 }
 
 print_secrets_out_of_band() {
-    local env_file=$1 admin_password backup_password
+    local env_file=$1 admin_password backup_password postgres_backup_password
     if ! terminal_is_reachable; then
         log_info "No terminal here, so nothing was printed. The secrets are in $(settings_directory "$env_file")/local.env"
         [[ -z "$EVENTS_FILE" ]] || say_event secrets ",\"file\":$(json_string "$(settings_directory "$env_file")/local.env")"
@@ -3060,6 +3069,7 @@ print_secrets_out_of_band() {
 
     admin_password=$(env_get "$env_file" ADMIN_SETUP_PASSWORD 2>/dev/null || true)
     backup_password=$(env_get "$env_file" BACKUP_FILES_PASSWORD 2>/dev/null || true)
+    postgres_backup_password=$(env_get "$env_file" POSTGRES_BACKUP_PASSWORD 2>/dev/null || true)
 
     if [[ -n "$admin_password" ]]; then
         printf '  %sInitial admin password%s  %s\n' "$BOLD" "$NC" "$admin_password" > /dev/tty
@@ -3070,6 +3080,11 @@ print_secrets_out_of_band() {
         printf '  %sWrite this down somewhere other than this machine.%s Losing it makes\n' "$YELLOW" "$NC" > /dev/tty
         printf '  every snapshot unreadable, including copies held off-site — there is\n' > /dev/tty
         printf '  no recovery path.\n' > /dev/tty
+    fi
+
+    if [[ -n "$postgres_backup_password" ]]; then
+        printf '\n  %sPostgres backup password%s  %s\n' "$BOLD" "$NC" "$postgres_backup_password" > /dev/tty
+        printf '  Keep it with the one above: the Postgres backups are unreadable without it.\n' > /dev/tty
     fi
 
     printf '\n  (shown here only — stored in %s, never in the install log)\n\n' "$env_file" > /dev/tty

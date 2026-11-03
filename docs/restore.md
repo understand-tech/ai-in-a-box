@@ -58,7 +58,7 @@ installed here.
 
 > **Losing `BACKUP_FILES_PASSWORD` makes every snapshot unreadable**, including
 > the offsite ones and including the authority's root. There is no recovery
-> path. It is one of the two secrets `ut-install` prints once at the end.
+> path. It is one of the secrets `ut-install` prints once at the end.
 
 ## Before anything else
 
@@ -365,7 +365,7 @@ recovery path and no support path. What is lost is the history, not the data —
 as long as the machine runs, its documents and its database are intact.
 
 Start a new repository at once, so that the machine is backed up again, then
-put the new password in escrow — see [backing up](backup.md#the-two-secrets-kept-away-from-the-machine):
+put the new password in escrow — see [backing up](backup.md#the-secrets-kept-away-from-the-machine):
 
 ```bash
 cd /usr/share/understandtech

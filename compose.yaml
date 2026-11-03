@@ -117,6 +117,17 @@ x-app-satellite-shared-env: &app-satellite-shared-env
   UNDERSTAND_API_VERSION: ${UNDERSTAND_API_VERSION:-v3}
   UT_JWT_SECRET: ${JWT_SECRET:?ut-install generates it}
 
+x-pgbackrest: &pgbackrest
+  PGBACKREST_STANZA: ut
+  PGBACKREST_PG1_PATH: /var/lib/postgresql/18/docker
+  PGBACKREST_PG1_SOCKET_PATH: /var/run/postgresql
+  PGBACKREST_REPO1_PATH: /var/lib/pgbackrest
+  PGBACKREST_REPO1_CIPHER_TYPE: aes-256-cbc
+  PGBACKREST_REPO1_CIPHER_PASS: ${POSTGRES_BACKUP_PASSWORD:?ut-install generates it - losing it makes every Postgres backup unreadable}
+  PGBACKREST_REPO1_RETENTION_FULL: ${POSTGRES_BACKUP_KEEP_FULL:-2}
+  PGBACKREST_LOG_LEVEL_CONSOLE: info
+  PGBACKREST_LOG_LEVEL_FILE: "off"
+
 services:
 
   caddy:
@@ -251,14 +262,20 @@ services:
     container_name: ${CONTAINER_PREFIX:-ut}-postgres
     restart: unless-stopped
     environment:
+      <<: *pgbackrest
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?ut-install generates it}
     command: >
       postgres
       -c shared_buffers=1GB
       -c max_connections=100
+      -c archive_mode=on
+      -c archive_command='pgbackrest archive-push %p'
+      -c archive_timeout=60
     shm_size: 256m
     volumes:
       - postgres-data:/var/lib/postgresql
+      - postgres-socket:/var/run/postgresql
+      - postgres-backup:/var/lib/pgbackrest
     networks:
       - ut-data-network
     healthcheck:
@@ -273,6 +290,55 @@ services:
           cpus: '2'
         reservations:
           memory: 1G
+
+  postgres-backup:
+    labels:
+      ut.role: "backup"
+    image: ${POSTGRES_IMAGE:-ghcr.io/understand-tech/ut-postgres:2b3c887026cfe9fadeac0157b64bc4415dd7da6c@sha256:421a7900d84f6af5cd7d9e0b82b61b8ad56ba43e52a220579469f7d276096968}
+    container_name: ${CONTAINER_PREFIX:-ut}-postgres-backup
+    restart: unless-stopped
+    environment:
+      <<: *pgbackrest
+      POSTGRES_BACKUP_INTERVAL: ${POSTGRES_BACKUP_INTERVAL:-1440}
+      POSTGRES_BACKUP_FULL_EVERY: ${POSTGRES_BACKUP_FULL_EVERY:-7}
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        until pg_isready -q -h /var/run/postgresql; do sleep 5; done
+        pgbackrest stanza-create || exit 1
+        run=0
+        while true; do
+          if (( run % POSTGRES_BACKUP_FULL_EVERY == 0 )); then type=full; else type=diff; fi
+          pgbackrest backup --type="$$type" --start-fast || echo "the Postgres backup failed"
+          run=$$((run + 1))
+          sleep $$((POSTGRES_BACKUP_INTERVAL * 60))
+        done
+    volumes:
+      - postgres-data:/var/lib/postgresql:ro
+      - postgres-socket:/var/run/postgresql
+      - postgres-backup:/var/lib/pgbackrest
+    network_mode: none
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          find /var/lib/pgbackrest/backup/ut -maxdepth 1 -name '*F*' -mtime -2 | grep -q .
+          && psql -h /var/run/postgresql -U postgres -tAc
+          "SELECT last_failed_time IS NULL OR last_failed_time < last_archived_time FROM pg_stat_archiver"
+          | grep -qx t
+      <<: *healthcheck-defaults
+      start_period: 10m
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 128M
 
   mongodb-backup:
     labels:
@@ -347,6 +413,7 @@ services:
     volumes:
       - ${DATA_ROOT:-/var/lib/understandtech}:/data:ro
       - mongodb-backups:/backup
+      - postgres-backup:/backup/postgres:ro
       - caddy-data:/caddy:ro
       - ./backup-files.sh:/usr/local/bin/backup-files:ro
     entrypoint:
@@ -833,6 +900,10 @@ volumes:
     name: ${RESOURCE_PREFIX:-ut}-mongodb-backup
   postgres-data:
     name: ${RESOURCE_PREFIX:-ut}-postgres-data
+  postgres-socket:
+    name: ${RESOURCE_PREFIX:-ut}-postgres-socket
+  postgres-backup:
+    name: ${RESOURCE_PREFIX:-ut}-postgres-backup
   llm-models:
     name: ${RESOURCE_PREFIX:-ut}-llm-models
   vllm-models:
