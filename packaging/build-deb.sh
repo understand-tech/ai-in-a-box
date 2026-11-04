@@ -106,6 +106,7 @@ stage_commands() {
     install -m 755 "$REPO_ROOT/bin/ut-license" "$root/usr/bin/"
     install -m 755 "$REPO_ROOT/bin/ut-status" "$root/usr/bin/"
     install -m 755 "$REPO_ROOT/bin/ut-report" "$root/usr/bin/"
+    install -m 755 "$REPO_ROOT/bin/ut-restore-postgres" "$root/usr/bin/"
     install -m 755 "$REPO_ROOT/bin/ut-send" "$root/usr/bin/"
     install -m 755 "$REPO_ROOT/bin/ut-setup" "$root/usr/bin/"
     install -m 755 "$REPO_ROOT/bin/ut-pair" "$root/usr/bin/"
