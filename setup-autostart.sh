@@ -868,15 +868,12 @@ do_install() {
     install_mdns_alias
     install_proxy_network
 
+    $QUIET && return 0
     echo ""
     log_info "Installation complete!"
     echo ""
     echo -e "${GREEN}The stack will start automatically on every boot.${NC}"
-    echo "Nothing was started just now — deploy the stack the usual way:"
-    echo ""
-    echo "  cd $INSTALL_DIR"
-    echo "  docker compose pull      # as the user that ran 'docker login ghcr.io', not with sudo"
-    echo "  docker compose up -d"
+    echo "Nothing was started just now: sudo systemctl start $SERVICE_NAME starts it."
     echo ""
     echo -e "${GREEN}Service Commands:${NC}"
     echo "  Start now:     sudo systemctl start $SERVICE_NAME"
@@ -991,14 +988,17 @@ show_help() {
     echo "  --uninstall   Remove the units"
     echo "  --status      Show unit and container status"
     echo "  --dir PATH    Install directory (default: the directory holding this script)"
+    echo "  --quiet       Install without the closing advice, as ut-install does"
     echo "  --help        Show this help message"
     echo ""
 }
 
 # Main
 ACTION=""
+QUIET=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --quiet|-q)              QUIET=true ;;
         --install|-i)            ACTION="install" ;;
         --mdns|-m)               ACTION="mdns" ;;
         --check|-c)              ACTION="check" ;;

@@ -378,20 +378,27 @@ as above, the platform's link on the node and the node's on the platform.
 
 ## Changing the address later
 
-`UT_DOMAIN` is the only place the name is written; every URL derives from it.
+Publish the six DNS records of the new name first, and replace the certificate
+if you are in `custom` mode — the old one no longer matches. Then:
 
 ```bash
-# in /opt/understandtech/.env
-UT_DOMAIN="box.example.com"
+sudo ut-install --domain box.example.com
 ```
 
-```bash
-docker compose up -d
-```
+`UT_DOMAIN` is the only place the name is written, in
+`/etc/understandtech/local.env`; every URL derives from it. Three things live
+outside it, and `ut-install` lists them at the end when the address changed:
 
-Publish the six DNS records first, and replace the certificate if you are in
-`custom` mode — the old one no longer matches. Users signed in through OIDC have
-to sign in again: the redirect URI changed.
+1. **The platform's Redirect URI**, kept in its database: set it to
+   `https://box.example.com/auth/openid/success` in the dashboard. The
+   dashboard signs in through the same sign-on, which now sends people back to
+   the old address: reach it through *Trouble signing in? → Modify the
+   configuration*, with the setup password.
+2. **The return address at the identity provider**:
+   `https://box.example.com/api/openid/callback`.
+3. **The return addresses of the integrations** (Microsoft, Google, HubSpot).
+
+Users signed in through OIDC have to sign in again.
 
 ## What this document does not cover
 
