@@ -1,4 +1,4 @@
-name: checks
+name: ci
 
 on:
   push:
@@ -186,3 +186,13 @@ jobs:
       - name: from the last version of the package
         if: needs.changes.outputs.beyond-docs == 'true'
         run: MIGRATION_FROM="$(git describe --tags --abbrev=0 --match 'v*')" ./test/migration.sh
+
+  every-check-passed:
+    name: every check passed
+    if: always()
+    needs: [changes, invariants, database-rotation, settings-migration, ut-send, capabilities, ingress, migration]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Fail when a job failed or was cancelled
+        run: test "${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}" = true

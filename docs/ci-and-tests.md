@@ -10,13 +10,13 @@ this page is the trigger map, that one is the reference.
 
 | Workflow | Trigger | Runs | Takes |
 |---|---|---|---|
-| `checks.yml` | every pull request, and a push to `main`, `hotfix/**` or `2026-**` | `invariants.sh`, `capabilities.sh`, `migration.sh`, the installer models with `database-rotation-cuts.sh` and `settings-migration-cuts.sh` | under a minute |
+| `ci.yml` | every pull request, and a push to `main`, `hotfix/**` or `2026-**` | `invariants.sh`, `capabilities.sh`, `migration.sh`, the installer models with `database-rotation-cuts.sh` and `settings-migration-cuts.sh` | under a minute |
 | `nightly.yml` | 3 a.m. and manual — **neither works yet**, see below | `database-restore.sh`, `postgres-restore.sh` | about a minute each |
 | `release.yml` | a tag matching `v*` | the checks, then a fresh install walked end to end, then the package is built, signed and published | longer |
 
 <!-- Scope: which event starts which workflow. Not what the checks assert, and
      not a branching policy. -->
-<!-- Source of truth: .github/workflows/checks.yml:3-6,
+<!-- Source of truth: .github/workflows/ci.yml:3-6,
      .github/workflows/release.yml:4-7 -->
 <!-- Date: 2026-10-30 -->
 <!-- Target: portal — status of "flowchart": not verified, no rendering engine
@@ -31,7 +31,7 @@ flowchart LR
     HOTFIX["hotfix branches - the quarter in service"]
     MAIN["main"]
     TAG["a tag v*"]
-    CHECKS["checks.yml"]
+    CHECKS["ci.yml"]
     RELEASE["release.yml"]
     WORK -->|opened as| PR
     PR --> CHECKS
@@ -43,7 +43,7 @@ flowchart LR
 
 **Description** — Pushing to a work branch on its own runs nothing: the trigger
 list names `main`, `hotfix/**` and `2026-**`, and no other branch. What gets a
-work branch checked is **opening a pull request**, which runs `checks.yml`
+work branch checked is **opening a pull request**, which runs `ci.yml`
 whatever the branch is called. Pushes to the three named branches run the same
 workflow, so a merge is checked again on arrival. A tag matching `v*` is the
 only thing that starts `release.yml`, which re-runs the checks, walks a fresh
@@ -67,7 +67,7 @@ Not verified: not seen rendered — no Mermaid engine is installed here.
 GitHub only reads `schedule` and `workflow_dispatch` from the repository's
 **default branch**, and `nightly.yml` lives on the release branches, not on
 `main` — so neither the 3 a.m. cron nor the *Run workflow* button is armed.
-`checks.yml` is unaffected, because `push` and `pull_request` are evaluated on
+`ci.yml` is unaffected, because `push` and `pull_request` are evaluated on
 the branch being pushed, not on the default branch.
 
 Until that is resolved, `database-restore.sh` and `postgres-restore.sh` are run by hand — see

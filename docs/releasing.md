@@ -9,7 +9,7 @@ not how to install one, which is [installing](install.md).
 
 <!-- Scope: branch roles and what moves a change from one to a tag. Not a
      review policy, not who is allowed to tag. -->
-<!-- Source of truth: .github/workflows/checks.yml:3-6,
+<!-- Source of truth: .github/workflows/ci.yml:3-6,
      .github/workflows/release.yml:4-7, git tag history (v2026.* and -rc*) -->
 <!-- Date: 2026-10-29 -->
 <!-- Target: portal — status of "flowchart": not verified, no rendering engine
@@ -37,7 +37,7 @@ flowchart LR
 tagged directly to cut a release — a tag matching `v*` is the only thing that
 starts `release.yml`, on whichever branch carries it. `main` is the
 repository's public default branch and receives `2026-Q4` only through an
-approved merge, on no fixed schedule; `checks.yml` still runs on pushes to
+approved merge, on no fixed schedule; `ci.yml` still runs on pushes to
 `main`, `hotfix/**` and `2026-**`, so a merge is checked again on arrival. See
 [CI and tests](ci-and-tests.md) for what runs on a pull request versus a tag.
 
