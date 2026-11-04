@@ -144,6 +144,13 @@ BACKUP_DESTINATION_RETENTION="owner"
 
 The repository on the machine keeps its retention either way.
 
+**One history per machine.** Every snapshot is taken under the host name
+`understandtech`, whatever the backup container is called, and the retention
+(`BACKUP_FILES_KEEP_DAILY`, `_WEEKLY`, `_MONTHLY`, and every snapshot of the
+last day) applies to all the snapshots tagged `files` at once. Snapshots that
+releases up to 2026.10.0-rc23 took under their containers' names are pruned
+with the rest at the first run after the update.
+
 ## The secrets kept away from the machine
 
 | Secret | Why it matters |
