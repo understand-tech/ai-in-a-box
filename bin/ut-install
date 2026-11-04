@@ -3112,6 +3112,39 @@ record_this_install() {
         >> "$history" 2>/dev/null || true
 }
 
+compose_files_this_release_lacks() {
+    local local_file file
+    local_file="$(settings_directory "$INSTALL_DIR/.env")/local.env"
+    local IFS=:
+    for file in $(env_get "$local_file" COMPOSE_FILE 2>/dev/null || true); do
+        [[ -z "$file" || -f "$INSTALL_DIR/$file" ]] || printf '%s\n' "$file"
+    done
+}
+
+release_this_box_last_ran() {
+    local history
+    history=$(install_history)
+    [[ -f "$history" ]] || return 1
+    grep '"outcome":"done"' "$history" | grep -o '"release":"[^"]*"' | cut -d'"' -f4 \
+        | grep -v '^unstamped$' | tail -1 | grep .
+}
+
+die_on_settings_this_release_cannot_run() {
+    local missing this last
+    missing=$(compose_files_this_release_lacks)
+    [[ -n "$missing" ]] || return 0
+    this=$(env_get "$INSTALL_DIR/release.env" UT_RELEASE_VERSION 2>/dev/null || true)
+    log_error "local.env names $(paste -sd, <<< "$missing" | sed 's/,/, /g'), which release ${this:-installed here} does not ship."
+    log_error "  A newer release wrote it, for something this one cannot run. Nothing was changed."
+    if last=$(release_this_box_last_ran) && [[ "$last" != "$this" ]]; then
+        log_error "  Go back to the release this box last ran:"
+        log_error "    sudo apt-get install /var/cache/understandtech/releases/${last%%+*}/understandtech_${last%%+*}_all.deb"
+        log_error "    sudo ut-install"
+    fi
+    log_error "  An older release runs only from the backup taken before the update, restored."
+    exit 1
+}
+
 reporting_already_decided() {
     local said
     said=$("$UT_SEND" status 2>/dev/null) || return 1
@@ -3315,6 +3348,7 @@ main() {
     if [[ "$ACTION" == "check" ]]; then
         DOMAIN=$(domain_to_check)
         say_what_is_installed
+        die_on_settings_this_release_cannot_run
         preflight
         exit 0
     fi
@@ -3323,6 +3357,7 @@ main() {
 
     start_logging
     trap record_this_install EXIT
+    die_on_settings_this_release_cannot_run
     preflight
     read_domain
     die_on_a_way_for_tls_to_end_given_wrong

@@ -395,6 +395,20 @@ sudo ut-install
 
 `apt-get` refuses to install an older version without `--allow-downgrades`.
 
+**When the previous version cannot run what the update did.** A release can
+turn on something an older one does not ship: from 2026.10.0-rc23, the App
+Builder's generated apps move into a Docker of their own, which earlier
+releases know nothing of. `local.env` then names a compose file the older
+package lacks, and its `ut-install` stops before changing anything, names that
+file and gives the two commands that put back the release the box last ran.
+The box keeps running the newer release meanwhile. To run the older one all the
+same, restore the backup taken before the update ([restoring](restore.md)).
+
+Releases up to 2026.10.0-rc23 do not make that check: put back on such a box,
+their `ut-install` fails while downloading the images, with "Image pull failed",
+and leaves the older package beside the newer containers. Reinstall the newer
+package and run `sudo ut-install` again.
+
 **How long it takes.** Measured on a GB10 holding 5,000 documents (15 GB) and
 50,000 conversations, in October 2026:
 
