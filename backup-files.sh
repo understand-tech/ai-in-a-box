@@ -15,6 +15,7 @@ KEEP_WEEKLY="${BACKUP_FILES_KEEP_WEEKLY:-4}"
 KEEP_MONTHLY="${BACKUP_FILES_KEEP_MONTHLY:-6}"
 MIN_FREE_PERCENT="${BACKUP_MIN_FREE_PERCENT:-10}"
 HEALTHY_FOR_MINUTES=$(( 26 * 60 ))
+SNAPSHOT_HOST=understandtech
 
 log() { echo "$(date -u '+%Y-%m-%d %H:%M:%S') [files-backup] $*"; }
 
@@ -91,6 +92,7 @@ back_up() {
     # restic would take a snapshot of itself, growing on every run.
     log "backing up $*"
     on "$LOCAL_REPOSITORY" backup "$@" \
+        --host "$SNAPSHOT_HOST" \
         --exclude "$LOCAL_REPOSITORY" \
         --exclude "$STATUS_FILE" \
         --exclude '*/mongo-data' \
@@ -99,7 +101,7 @@ back_up() {
 }
 
 apply_retention() {
-    on "$1" forget --tag files --prune \
+    on "$1" forget --tag files --group-by tags --prune \
         --keep-within-hourly 1d \
         --keep-daily "$KEEP_DAILY" \
         --keep-weekly "$KEEP_WEEKLY" \

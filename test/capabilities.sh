@@ -2535,6 +2535,36 @@ public_certificates_need_their_configuration() {
         && grep -q '\*.apps.box.example.com' <<< "$output"
 }
 
+# Each recreation of the backup container gave it a new host name, and restic
+# applies a retention policy per host: the snapshots of earlier containers were
+# never pruned again.
+retention_reaches_the_snapshots_of_earlier_containers() {
+    local repo="$WORK_DIR/retention-repo" src="$WORK_DIR/retention-src" days hosts
+    mkdir -p "$src/app-data" "$repo"
+    echo "a document" > "$src/app-data/notes.txt"
+    restic_in() {
+        docker run --rm -v "$src":/data:ro -v "$repo":/backup \
+            -e RESTIC_REPOSITORY=/backup/restic -e RESTIC_PASSWORD=capability-test "$@"
+    }
+    restic_in "$RESTIC_IMAGE" init >/dev/null 2>&1 || { echo "no repository"; return 1; }
+    for days in 20 10; do
+        restic_in "$RESTIC_IMAGE" backup /data --tag files --host "container-${days}" \
+            --time "$(date -u -d "-${days} days" '+%Y-%m-%d %H:%M:%S')" >/dev/null 2>&1 \
+            || { echo "could not seed an older snapshot"; return 1; }
+    done
+    for hostname in after-an-update after-another; do
+        restic_in --hostname "$hostname" \
+            -v "$REPO_ROOT/backup-files.sh":/usr/local/bin/backup-files:ro \
+            -e BACKUP_FILES_KEEP_DAILY=1 -e BACKUP_FILES_KEEP_WEEKLY=0 -e BACKUP_FILES_KEEP_MONTHLY=0 \
+            --entrypoint /usr/local/bin/backup-files "$RESTIC_IMAGE" >/dev/null 2>&1 \
+            || { echo "the backup failed"; return 1; }
+    done
+    hosts=$(restic_in "$RESTIC_IMAGE" snapshots --json 2>/dev/null | grep -o '"hostname":"[^"]*"' | sort -u | paste -sd' ' -)
+    [[ "$hosts" == '"hostname":"understandtech"' ]] && return 0
+    echo "hosts left: ${hosts:-none}"
+    return 1
+}
+
 files_are_backed_up_and_restore_identically() {
     local repo="$WORK_DIR/repo" src="$WORK_DIR/src" out="$WORK_DIR/out"
     mkdir -p "$src/app-data" "$src/appbuilder/workspaces/an-app/mongo-data" "$out"
@@ -3953,6 +3983,8 @@ if [[ -f "$REPO_ROOT/backup-files.sh" ]]; then
     group "Backup"
     capability "files are backed up and restore identically" \
         files_are_backed_up_and_restore_identically
+    capability "retention reaches the snapshots of earlier containers, and new ones share one host" \
+        retention_reaches_the_snapshots_of_earlier_containers
     capability "a missing backup is visible, and recovers when one appears" \
         a_missing_backup_is_visible
     capability "the backup has no way off the machine" \
