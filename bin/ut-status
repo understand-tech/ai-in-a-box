@@ -223,7 +223,7 @@ main() {
         # pasting `ut-status > out 2>&1` gets the two streams interleaved by the
         # buffering, and a conclusion that lands mid-report reads as one more
         # line rather than as the answer.
-        printf '%s[fail]%s The install is not serving. See docs/when-it-breaks.md.\n' "$RED" "$NC"
+        printf '%s[fail]%s The install is not serving. See /usr/share/doc/understandtech/when-it-breaks.md.\n' "$RED" "$NC"
         keep_the_verdict "not-serving"
         exit 1
     fi

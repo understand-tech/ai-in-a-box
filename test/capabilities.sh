@@ -1998,7 +1998,7 @@ a_clock_set_before_the_file_is_named() {
 
 an_ended_or_suspended_license_is_refused_with_whom_to_ask() {
     license_verdict_is check_ended refused && license_said check-ended 'ended on' \
-        && license_said check-ended 'contact@understand.tech' \
+        && license_said check-ended 'support@understand.tech' \
         && license_verdict_is check_suspended refused && license_said check-suspended 'is suspended'
 }
 
@@ -4123,6 +4123,31 @@ the_installer_checks_the_settings_before_changing_anything() {
         | sed -n '/trap record_this_install EXIT/,/step_registry_login/p' | grep -q 'die_on_settings_this_release_cannot_run'
 }
 
+secrets_shown_after() {
+    local probe=$1 created=$2
+    bash -c "
+set +u
+UT_INSTALL_DIR='$probe' source '$REPO_ROOT/bin/ut-install' >/dev/null 2>&1
+set +eE
+trap - ERR
+SECRETS_CREATED=($created)
+for key in ADMIN_SETUP_PASSWORD BACKUP_FILES_PASSWORD; do secret_to_show \$key && echo \$key; done
+" 2>/dev/null | paste -sd' ' -
+}
+
+an_update_shows_only_the_passwords_it_just_made() {
+    local first update rotated probe
+    probe=$(history_probe)
+    first=$(secrets_shown_after "$probe" "")
+    return_probe "$probe" "compose.yaml"
+    update=$(secrets_shown_after "$probe" "")
+    rotated=$(secrets_shown_after "$probe" "BACKUP_FILES_PASSWORD")
+    [[ "$first" == "ADMIN_SETUP_PASSWORD BACKUP_FILES_PASSWORD" && -z "$update" && "$rotated" == "BACKUP_FILES_PASSWORD" ]] \
+        && return 0
+    echo "first install: ${first:-none}; update: ${update:-none}; update with a new backup password: ${rotated:-none}"
+    return 1
+}
+
 a_status_verdict_is_kept_beside_the_installs() {
     local probe status expected history
     probe=$(history_probe)
@@ -5070,6 +5095,10 @@ capability "a release runs settings that name only what it ships" \
     a_release_runs_the_settings_it_ships_for
 capability "the installer checks the settings before it changes anything" \
     the_installer_checks_the_settings_before_changing_anything
+
+group "Passwords at the end of an install"
+capability "an update shows only the passwords it just made, never the initial admin one" \
+    an_update_shows_only_the_passwords_it_just_made
 
 printf '\n%s%d verified%s' "$GREEN" "$PASSED" "$NC"
 if (( FAILED )); then

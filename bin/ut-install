@@ -38,6 +38,8 @@ DO_AUTOSTART=true
 DO_PULL=true
 ROTATE_DATABASE_PASSWORD=false
 TOOK_OVER_A_CHECKOUT=false
+SECRETS_CREATED=()
+ADDRESS_MOVED_FROM=""
 NO_GPU=false
 REGISTRY_TOKEN=""
 LICENSE_FILE=""
@@ -245,7 +247,8 @@ Options
                        Kept by later runs.
   --health-timeout N   Seconds to wait for services (default: 3600).
   --reporting yes|no   Whether this machine sends its usage reports to
-                       UnderstandTech (docs/usage-report.md says what they hold).
+                       UnderstandTech (what they hold:
+                       /usr/share/doc/understandtech/usage-report.md).
                        Asked for when it is not given and a terminal is there;
                        with no terminal and no answer, nothing is sent. Asked
                        once: a later run keeps the answer unless given again.
@@ -803,7 +806,7 @@ describe_domain() {
             log_warn "${1} is mDNS-only: it does not cross a router, and no"
             log_warn "public authority certifies it — every machine will need the root installed" ;;
         *)
-            log_info "${1} — publish its six names in your DNS, see docs/certificates-and-dns.md" ;;
+            log_info "${1} — publish its six names in your DNS, see /usr/share/doc/understandtech/certificates-and-dns.md" ;;
     esac
 }
 
@@ -833,7 +836,8 @@ read_domain() {
 
     log_step "The address this appliance answers on"
     log "  A name from the customer's DNS zone lets browsers trust it without"
-    log "  installing anything on their machines. See docs/certificates-and-dns.md."
+    log "  installing anything on their machines."
+    log "  See /usr/share/doc/understandtech/certificates-and-dns.md."
     log ""
     if [[ -n "$current" ]]; then
         log "  Leave empty to keep ${current}, which this machine already answers on."
@@ -890,7 +894,7 @@ ask_for_the_license_by_file() {
     "$tool" request > "$LICENSE_REQUEST" || die "Could not write the license request ${LICENSE_REQUEST}."
     chmod 644 "$LICENSE_REQUEST"
     log_warn "To activate this machine with no network, send ${LICENSE_REQUEST} to UnderstandTech"
-    log_warn "  (contact@understand.tech). It holds this machine's fingerprint and name, not the license key:"
+    log_warn "  (support@understand.tech). It holds this machine's fingerprint and name, not the license key:"
     log_warn "  $(tr -d '\n' < "$LICENSE_REQUEST")"
     if command -v qrencode >/dev/null 2>&1; then
         qrencode -t ANSIUTF8 < "$LICENSE_REQUEST" || true
@@ -1163,6 +1167,7 @@ generate_application_secrets() {
         return 0
     fi
 
+    SECRETS_CREATED=("${rotated[@]}")
     log_info "Generated: ${rotated[*]}"
     $forgeable && log_warn "JWT_SECRET was the shipped value — tokens were forgeable across deployments"
     return 0
@@ -1394,7 +1399,7 @@ warn_on_generated_apps_the_certificate_leaves_out() {
     names=",$(openssl x509 -in "$CERTIFICATE_DIR/fullchain.pem" -noout -ext subjectAltName 2>/dev/null | tr -d ' \n' | sed 's/^[^:]*://'),"
     [[ "$names" == *",DNS:*.apps.${DOMAIN},"* ]] && return 0
     log_warn "The certificate does not cover *.apps.${DOMAIN}: the App Builder's generated apps will fail TLS."
-    log_warn "  A second wildcard goes in UT_APPS_CERT_FILE and UT_APPS_KEY_FILE (docs/certificates-and-dns.md)."
+    log_warn "  A second wildcard goes in UT_APPS_CERT_FILE and UT_APPS_KEY_FILE (/usr/share/doc/understandtech/certificates-and-dns.md)."
 }
 
 write_how_tls_ends() {
@@ -1993,6 +1998,7 @@ step_configure() {
     if [[ "$previous_domain" != "$DOMAIN" ]]; then
         env_set "$local_file" UT_DOMAIN "$DOMAIN"
         log_info "Address set to ${DOMAIN} — every other URL derives from it"
+        ADDRESS_MOVED_FROM=$previous_domain
         move_the_allowed_origins_to_the_new_domain "$local_file" "$previous_domain"
     fi
 
@@ -2876,7 +2882,7 @@ the_operator_wants_the_published_password_changed() {
     fi
     log "  Changing it backs the database up first, restarts the services that read"
     log "  it, and puts the old one back if any step fails."
-    printf '  Change it now? [y/N]: ' > /dev/tty
+    printf '  Change it now? [y/N]: '
     read -r answer < /dev/tty || answer=""
     [[ "$answer" =~ ^[Yy]([Ee][Ss])?$ ]] && return 0
     log_warn "  Kept. Change it later with: sudo ut-install --rotate-database-password"
@@ -3054,22 +3060,38 @@ step_autostart() {
         return 0
     fi
 
-    "$INSTALL_DIR/setup-autostart.sh" --install --dir "$INSTALL_DIR" \
+    "$INSTALL_DIR/setup-autostart.sh" --install --quiet --dir "$INSTALL_DIR" \
         || log_warn "setup-autostart.sh reported a problem; re-run it manually"
     log_info "Boot service and mDNS publisher installed"
 }
 
+an_install_finished_here_before() {
+    grep -q '"tool":"ut-install","outcome":"done"' "$(install_history)" 2>/dev/null
+}
+
+platform_set_up_before() { an_install_finished_here_before || $TOOK_OVER_A_CHECKOUT; }
+
+secret_to_show() {
+    local key=$1
+    if [[ "$key" == ADMIN_SETUP_PASSWORD ]]; then
+        ! platform_set_up_before
+        return
+    fi
+    ! an_install_finished_here_before || [[ " ${SECRETS_CREATED[*]} " == *" ${key} "* ]]
+}
+
 print_secrets_out_of_band() {
-    local env_file=$1 admin_password backup_password postgres_backup_password
+    local env_file=$1 admin_password="" backup_password="" postgres_backup_password=""
     if ! terminal_is_reachable; then
         log_info "No terminal here, so nothing was printed. The secrets are in $(settings_directory "$env_file")/local.env"
         [[ -z "$EVENTS_FILE" ]] || say_event secrets ",\"file\":$(json_string "$(settings_directory "$env_file")/local.env")"
         return 0
     fi
 
-    admin_password=$(env_get "$env_file" ADMIN_SETUP_PASSWORD 2>/dev/null || true)
-    backup_password=$(env_get "$env_file" BACKUP_FILES_PASSWORD 2>/dev/null || true)
-    postgres_backup_password=$(env_get "$env_file" POSTGRES_BACKUP_PASSWORD 2>/dev/null || true)
+    secret_to_show ADMIN_SETUP_PASSWORD && admin_password=$(env_get "$env_file" ADMIN_SETUP_PASSWORD 2>/dev/null || true)
+    secret_to_show BACKUP_FILES_PASSWORD && backup_password=$(env_get "$env_file" BACKUP_FILES_PASSWORD 2>/dev/null || true)
+    secret_to_show POSTGRES_BACKUP_PASSWORD && postgres_backup_password=$(env_get "$env_file" POSTGRES_BACKUP_PASSWORD 2>/dev/null || true)
+    [[ -n "$admin_password$backup_password$postgres_backup_password" ]] || return 0
 
     if [[ -n "$admin_password" ]]; then
         printf '  %sInitial admin password%s  %s\n' "$BOLD" "$NC" "$admin_password" > /dev/tty
@@ -3156,8 +3178,9 @@ ask_about_reporting() {
     local answer=""
     log_step "Usage reports"
     log "  This machine can send UnderstandTech, every 15 minutes, how loaded it was and"
-    log "  how many people it served — counts, never content, never who. docs/usage-report.md"
-    log "  lists every field. The answer can be changed later with ut-send configure."
+    log "  how many people it served — counts, never content, never who. Every field is"
+    log "  in /usr/share/doc/understandtech/usage-report.md. The answer can be changed"
+    log "  later with ut-send configure."
     log ""
     while [[ "$answer" != "yes" && "$answer" != "no" ]]; do
         printf '  Send usage reports to UnderstandTech? (yes/no): '
@@ -3241,7 +3264,18 @@ EOF
 }
 
 print_summary() {
-    local env_file="$INSTALL_DIR/.env" inference=""
+    local env_file="$INSTALL_DIR/.env" inference="" settings opening sign_on=""
+    [[ -z "$ADDRESS_MOVED_FROM" ]] || sign_on="
+
+  ${YELLOW}Sign-on still sends people back to ${ADDRESS_MOVED_FROM}.${NC} Before anyone signs in:
+    - in the dashboard, Redirect URI: https://${DOMAIN}/auth/openid/success
+      (reach it through Trouble signing in? → Modify the configuration, with the setup password)
+    - at the identity provider, return address: https://${DOMAIN}/api/openid/callback
+    - the return addresses of the integrations (Microsoft, Google, HubSpot)"
+    settings="$(settings_directory "$env_file")"
+    opening="  Open https://${DOMAIN}."
+    platform_set_up_before || opening="  Open https://${DOMAIN} — the initial admin password printed below opens
+  the first-run wizard: models, sign-on, data sources."
     if this_machine_is_a_compute_node; then
         print_compute_node_summary
         return 0
@@ -3256,13 +3290,13 @@ print_summary() {
 
 ${BOLD}Installation complete in $(( SECONDS / 60 )) min${NC}
 
-  Open https://${DOMAIN} — the initial admin password printed below opens
-  the first-run wizard: models, sign-on, data sources.
+${opening}
 
   Address        https://${DOMAIN}${inference}
   Directory      ${INSTALL_DIR}
-  Configuration  ${env_file}   (0600, contains generated secrets)
-  Role           $(role_this_machine_was_installed_as)
+  Settings       ${settings}/local.env   (yours to edit, kept by updates)
+  Configuration  ${settings}/.env   (rebuilt from it by ut-install, 0600, holds the secrets)
+  Role           $(role_this_machine_was_installed_as)${sign_on}
 
   Satellite apps  https://llms.${DOMAIN}
                   https://assistants.${DOMAIN}

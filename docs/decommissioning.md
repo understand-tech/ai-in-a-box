@@ -88,11 +88,12 @@ sudo docker logout ghcr.io
 in place.
 
 If the App Builder was enabled, its generated applications ran in their own
-Docker: their images, containers and volumes are in one volume, and its profile
-stays loaded until removed:
+Docker: their images, containers and volumes are in one volume, a second holds
+the socket the App Builder reaches it through, and its profile stays loaded
+until removed:
 
 ```bash
-docker volume rm ut-app-builder-docker-data
+docker volume rm ut-app-builder-docker-data ut-app-builder-docker-socket
 docker network rm proxy
 sudo apparmor_parser -R /etc/apparmor.d/ut-app-builder-docker
 sudo rm -f /etc/apparmor.d/ut-app-builder-docker
