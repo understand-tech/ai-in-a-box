@@ -4079,6 +4079,50 @@ a_second_install_is_added_after_the_first() {
     return 1
 }
 
+return_probe() {
+    local probe=$1 compose_files=$2
+    mkdir -p "$probe/data"
+    printf '{"at":"2026-11-01T10:00:00+0000","tool":"ut-install","outcome":"done","step":"","release":"2026.10.2+def5678"}\n' \
+        > "$probe/data/install-history.jsonl"
+    printf 'COMPOSE_FILE="%s"\n' "$compose_files" > "$probe/local.env"
+    cat > "$probe/run.sh" <<EOF
+set +u
+UT_INSTALL_DIR="$probe" source "$REPO_ROOT/bin/ut-install" >/dev/null 2>&1
+set +eE
+trap - ERR
+die_on_settings_this_release_cannot_run
+EOF
+}
+
+a_release_refuses_what_a_newer_one_wrote_and_names_the_way_back() {
+    local probe output status before
+    probe=$(history_probe)
+    return_probe "$probe" "compose.yaml:compose.appbuilder-nested.yaml"
+    before=$(cksum < "$probe/.env")
+    output=$(bash "$probe/run.sh" 2>&1) && status=0 || status=$?
+    (( status != 0 )) \
+        && grep -q 'compose.appbuilder-nested.yaml, which release 2026.10.1+abc1234 does not ship' <<< "$output" \
+        && grep -q 'releases/2026.10.2/understandtech_2026.10.2_all.deb' <<< "$output" \
+        && [[ "$(cksum < "$probe/.env")" == "$before" ]] \
+        && return 0
+    echo "exit ${status}: ${output:-nothing said}"
+    return 1
+}
+
+a_release_runs_the_settings_it_ships_for() {
+    local probe output
+    probe=$(history_probe)
+    return_probe "$probe" "compose.yaml"
+    output=$(bash "$probe/run.sh" 2>&1) && return 0
+    echo "${output:-refused without a word}"
+    return 1
+}
+
+the_installer_checks_the_settings_before_changing_anything() {
+    sed -n '/^main() {/,/^}/p' "$REPO_ROOT/bin/ut-install" \
+        | sed -n '/trap record_this_install EXIT/,/step_registry_login/p' | grep -q 'die_on_settings_this_release_cannot_run'
+}
+
 a_status_verdict_is_kept_beside_the_installs() {
     local probe status expected history
     probe=$(history_probe)
@@ -5018,6 +5062,14 @@ capability "a failed install is kept, with the step it stopped at" \
     a_failed_install_is_kept_with_the_step_it_stopped_at
 capability "a second install is added after the first, never over it" \
     a_second_install_is_added_after_the_first
+
+group "Going back to an older release"
+capability "a release refuses settings a newer one wrote, changes nothing, and names the release to go back to" \
+    a_release_refuses_what_a_newer_one_wrote_and_names_the_way_back
+capability "a release runs settings that name only what it ships" \
+    a_release_runs_the_settings_it_ships_for
+capability "the installer checks the settings before it changes anything" \
+    the_installer_checks_the_settings_before_changing_anything
 
 printf '\n%s%d verified%s' "$GREEN" "$PASSED" "$NC"
 if (( FAILED )); then
