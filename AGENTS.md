@@ -37,3 +37,4 @@ in the same pull request.
 - **Each service has its own Postgres schema and role;** no role may create in `public`.
 
 These rules describe the target: a change brings the services it touches in line with them.
+- **Workflows and jobs:** `ci.yml` holds the checks of a pull request; a job is named by the guarantee it gives, a sentence in lower case ("the front door actually serves"); one job, `every check passed`, needs every other job of its workflow and is the only one branch protection requires, so that a job is renamed or added without touching the protection.
