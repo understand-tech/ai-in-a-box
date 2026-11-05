@@ -22,10 +22,10 @@ APPS_CORES_FLOOR=2
 APPS_PROCESSES=4096
 
 kind_of_machine_the_apps_share() {
-    local gpu=$1 serves_a_model=$2
+    local gpu_memory=$1 serves_a_model=$2
     if [[ "$serves_a_model" != yes ]]; then
         echo without-a-model-here
-    elif [[ "$gpu" =~ GB10|GB200|GB300|GH200 ]]; then
+    elif [[ "$gpu_memory" == the-machine-s ]]; then
         echo beside-a-gpu-sharing-it
     else
         echo beside-a-gpu-of-its-own
@@ -55,7 +55,7 @@ this_machine_serves_a_model() {
 }
 
 kind_of_this_machine() {
-    kind_of_machine_the_apps_share "$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || true)" \
+    kind_of_machine_the_apps_share "$(the_gpu_has_no_memory_of_its_own && echo the-machine-s || echo its-own)" \
         "$(this_machine_serves_a_model "$1" && echo yes || echo no)"
 }
 

@@ -144,7 +144,7 @@ mounts its socket; it listens on no port.
 | Its profiles | `ut-install` installs `/etc/apparmor.d/ut-app-builder-docker`, which confines nothing: it is how Ubuntu 24.04 grants a user namespace. Its seccomp profile, `appbuilder/seccomp/ut-app-builder-docker.json`, is Docker's default with namespaces and mounts allowed |
 | The apps' databases | owned by `237500998` on this machine, the `999` MongoDB runs as inside |
 | The admin page | lists the generated apps and their volumes, no longer the platform's containers |
-| What the apps take | all of them together, computed at each install: of the memory, 12.5 % beside a GPU that shares it (GB10, GB200, GB300, GH200), 25 % beside a GPU with memory of its own, 50 % on a machine that serves no model; 20 % of the cores; 4096 processes; never less than 8 GiB and 2 CPUs. `ut-install` says what it chose. The caps an app's own compose file sets are not applied |
+| What the apps take | all of them together, computed at each install: of the memory, 12.5 % beside a GPU that has no memory of its own and takes the machine's (a GB10; `nvidia-smi` gives such a GPU no memory total), 25 % beside a GPU with memory of its own, 50 % on a machine that serves no model; 20 % of the cores; 4096 processes; never less than 8 GiB and 2 CPUs. `ut-install` says what it chose. The caps an app's own compose file sets are not applied |
 | Where the apps are | `/etc/understandtech/app-builder-docker/holds-the-apps` exists while they live in their own Docker: `ut-install` reads it to know which way to move them |
 
 **Their addresses.** Inside their Docker, each app's network takes 64 addresses
