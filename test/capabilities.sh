@@ -4959,16 +4959,14 @@ ceiling_for_a_machine() { ceiling_of_the_apps_docker "$(kind_of_machine_the_apps
 
 # 128 GiB and 20 cores, as a GB10 has.
 a_gpu_sharing_the_machine_s_memory_leaves_the_apps_an_eighth_of_it() {
-    local name said
-    for name in "NVIDIA GB10" "NVIDIA GB200" "NVIDIA GB300" "NVIDIA GH200 480GB"; do
-        said=$(as_ut_install_in "$WORK_DIR" ceiling_for_a_machine "$name" yes 134217728 20)
-        [[ "$said" == "16384M 4 4096" ]] || { echo "${name}, 128 GiB and 20 cores: ${said}"; return 1; }
-    done
+    local said
+    said=$(as_ut_install_in "$WORK_DIR" ceiling_for_a_machine the-machine-s yes 134217728 20)
+    [[ "$said" == "16384M 4 4096" ]] || { echo "a GPU sharing 128 GiB, 20 cores: ${said}"; return 1; }
 }
 
 a_gpu_with_memory_of_its_own_leaves_the_apps_a_quarter() {
     local said
-    said=$(as_ut_install_in "$WORK_DIR" ceiling_for_a_machine "NVIDIA H100 80GB HBM3" yes 536870912 64)
+    said=$(as_ut_install_in "$WORK_DIR" ceiling_for_a_machine its-own yes 536870912 64)
     [[ "$said" == "131072M 12 4096" ]] || { echo "an H100, 512 GiB and 64 cores: ${said}"; return 1; }
 }
 
@@ -4976,7 +4974,7 @@ serves_a_model_when_told() { INFERENCE_FROM=$1; this_machine_serves_a_model "$2"
 
 a_machine_serving_no_model_leaves_the_apps_half_its_memory() {
     local dir="$WORK_DIR/serves-no-model" said
-    said=$(as_ut_install_in "$WORK_DIR" ceiling_for_a_machine "NVIDIA GB10" no 67108864 40)
+    said=$(as_ut_install_in "$WORK_DIR" ceiling_for_a_machine the-machine-s no 67108864 40)
     [[ "$said" == "32768M 8 4096" ]] || { echo "no model served, 64 GiB and 40 cores: ${said}"; return 1; }
     mkdir -p "$dir" && : > "$dir/.env" && : > "$dir/local.env"
     as_ut_install_in "$dir" serves_a_model_when_told "" "$dir/local.env" >/dev/null \
@@ -4990,7 +4988,7 @@ a_machine_serving_no_model_leaves_the_apps_half_its_memory() {
 
 what_the_apps_may_take_never_falls_below_its_floors() {
     local said
-    said=$(as_ut_install_in "$WORK_DIR" ceiling_for_a_machine "NVIDIA GB10" yes 33554432 4)
+    said=$(as_ut_install_in "$WORK_DIR" ceiling_for_a_machine the-machine-s yes 33554432 4)
     [[ "$said" == "8192M 2 4096" ]] || { echo "a GB10 with 32 GiB and 4 cores: ${said}"; return 1; }
 }
 
