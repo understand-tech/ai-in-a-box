@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Checks, on the real ut-install functions, the share of a GB10's memory the
-# engines may take and how it is read from the settings in effect.
+# Checks, on the real ut-install functions, the share of the machine's memory the
+# engines may take where the GPU has none of its own, and how it is read from the
+# settings in effect.
 
 set -uo pipefail
 
@@ -23,10 +24,10 @@ expect() {
     fi
 }
 
-GB10_KB=127600000
+MEMORY_OF_A_GB10_KB=127600000
 SMALL_KB=$((32 * 1024 * 1024))
-expect "a GB10 running the platform: 0.80" 0.80 "$(engine_share_ceiling "$GB10_KB" yes)"
-expect "a GB10 compute node: what the reserve leaves" 0.91 "$(engine_share_ceiling "$GB10_KB" no)"
+expect "a GB10 running the platform: 0.80" 0.80 "$(engine_share_ceiling "$MEMORY_OF_A_GB10_KB" yes)"
+expect "a GB10 compute node: what the reserve leaves" 0.91 "$(engine_share_ceiling "$MEMORY_OF_A_GB10_KB" no)"
 expect "a machine of 32 GiB: the reserve binds first" 0.68 "$(engine_share_ceiling "$SMALL_KB" yes)"
 
 LOCAL="$WORK/local.env"

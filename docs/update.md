@@ -297,8 +297,8 @@ exists.
 Its weights stay in the `ut-nim-vlm-cache` volume. Once an image has been read
 in the platform, `docker volume rm ut-nim-vlm-cache` frees the disk.
 
-**On a GB10, an update stops when the engines would take more than 0.80 of the
-machine's memory** (0.91 on a compute node), and says by how much. A share you set
+**Where the GPU has no memory of its own (a GB10), an update stops when the engines
+would take more than 0.80 of the machine's memory** (0.91 on a compute node), and says by how much. A share you set
 yourself in `local.env` above it is the usual cause: lower it there and run the
 update again. See [Configuration](configuration.md).
 
