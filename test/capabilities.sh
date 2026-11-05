@@ -389,6 +389,39 @@ weights_download_report() {
     find "$probe/folder" -type f | sed "s|$probe/folder/||"
 }
 
+# A connection cut twice in the middle of a file, as a Wi-Fi drop cuts an HTTP/2
+# stream: each attempt keeps what it received and the next one resumes from there.
+a_cut_download_resumes_where_it_stopped() {
+    local script=$1 probe="$WORK_DIR/resume-$(basename "$1")" size output
+    rm -rf "$probe"; mkdir -p "$probe/bin"
+    head -c 300000 /dev/urandom > "$probe/source"
+    size=$(wc -c < "$probe/source" | tr -d ' ')
+    cat > "$probe/bin/curl" <<CURL
+#!/bin/sh
+output=""; previous=""
+for argument; do [ "\$previous" = --output ] && output=\$argument; previous=\$argument; done
+have=\$(wc -c < "\$output" 2>/dev/null || echo 0)
+calls=\$(( \$(cat "$probe/calls" 2>/dev/null || echo 0) + 1 )); echo \$calls > "$probe/calls"
+if [ \$calls -le 2 ]; then
+    tail -c +\$(( have + 1 )) "$probe/source" | head -c 100000 >> "\$output"
+    exit 92
+fi
+tail -c +\$(( have + 1 )) "$probe/source" >> "\$output"
+CURL
+    chmod +x "$probe/bin/curl"
+    output=$(
+        set +u; source "$script" >/dev/null 2>&1
+        set +eE; trap - ERR
+        sleep() { :; }
+        PATH="$probe/bin:$PATH" download_resuming https://example.test/weights "$probe/file.part" "$size" 2>&1
+        echo "exit $?"
+    )
+    cmp -s "$probe/source" "$probe/file.part" && [[ "$(cat "$probe/calls")" == 3 ]] \
+        && grep -q 'resuming in 2 s (attempt 3 of 7)' <<< "$output" && grep -q 'exit 0' <<< "$output" && return 0
+    echo "calls $(cat "$probe/calls" 2>/dev/null), $(wc -c < "$probe/file.part" 2>/dev/null) of ${size} bytes: ${output}"
+    return 1
+}
+
 weights_are_downloaded_as_the_release_lists_them() {
     local report
     report=$(weights_download_report)
@@ -3667,6 +3700,10 @@ if grep -q 'step_images_from_a_folder' "$REPO_ROOT/bin/ut-install"; then
         weights_are_downloaded_as_the_release_lists_them
     capability "a download that is not the listed file is refused" \
         a_download_that_is_not_the_listed_file_is_refused
+    capability "ut-install resumes a weight download cut twice, from where it stopped" \
+        a_cut_download_resumes_where_it_stopped "$REPO_ROOT/bin/ut-install"
+    capability "ut-get resumes a weight download cut twice, from where it stopped" \
+        a_cut_download_resumes_where_it_stopped "$REPO_ROOT/bin/ut-get"
     capability "the bill of materials lists every weight the release pins" \
         the_bill_lists_every_pinned_weight
     capability "a model whose weights the release does not list is not prepared" \
@@ -4180,6 +4217,50 @@ an_update_shows_only_the_passwords_it_just_made() {
     return 1
 }
 
+# Docker answers for two containers, the inference engine in the state given and a
+# worker running; every surface answers 200.
+status_with_an_engine() {
+    local state=$1 probe
+    probe=$(history_probe)
+    mkdir -p "$probe/bin"
+    cat > "$probe/bin/docker" <<DOCKER
+#!/bin/sh
+case "\$*" in
+    "compose ps -q") printf 'engine\nworker\n' ;;
+    *"{{.Name}}"*engine) echo /understandtech-nim-llm-1 ;;
+    *"{{.Name}}"*worker) echo /understandtech-workers-1 ;;
+    *com.docker.compose.service*engine) echo nim-llm ;;
+    *com.docker.compose.service*worker) echo workers ;;
+    *State.Health*engine) echo $state ;;
+    *State.Health*worker) echo running ;;
+esac
+DOCKER
+    printf '#!/bin/sh\necho 200\n' > "$probe/bin/curl"
+    chmod +x "$probe/bin/docker" "$probe/bin/curl"
+    PATH="$probe/bin:$PATH" UT_SEND=/nonexistent "$REPO_ROOT/bin/ut-status" --dir "$probe" 2>&1
+    echo "exit $?"
+}
+
+an_engine_still_loading_is_not_called_down() {
+    local output
+    output=$(status_with_an_engine starting)
+    grep -q 'understandtech-nim-llm-1 is still starting' <<< "$output" \
+        && grep -q 'docker compose logs --tail 40 nim-llm$' <<< "$output" \
+        && grep -q 'The install is serving' <<< "$output" && grep -qx 'exit 0' <<< "$output" && return 0
+    echo "$output" | tail -15
+    return 1
+}
+
+an_unhealthy_engine_still_fails_with_its_service_named() {
+    local output
+    output=$(status_with_an_engine unhealthy)
+    grep -q 'understandtech-nim-llm-1 is unhealthy' <<< "$output" \
+        && grep -q 'docker compose logs --tail 40 nim-llm$' <<< "$output" \
+        && grep -q 'The install is not serving' <<< "$output" && grep -qx 'exit 1' <<< "$output" && return 0
+    echo "$output" | tail -15
+    return 1
+}
+
 a_status_verdict_is_kept_beside_the_installs() {
     local probe status expected history
     probe=$(history_probe)
@@ -4236,6 +4317,10 @@ if [[ -x "$REPO_ROOT/bin/ut-status" ]]; then
         ut_status_says_how_the_license_stands
     capability "it says whether usage reports go out, and warns when nothing sends them" \
         ut_status_says_whether_reports_go_out
+    capability "an inference engine still loading is said so, not called down" \
+        an_engine_still_loading_is_not_called_down
+    capability "an unhealthy engine still fails the install, its compose service named" \
+        an_unhealthy_engine_still_fails_with_its_service_named
     capability "a directory with no install is refused, not called healthy" \
         a_directory_with_no_install_is_refused
     capability "an install that was never configured is refused" \

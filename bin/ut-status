@@ -60,14 +60,15 @@ compose_here() { ( cd "$INSTALL_DIR" && docker compose "$@" ); }
 # the most that can be said about it: the four workers are queue consumers and
 # declare none.
 services_that_are_not_serving() {
-    local id name state
+    local id name service state
     while read -r id; do
         [[ -n "$id" ]] || continue
         name=$(docker inspect -f '{{.Name}}' "$id" 2>/dev/null | sed 's|^/||')
+        service=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.service"}}' "$id" 2>/dev/null)
         state=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$id" 2>/dev/null)
         case "$state" in
             healthy|running) ;;
-            *) printf '%s\t%s\n' "$name" "$state" ;;
+            *) printf '%s\t%s\t%s\n' "$name" "${service:-$name}" "$state" ;;
         esac
     done <<< "$(compose_here ps -q 2>/dev/null)"
 }
@@ -177,14 +178,20 @@ main() {
     stopped=$(services_that_are_not_serving)
     if [[ -z "$stopped" ]]; then
         log_info "every service is healthy or running"
-    else
-        while IFS=$'\t' read -r name state; do
-            [[ -n "$name" ]] || continue
-            log_error "${name} is ${state}"
-            log_error "  cd ${INSTALL_DIR} && docker compose logs --tail 40 ${name#*-}"
-        done <<< "$stopped"
-        failing=1
     fi
+    while IFS=$'\t' read -r name service state; do
+        [[ -n "$name" ]] || continue
+        # Docker says starting until a healthcheck first passes, within the service's
+        # start_period: the inference engine stays there while it loads its weights.
+        if [[ "$state" == starting ]]; then
+            log_warn "${name} is still starting — an inference engine loads its model for up to several minutes"
+            log_warn "  cd ${INSTALL_DIR} && docker compose logs --tail 40 ${service}"
+            continue
+        fi
+        log_error "${name} is ${state}"
+        log_error "  cd ${INSTALL_DIR} && docker compose logs --tail 40 ${service}"
+        failing=1
+    done <<< "$stopped"
 
     # Resolved to the loopback rather than to whatever DNS says: this asks
     # whether the machine serves, not whether the network can find it.
