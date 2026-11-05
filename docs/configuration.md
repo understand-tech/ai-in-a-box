@@ -303,8 +303,12 @@ the models proven on this GPU.
 
 **Where the GPU has no memory of its own, the engines take at most 0.80 of the
 machine's.** The install recognises such a GPU by `nvidia-smi` giving it no memory
-total (a GB10 today): what `--gpu-memory-utilization` reserves, the system and the
-platform no longer have. The install adds up the share of `nim-llm` and, when
+total (a GB10 today): what an engine reserves, the system and the platform no longer
+have. Each engine family gives its share through its own setting and flag, which the
+install reads from one table: `NIM_LLM_PASSTHROUGH_ARGS` and `VLLM_ENGINE_ARGS` with
+`--gpu-memory-utilization`, `SGLANG_ENGINE_ARGS` with `--mem-fraction-static`. A family
+missing from the table stops the install, since its share could not be checked. The
+install adds up the share of the engine in effect and, when
 `LLM_BACKEND="vllm"`, ut-llm's own `VLLM_LLM_GPU_MEM_UTIL` and
 `VLLM_VLM_GPU_MEM_UTIL`, and stops when the total passes 0.80, or when the engine
 gives no share at all. On a compute node, which runs no platform, the ceiling is

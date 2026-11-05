@@ -1589,8 +1589,30 @@ setting_in_effect() {
     env_get "$local_file" "$key" 2>/dev/null || release_declares "$key"
 }
 
-gpu_memory_utilization_in() {
-    sed -n 's/.*--gpu-memory-utilization[ =]\([0-9.]\{1,\}\).*/\1/p' <<< "$1"
+# The setting and the flag through which each engine family takes its share of the
+# GPU's memory: the only place that names an engine's flag. No SGLang engine ships yet.
+memory_share_setting_of() {
+    case "$1" in
+        nim) echo "NIM_LLM_PASSTHROUGH_ARGS --gpu-memory-utilization" ;;
+        vllm) echo "VLLM_ENGINE_ARGS --gpu-memory-utilization" ;;
+        sglang) echo "SGLANG_ENGINE_ARGS --mem-fraction-static" ;;
+        *) return 1 ;;
+    esac
+}
+
+engine_family_in_effect() {
+    local compose_files
+    compose_files=$(setting_in_effect "$1" COMPOSE_FILE || echo compose.yaml)
+    if [[ "$compose_files" =~ compose\.engine-([a-z0-9-]+)\.yaml ]]; then
+        echo "${BASH_REMATCH[1]}"
+    else
+        echo nim
+    fi
+}
+
+share_given_by() {
+    local flag=$1 args=$2
+    sed -n "s/.*${flag}[ =]\([0-9.]\{1,\}\).*/\1/p" <<< "$args"
 }
 
 # nvidia-smi gives no memory total for a GPU that has none of its own (GB10: "[N/A]").
@@ -1606,12 +1628,13 @@ engine_share_ceiling() {
 }
 
 engines_share() {
-    local local_file=$1 key args share total
-    [[ "$(setting_in_effect "$local_file" COMPOSE_FILE || echo compose.yaml)" == *compose.engine-vllm.yaml* ]] \
-        && key=VLLM_ENGINE_ARGS || key=NIM_LLM_PASSTHROUGH_ARGS
+    local local_file=$1 family setting key flag args share total
+    family=$(engine_family_in_effect "$local_file")
+    setting=$(memory_share_setting_of "$family") || { printf 'unknown %s' "$family"; return 2; }
+    read -r key flag <<< "$setting"
     args=$(setting_in_effect "$local_file" "$key" || true)
-    total=$(gpu_memory_utilization_in "$args")
-    [[ -n "$total" ]] || { printf 'unset %s' "$key"; return 1; }
+    total=$(share_given_by "$flag" "$args")
+    [[ -n "$total" ]] || { printf 'unset %s %s' "$key" "$flag"; return 1; }
     if [[ "$(setting_in_effect "$local_file" LLM_BACKEND || true)" == vllm ]]; then
         for key in VLLM_LLM_GPU_MEM_UTIL VLLM_VLM_GPU_MEM_UTIL; do
             share=$(setting_in_effect "$local_file" "$key" || echo 0)
@@ -1629,16 +1652,23 @@ die_on_engines_taking_the_memory_the_system_needs() {
     this_machine_is_a_compute_node && runs_the_platform=no
     memory_kb=$(awk '/^MemTotal:/ { print $2 }' /proc/meminfo)
     ceiling=$(engine_share_ceiling "$memory_kb" "$runs_the_platform")
-    if ! share=$(engines_share "$local_file"); then
-        log_error "The engine's --gpu-memory-utilization is not set (${share#unset })."
-        log_error "  Its GPU has no memory of its own: the engine would take vLLM's default share of the machine's."
-        log_error "  Set it, at most ${ceiling}, in $(settings_directory "$INSTALL_DIR/.env")/local.env."
-        exit 1
-    fi
+    share=$(engines_share "$local_file")
+    case $? in
+        2)
+            log_error "The engine family ${share#unknown } has no known memory share setting."
+            log_error "  Its GPU has no memory of its own: its share cannot be checked, so the install stops."
+            exit 1 ;;
+        1)
+            read -r _ key flag <<< "$share"
+            log_error "The engine's ${flag} is not set in ${key}."
+            log_error "  Its GPU has no memory of its own: the engine would take its default share of the machine's."
+            log_error "  Set it, at most ${ceiling}, in $(settings_directory "$INSTALL_DIR/.env")/local.env."
+            exit 1 ;;
+    esac
     if LC_ALL=C awk -v s="$share" -v c="$ceiling" 'BEGIN { exit !(s > c) }'; then
         log_error "The engines would take ${share} of this machine's $((memory_kb / 1024 / 1024)) GiB; at most ${ceiling} here."
         log_error "  Above it the system and the platform run short, and the machine can freeze."
-        log_error "  Lower --gpu-memory-utilization in $(settings_directory "$INSTALL_DIR/.env")/local.env,"
+        log_error "  Lower the engine's memory share in $(settings_directory "$INSTALL_DIR/.env")/local.env,"
         log_error "  or choose a model proven at ${ceiling} or less."
         exit 1
     fi

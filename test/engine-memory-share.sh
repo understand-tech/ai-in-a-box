@@ -45,4 +45,17 @@ printf 'COMPOSE_FILE=compose.yaml:compose.engine-vllm.yaml\nVLLM_ENGINE_ARGS=--t
 engines_share "$LOCAL" >/dev/null
 expect "an engine without a share is refused" 1 "$?"
 
+printf 'COMPOSE_FILE=compose.yaml:compose.engine-sglang.yaml\nSGLANG_ENGINE_ARGS=--mem-fraction-static 0.7 --context-length 32768\n' > "$LOCAL"
+expect "an SGLang engine's share read through its own flag" 0.7 "$(engines_share "$LOCAL")"
+
+printf 'COMPOSE_FILE=compose.yaml:compose.engine-made-up.yaml\n' > "$LOCAL"
+engines_share "$LOCAL" >/dev/null
+expect "an engine family without a known share setting is refused" 2 "$?"
+
+INSTALLER="$REPO_ROOT/bin/ut-install"
+inside_the_table=$(awk '/^memory_share_setting_of\(\) \{/,/^}/' "$INSTALLER" | grep -cE -- '--gpu-memory-utilization|--mem-fraction-static')
+everywhere=$(grep -cE -- '--gpu-memory-utilization|--mem-fraction-static' "$INSTALLER")
+outside=$(( everywhere - inside_the_table ))
+expect "no engine's memory flag named outside the family table" 0 "$outside"
+
 exit $FAILED
