@@ -144,7 +144,7 @@ mounts its socket; it listens on no port.
 | Its profiles | `ut-install` installs `/etc/apparmor.d/ut-app-builder-docker`, which confines nothing: it is how Ubuntu 24.04 grants a user namespace. Its seccomp profile, `appbuilder/seccomp/ut-app-builder-docker.json`, is Docker's default with namespaces and mounts allowed |
 | The apps' databases | owned by `237500998` on this machine, the `999` MongoDB runs as inside |
 | The admin page | lists the generated apps and their volumes, no longer the platform's containers |
-| What the apps take | all of them together, computed at each install: of the memory, 12.5 % beside a GPU that shares it (GB10, GB200, GB300, GH200), 25 % beside a GPU with memory of its own, 50 % on a machine that serves no model; 20 % of the cores; 4096 processes; never less than 8 GiB and 2 CPUs. `ut-install` says what it chose. The caps an app's own compose file sets are not applied |
+| What the apps take | all of them together, computed at each install: of the memory, 12.5 % beside a GPU that has no memory of its own and takes the machine's (a GB10; `nvidia-smi` gives such a GPU no memory total), 25 % beside a GPU with memory of its own, 50 % on a machine that serves no model; 20 % of the cores; 4096 processes; never less than 8 GiB and 2 CPUs. `ut-install` says what it chose. The caps an app's own compose file sets are not applied |
 | Where the apps are | `/etc/understandtech/app-builder-docker/holds-the-apps` exists while they live in their own Docker: `ut-install` reads it to know which way to move them |
 
 **Their addresses.** Inside their Docker, each app's network takes 64 addresses
@@ -300,6 +300,24 @@ an NVIDIA GB10. The install takes the NIM variant when it is proven on this mach
 else the vLLM one, and says which. `--engine nim` or `--engine vllm` asks for one;
 it is still taken only if proven here. When neither is, the install stops and lists
 the models proven on this GPU.
+
+**Where the GPU has no memory of its own, the engines take at most 0.80 of the
+machine's.** The install recognises such a GPU by `nvidia-smi` giving it no memory
+total (a GB10 today): what an engine reserves, the system and the platform no longer
+have. Each engine family gives its share through its own setting and flag, which the
+install reads from one table: `NIM_LLM_PASSTHROUGH_ARGS` and `VLLM_ENGINE_ARGS` with
+`--gpu-memory-utilization`, `SGLANG_ENGINE_ARGS` with `--mem-fraction-static`. A family
+missing from the table stops the install, since its share could not be checked. The
+install adds up the share of the engine in effect and, when
+`LLM_BACKEND="vllm"`, ut-llm's own `VLLM_LLM_GPU_MEM_UTIL` and
+`VLLM_VLM_GPU_MEM_UTIL`, and stops when the total passes 0.80, or when the engine
+gives no share at all. On a compute node, which runs no platform, the ceiling is
+what keeps 10 GiB for the system: 0.91 on a GB10 of 128 GB. NVIDIA's DGX Spark playbook
+serves vLLM at 0.8 on one machine
+([vLLM playbook](https://github.com/NVIDIA/dgx-spark-playbooks/blob/main/nvidia/vllm/README.md),
+read 5 November 2026); vLLM can still take more than its share while it starts on
+unified memory ([vLLM issue 46307](https://github.com/vllm-project/vllm/issues/46307)),
+which the reserve absorbs.
 
 On vLLM it adds `compose.engine-vllm.yaml`, which runs the engine from
 `VLLM_ENGINE_IMAGE` as `vllm serve <VLLM_ENGINE_MODEL> --served-model-name
