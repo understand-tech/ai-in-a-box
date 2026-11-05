@@ -366,6 +366,11 @@ func (w *Wizard) report(rw http.ResponseWriter, _ *http.Request) {
 	w.mu.Unlock()
 	rw.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(rw).Encode(progress)
+	if progress.Update && progress.Succeeded {
+		w.mu.Lock()
+		w.halt("update complete, last page shown")
+		w.mu.Unlock()
+	}
 }
 
 func (w *Wizard) secrets(rw http.ResponseWriter, _ *http.Request) {
