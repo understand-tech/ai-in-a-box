@@ -55,7 +55,7 @@ this_machine_serves_a_model() {
 }
 
 kind_of_this_machine() {
-    kind_of_machine_the_apps_share "$(the_gpu_has_no_memory_of_its_own && echo the-machine-s || echo its-own)" \
+    kind_of_machine_the_apps_share "$(gpu_memory_of_this_machine)" \
         "$(this_machine_serves_a_model "$1" && echo yes || echo no)"
 }
 

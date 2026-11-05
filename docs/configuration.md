@@ -303,14 +303,16 @@ the models proven on this GPU.
 
 **Where the GPU has no memory of its own, the engines take at most 0.80 of the
 machine's.** The install recognises such a GPU by `nvidia-smi` giving it no memory
-total (a GB10 today): what an engine reserves, the system and the platform no longer
-have. Each engine family gives its share through its own setting and flag, which the
+total (a GB10 today), asks once per install, bounded at 10 s so that a hung driver
+cannot stall it, and writes the answer to `.env` as `GPU_MEMORY` (`the-machine-s`,
+`its-own` or `absent`), with the other values computed for this machine. What an engine
+reserves, the system and the platform no longer have. Each engine family gives its share through its own setting and flag, which the
 install reads from one table: `NIM_LLM_PASSTHROUGH_ARGS` and `VLLM_ENGINE_ARGS` with
 `--gpu-memory-utilization`, `SGLANG_ENGINE_ARGS` with `--mem-fraction-static`. A family
 missing from the table stops the install, since its share could not be checked. The
-install adds up the share of the engine in effect and, when
-`LLM_BACKEND="vllm"`, ut-llm's own `VLLM_LLM_GPU_MEM_UTIL` and
-`VLLM_VLM_GPU_MEM_UTIL`, and stops when the total passes 0.80, or when the engine
+install adds up the share of the engine in effect and the shares of the engines ut-llm
+runs beside it, which the same table lists for each `LLM_BACKEND` (`VLLM_LLM_GPU_MEM_UTIL`
+and `VLLM_VLM_GPU_MEM_UTIL` when it is `vllm`), and stops when the total passes 0.80, or when the engine
 gives no share at all. On a compute node, which runs no platform, the ceiling is
 what keeps 10 GiB for the system: 0.91 on a GB10 of 128 GB. NVIDIA's DGX Spark playbook
 serves vLLM at 0.8 on one machine

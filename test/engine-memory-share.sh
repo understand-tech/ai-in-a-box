@@ -52,10 +52,39 @@ printf 'COMPOSE_FILE=compose.yaml:compose.engine-made-up.yaml\n' > "$LOCAL"
 engines_share "$LOCAL" >/dev/null
 expect "an engine family without a known share setting is refused" 2 "$?"
 
+stops_with() {
+    local local_file=$1
+    (
+        set -Eeuo pipefail
+        GPU_MEMORY_MEASURED=the-machine-s
+        INFERENCE_FROM=""
+        NO_GPU=false
+        die_on_engines_taking_the_memory_the_system_needs "$local_file"
+    ) 2>&1
+}
+
+if [[ -r /proc/meminfo ]]; then
+    printf 'COMPOSE_FILE=compose.yaml:compose.engine-vllm.yaml\nVLLM_ENGINE_ARGS=--trust-remote-code\n' > "$LOCAL"
+    said=$(stops_with "$LOCAL")
+    expect "with errexit on, an engine without a share stops with its own message" yes \
+        "$(grep -q -- '--gpu-memory-utilization is not set in VLLM_ENGINE_ARGS' <<< "$said" && echo yes || echo "no: ${said}")"
+
+    printf 'COMPOSE_FILE=compose.yaml:compose.engine-made-up.yaml\n' > "$LOCAL"
+    said=$(stops_with "$LOCAL")
+    expect "with errexit on, an unknown engine family stops with its own message" yes \
+        "$(grep -q 'made-up has no known memory share setting' <<< "$said" && echo yes || echo "no: ${said}")"
+else
+    echo "skip  the stop messages need /proc/meminfo (Linux)"
+fi
+
 INSTALLER="$REPO_ROOT/bin/ut-install"
 inside_the_table=$(awk '/^memory_share_setting_of\(\) \{/,/^}/' "$INSTALLER" | grep -cE -- '--gpu-memory-utilization|--mem-fraction-static')
 everywhere=$(grep -cE -- '--gpu-memory-utilization|--mem-fraction-static' "$INSTALLER")
 outside=$(( everywhere - inside_the_table ))
 expect "no engine's memory flag named outside the family table" 0 "$outside"
+
+inside_the_table=$(awk '/^memory_shares_beside\(\) \{/,/^}/' "$INSTALLER" | grep -cE 'VLLM_(LLM|VLM)_GPU_MEM_UTIL')
+everywhere=$(grep -cE 'VLLM_(LLM|VLM)_GPU_MEM_UTIL' "$INSTALLER")
+expect "no setting of ut-llm's engines named outside the table" 0 "$(( everywhere - inside_the_table ))"
 
 exit $FAILED
