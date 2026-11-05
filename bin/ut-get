@@ -290,6 +290,26 @@ copy_a_tool() {
         "docker-archive:/folder/tools/$name.part:${tool%@*}"
 }
 
+PROGRESS_EVERY=30
+
+# A large image copies for minutes without a word from skopeo: what has landed in
+# the folder is said instead, so that a slow copy does not pass for a stuck one.
+with_progress() {
+    local destination=$1 started=$SECONDS next pid status
+    shift
+    "$@" & pid=$!
+    next=$(( SECONDS + PROGRESS_EVERY ))
+    while kill -0 "$pid" 2>/dev/null; do
+        sleep 1
+        if (( SECONDS >= next )); then
+            log_info "  $(du -sm "$destination" 2>/dev/null | cut -f1) MB so far, $(( (SECONDS - started) / 60 )) min $(( (SECONDS - started) % 60 )) s"
+            next=$(( SECONDS + PROGRESS_EVERY ))
+        fi
+    done
+    wait "$pid" && status=0 || status=$?
+    return "$status"
+}
+
 copy_the_images_into() {
     local folder=$1 auth=$2 reference path source
     while read -r reference; do
@@ -302,7 +322,7 @@ copy_the_images_into() {
         rm -rf "${folder:?}/$path"
         mkdir -p "$folder/$path"
         source="docker://$(fully_qualified "$reference")"
-        with_retries copy_an_image "$folder" "$auth" "$path" "$source" \
+        with_progress "$folder/$path" with_retries copy_an_image "$folder" "$auth" "$path" "$source" \
             || fail "Could not copy ${reference%@*} — check the token and the network, then run the same command again"
         log_info "${reference%@*} copied"
     done
