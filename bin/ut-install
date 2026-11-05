@@ -29,6 +29,12 @@ MIN_DISK_BYTES_NO_INFERENCE=$((60 * 1000 * 1000 * 1000))
 # api-customer and workers-customer take 2 GB each, mongodb and api 1 GB each,
 # the rest 64 to 512 MB. 12 leaves the host its own.
 MIN_RAM_KB_NO_INFERENCE=$((12 * 1024 * 1024))
+# A GPU with no memory of its own takes it from the machine's: what the engines
+# reserve, the system and the platform do not have. NVIDIA's DGX Spark playbook serves vLLM
+# at 0.8 on one machine; the reserve covers the 10 GB the platform's services
+# reserve. vLLM's own reserve on unified memory (PR 49760) is not released yet.
+SHARED_MEMORY_ENGINE_SHARE_CEILING=0.80
+SYSTEM_RESERVE_KB=$((10 * 1024 * 1024))
 NIM_COLD_START_SECONDS=2700
 
 ACTION="install"
@@ -1578,6 +1584,97 @@ write_the_settings_the_model_needs() {
     fi
 }
 
+setting_in_effect() {
+    local local_file=$1 key=$2
+    env_get "$local_file" "$key" 2>/dev/null || release_declares "$key"
+}
+
+# The setting and the flag through which each engine family takes its share of the
+# GPU's memory: the only place that names an engine's flag. No SGLang engine ships yet.
+memory_share_setting_of() {
+    case "$1" in
+        nim) echo "NIM_LLM_PASSTHROUGH_ARGS --gpu-memory-utilization" ;;
+        vllm) echo "VLLM_ENGINE_ARGS --gpu-memory-utilization" ;;
+        sglang) echo "SGLANG_ENGINE_ARGS --mem-fraction-static" ;;
+        *) return 1 ;;
+    esac
+}
+
+engine_family_in_effect() {
+    local compose_files
+    compose_files=$(setting_in_effect "$1" COMPOSE_FILE || echo compose.yaml)
+    if [[ "$compose_files" =~ compose\.engine-([a-z0-9-]+)\.yaml ]]; then
+        echo "${BASH_REMATCH[1]}"
+    else
+        echo nim
+    fi
+}
+
+share_given_by() {
+    local flag=$1 args=$2
+    sed -n "s/.*${flag}[ =]\([0-9.]\{1,\}\).*/\1/p" <<< "$args"
+}
+
+# nvidia-smi gives no memory total for a GPU that has none of its own (GB10: "[N/A]").
+the_gpu_has_no_memory_of_its_own() {
+    an_accelerator_answers || return 1
+    [[ "$(nvidia-smi --query-gpu=memory.total --format=csv,noheader 2>/dev/null | head -1)" == *N/A* ]]
+}
+
+engine_share_ceiling() {
+    local memory_kb=$1 runs_the_platform=$2
+    LC_ALL=C awk -v m="$memory_kb" -v r="$SYSTEM_RESERVE_KB" -v c="$SHARED_MEMORY_ENGINE_SHARE_CEILING" -v p="$runs_the_platform" \
+        'BEGIN { by_reserve = int((m - r) / m * 100) / 100; printf "%.2f", (p == "yes" && c < by_reserve) ? c : by_reserve }'
+}
+
+engines_share() {
+    local local_file=$1 family setting key flag args share total
+    family=$(engine_family_in_effect "$local_file")
+    setting=$(memory_share_setting_of "$family") || { printf 'unknown %s' "$family"; return 2; }
+    read -r key flag <<< "$setting"
+    args=$(setting_in_effect "$local_file" "$key" || true)
+    total=$(share_given_by "$flag" "$args")
+    [[ -n "$total" ]] || { printf 'unset %s %s' "$key" "$flag"; return 1; }
+    if [[ "$(setting_in_effect "$local_file" LLM_BACKEND || true)" == vllm ]]; then
+        for key in VLLM_LLM_GPU_MEM_UTIL VLLM_VLM_GPU_MEM_UTIL; do
+            share=$(setting_in_effect "$local_file" "$key" || echo 0)
+            total=$(LC_ALL=C awk -v a="$total" -v b="$share" 'BEGIN { printf "%.2f", a + b }')
+        done
+    fi
+    printf '%s' "$total"
+}
+
+die_on_engines_taking_the_memory_the_system_needs() {
+    local local_file=$1 memory_kb share ceiling runs_the_platform=yes
+    this_machine_goes_without_its_accelerator && return 0
+    [[ -z "$INFERENCE_FROM" ]] || return 0
+    the_gpu_has_no_memory_of_its_own || return 0
+    this_machine_is_a_compute_node && runs_the_platform=no
+    memory_kb=$(awk '/^MemTotal:/ { print $2 }' /proc/meminfo)
+    ceiling=$(engine_share_ceiling "$memory_kb" "$runs_the_platform")
+    share=$(engines_share "$local_file")
+    case $? in
+        2)
+            log_error "The engine family ${share#unknown } has no known memory share setting."
+            log_error "  Its GPU has no memory of its own: its share cannot be checked, so the install stops."
+            exit 1 ;;
+        1)
+            read -r _ key flag <<< "$share"
+            log_error "The engine's ${flag} is not set in ${key}."
+            log_error "  Its GPU has no memory of its own: the engine would take its default share of the machine's."
+            log_error "  Set it, at most ${ceiling}, in $(settings_directory "$INSTALL_DIR/.env")/local.env."
+            exit 1 ;;
+    esac
+    if LC_ALL=C awk -v s="$share" -v c="$ceiling" 'BEGIN { exit !(s > c) }'; then
+        log_error "The engines would take ${share} of this machine's $((memory_kb / 1024 / 1024)) GiB; at most ${ceiling} here."
+        log_error "  Above it the system and the platform run short, and the machine can freeze."
+        log_error "  Lower the engine's memory share in $(settings_directory "$INSTALL_DIR/.env")/local.env,"
+        log_error "  or choose a model proven at ${ceiling} or less."
+        exit 1
+    fi
+    log_info "Engines take ${share} of this machine's memory, at most ${ceiling}"
+}
+
 BACKUP_DESTINATION_MARKER=".understandtech-backup-destination"
 BACKUP_LOCAL_MARKER=".understandtech-backup-local"
 
@@ -2008,6 +2105,7 @@ step_configure() {
     write_the_settings_the_model_needs "$local_file"
     point_nim_at_the_weights_placed "$local_file"
     write_the_settings_a_compute_node_needs "$local_file"
+    die_on_engines_taking_the_memory_the_system_needs "$local_file"
     write_the_list_a_server_keeps "$local_file"
     write_the_link_a_platform_keeps "$local_file"
     write_the_link_a_pair_box_keeps "$local_file"
@@ -2592,6 +2690,22 @@ list_already_placed() {
     done < "$INSTALL_DIR/models/weights/${list}.txt"
 }
 
+# curl's --retry neither counts a cut HTTP/2 stream as transient nor keeps what a failed
+# attempt wrote (curl(1), 8.5): a large file is resumed by calling curl again.
+download_resuming() {
+    local url=$1 output=$2 size=$3 attempt delay=1
+    for attempt in 1 2 3 4 5 6 7; do
+        [[ -f "$output" && "$(wc -c < "$output" | tr -d ' ')" == "$size" ]] && return 0
+        curl -fsSL --proto '=https' --connect-timeout 20 --speed-limit 1 --speed-time 60 --continue-at - \
+            --output "$output" "$url" && return 0
+        (( attempt < 7 )) || break
+        log_warn "Download cut, resuming in ${delay} s (attempt $(( attempt + 1 )) of 7)"
+        sleep "$delay"
+        delay=$(( delay * 2 ))
+    done
+    return 1
+}
+
 download_the_listed_weights_into() {
     local root=$1 list key sha size location repository revision path target
     shift
@@ -2605,9 +2719,8 @@ download_the_listed_weights_into() {
             [[ -f "$target" && "$(sha256_of "$target")" == "sha256:$sha" ]] && continue
             mkdir -p "$(dirname "$target")"
             log_info "Downloading ${repository}/${path} ($(( size / 1000000 )) MB)"
-            curl -fsSL --retry 3 --connect-timeout 20 --continue-at - --output "$target.part" \
-                "https://huggingface.co/${repository}/resolve/${revision}/${path}" \
-                || die "Could not download ${repository}/${path} from Hugging Face — run ut-install again to resume"
+            download_resuming "https://huggingface.co/${repository}/resolve/${revision}/${path}" "$target.part" "$size" \
+                || die "Could not download ${repository}/${path} from Hugging Face after 7 attempts — run ut-install again to resume"
             if [[ "$(sha256_of "$target.part")" != "sha256:$sha" ]]; then
                 rm -f "$target.part"
                 die "${repository}/${path} is not the file this release lists — run ut-install again"
