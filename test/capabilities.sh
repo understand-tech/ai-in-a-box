@@ -263,7 +263,7 @@ PROBE
 # with no network loads it, ut-install's own functions on both sides. The two
 # images are first removed, so whatever starts afterwards came from the folder.
 folder_load_report() {
-    local probe="$WORK_DIR/folder-probe" tamper=${1:-}
+    local probe="$WORK_DIR/folder-probe" tamper=${1:-} keep_the_images=${2:-}
     rm -rf "$probe"; mkdir -p "$probe/folder" "$probe/install" "$probe/auth"
     printf 'BUSYBOX_IMAGE="%s"\nALPINE_INDEX_IMAGE="%s"\nUT_RELEASE_VERSION="0.0.0"\n' "$BUSYBOX_IMAGE" "$ALPINE_INDEX_IMAGE" > "$probe/install/release.env"
     : > "$probe/install/.env"; : > "$probe/install/local.env"
@@ -278,8 +278,8 @@ folder_load_report() {
         copy_the_tools_into "$probe/folder" "$probe/auth"
     ) > "$probe/prepared.log" 2>&1 || { echo "PREPARE FAILED"; tail -5 "$probe/prepared.log"; return 0; }
     [[ -n "$tamper" ]] && eval "$tamper"
-    docker rmi -f "$BUSYBOX_IMAGE" "$ALPINE_INDEX_IMAGE" >/dev/null 2>&1
-    docker image ls --digests --format '{{.Repository}}@{{.Digest}}' \
+    [[ -n "$keep_the_images" ]] || docker rmi -f "$BUSYBOX_IMAGE" "$ALPINE_INDEX_IMAGE" >/dev/null 2>&1
+    [[ -n "$keep_the_images" ]] || docker image ls --digests --format '{{.Repository}}@{{.Digest}}' \
         | grep -Fx -e "${BUSYBOX_IMAGE%%:*}@${BUSYBOX_IMAGE#*@}" -e "${ALPINE_INDEX_IMAGE%%:*}@${ALPINE_INDEX_IMAGE#*@}" | sed 's/^/STILL THERE: /'
     (
         set +u; UT_INSTALL_DIR="$probe/install" source "$REPO_ROOT/bin/ut-install" >/dev/null 2>&1
@@ -303,6 +303,18 @@ images_from_a_folder_start_under_their_digest() {
         && [[ $(grep -c ': ran$' <<< "$report") -eq 2 ]] \
         && ! grep -q 'STILL THERE' <<< "$report" && return 0
     echo "$report" | tail -15
+    return 1
+}
+
+# A box already running the release keeps its images' names: under the folder's
+# names Compose would recreate every container, the inference engine with them.
+a_folder_leaves_the_images_already_here_alone() {
+    local report
+    docker pull -q "$BUSYBOX_IMAGE" >/dev/null 2>&1; docker pull -q "$ALPINE_INDEX_IMAGE" >/dev/null 2>&1
+    report=$(folder_load_report "" keep)
+    [[ $(grep -c 'already here under the digest the release names' <<< "$report") -eq 2 ]] \
+        && ! grep -q 'IMAGE="127.0.0.1:15000' <<< "$report" && return 0
+    echo "$report" | tail -10
     return 1
 }
 
@@ -3659,6 +3671,8 @@ if grep -q 'step_images_from_a_folder' "$REPO_ROOT/bin/ut-install"; then
         images_from_a_folder_start_under_their_digest
     capability "a folder holding an image the release does not name is refused" \
         a_folder_image_the_release_does_not_name_is_refused
+    capability "a folder leaves the images a box already has under the release's digest alone" \
+        a_folder_leaves_the_images_already_here_alone
     capability "weights from a folder land where each service looks, and nothing downloads them" \
         weights_from_a_folder_land_where_each_service_looks
     capability "a weight that is not the file the release lists is refused" \
