@@ -301,6 +301,19 @@ else the vLLM one, and says which. `--engine nim` or `--engine vllm` asks for on
 it is still taken only if proven here. When neither is, the install stops and lists
 the models proven on this GPU.
 
+**On a GB10 the engines take at most 0.80 of the machine's memory.** Its GPU has no
+memory of its own: what `--gpu-memory-utilization` reserves, the system and the
+platform no longer have. The install adds up the share of `nim-llm` and, when
+`LLM_BACKEND="vllm"`, ut-llm's own `VLLM_LLM_GPU_MEM_UTIL` and
+`VLLM_VLM_GPU_MEM_UTIL`, and stops when the total passes 0.80, or when the engine
+gives no share at all. On a compute node, which runs no platform, the ceiling is
+what keeps 10 GiB for the system, 0.91 on a GB10. NVIDIA's DGX Spark playbook
+serves vLLM at 0.8 on one machine
+([vLLM playbook](https://github.com/NVIDIA/dgx-spark-playbooks/blob/main/nvidia/vllm/README.md),
+read 5 November 2026); vLLM can still take more than its share while it starts on
+unified memory ([vLLM issue 46307](https://github.com/vllm-project/vllm/issues/46307)),
+which the reserve absorbs.
+
 On vLLM it adds `compose.engine-vllm.yaml`, which runs the engine from
 `VLLM_ENGINE_IMAGE` as `vllm serve <VLLM_ENGINE_MODEL> --served-model-name
 <VLLM_ENGINE_MODEL> <VLLM_ENGINE_ARGS>`, under the same service name, GPU, port and

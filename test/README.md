@@ -14,6 +14,7 @@
 | `database-restore.sh` | Proves a backup archive restores, end to end. Nightly. |
 | `postgres-restore.sh` | Proves PostgreSQL comes back to an instant from its pgBackRest repository, with the release's image. Nightly. |
 | `database-rotation-cuts.sh` | Cuts the database password rotation before each step on the real installer functions, runs the recovery, and compares the result with the formal model in [`formal/`](../formal/README.md). Linux, no Docker; a few seconds. |
+| `engine-memory-share.sh` | Checks, on the real installer functions, the share of a GB10's memory the engines may take and how it is read from the settings in effect. bash and awk; under a second. |
 | `settings-migration-cuts.sh` | Cuts the split of main's `.env` into `local.env` before each step on the real installer functions, runs the next split, and compares the settings compose reads with the formal model in [`formal/`](../formal/README.md). Linux, no Docker; a few seconds. |
 | `known-issues.txt` | Problems that already exist and are accepted for now, with the reason next to each. |
 | `allowed-ports.txt` | Ports intentionally published on every interface. |
