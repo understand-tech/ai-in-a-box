@@ -297,6 +297,11 @@ exists.
 Its weights stay in the `ut-nim-vlm-cache` volume. Once an image has been read
 in the platform, `docker volume rm ut-nim-vlm-cache` frees the disk.
 
+**Where the GPU has no memory of its own (a GB10), an update stops when the engines
+would take more than 0.80 of the machine's memory** (0.91 on a compute node), and says by how much. A share you set
+yourself in `local.env` above it is the usual cause: lower it there and run the
+update again. See [Configuration](configuration.md).
+
 **The chat model takes the memory vision gave back.** `NIM_LLM_PASSTHROUGH_ARGS`
 now starts `nim-llm` with `--gpu-memory-utilization 0.75` instead of 0.55. On a
 GB10 its context cache grows from about 210 000 to 720 000 tokens, which is what
