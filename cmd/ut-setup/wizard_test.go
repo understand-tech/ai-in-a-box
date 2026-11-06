@@ -612,6 +612,27 @@ func TestAnInstalledBoxIsUpdatedAsItIsWithNoAnswerPassed(t *testing.T) {
 	}
 }
 
+func TestTheWizardStopsOnceAnUpdateIsShownComplete(t *testing.T) {
+	fake := &fakeInstall{events: []Event{installedHere(), said("ok", "System ready")}}
+	b := newBox(t, fake)
+	b.signIn()
+	b.readiness()
+	if status := b.post("/update", url.Values{}, b.server.URL).StatusCode; status != http.StatusAccepted {
+		t.Fatalf("the update got %d", status)
+	}
+	if progress := b.waitForTheEnd(); !progress.Succeeded {
+		t.Fatalf("the update reported %+v", progress)
+	}
+	select {
+	case reason := <-b.wizard.Stopped():
+		if !strings.Contains(reason, "update complete") {
+			t.Fatalf("stopped for %q", reason)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("still answering after the update was shown complete")
+	}
+}
+
 func TestAnInstalledBoxRefusesAnswersThatWouldReplaceItsSettings(t *testing.T) {
 	fake := &fakeInstall{events: []Event{installedHere(), said("ok", "System ready")}}
 	b := newBox(t, fake)

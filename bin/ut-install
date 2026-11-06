@@ -2512,6 +2512,13 @@ step_images_from_a_folder() {
 
     while IFS= read -r line; do
         key=${line%%=*}; reference=${line#*=}
+        # Another name for the same image is another image to Compose, which would
+        # recreate its container: the inference engine would load its model again.
+        if docker image inspect "$(repository_of "$reference")@${reference##*@}" >/dev/null 2>&1 \
+            && [[ "$(env_get "$local_file" "$key" 2>/dev/null || true)" != "${FOLDER_REGISTRY_ADDRESS}/"* ]]; then
+            log_info "${reference%@*}, already here under the digest the release names"
+            continue
+        fi
         local_name=$(name_in_the_folder_registry "$(repository_of "$reference")@$(box_digest_in_the_folder "$reference")")
         docker run --rm --network host -v "$IMAGES_FROM":/folder:ro "${FOLDER_SKOPEO_TOOL%@*}" \
             copy -q --preserve-digests --dest-tls-verify=false \
@@ -2683,6 +2690,22 @@ list_already_placed() {
     done < "$INSTALL_DIR/models/weights/${list}.txt"
 }
 
+# curl's --retry neither counts a cut HTTP/2 stream as transient nor keeps what a failed
+# attempt wrote (curl(1), 8.5): a large file is resumed by calling curl again.
+download_resuming() {
+    local url=$1 output=$2 size=$3 attempt delay=1
+    for attempt in 1 2 3 4 5 6 7; do
+        [[ -f "$output" && "$(wc -c < "$output" | tr -d ' ')" == "$size" ]] && return 0
+        curl -fsSL --proto '=https' --connect-timeout 20 --speed-limit 1 --speed-time 60 --continue-at - \
+            --output "$output" "$url" && return 0
+        (( attempt < 7 )) || break
+        log_warn "Download cut, resuming in ${delay} s (attempt $(( attempt + 1 )) of 7)"
+        sleep "$delay"
+        delay=$(( delay * 2 ))
+    done
+    return 1
+}
+
 download_the_listed_weights_into() {
     local root=$1 list key sha size location repository revision path target
     shift
@@ -2696,9 +2719,8 @@ download_the_listed_weights_into() {
             [[ -f "$target" && "$(sha256_of "$target")" == "sha256:$sha" ]] && continue
             mkdir -p "$(dirname "$target")"
             log_info "Downloading ${repository}/${path} ($(( size / 1000000 )) MB)"
-            curl -fsSL --retry 3 --connect-timeout 20 --continue-at - --output "$target.part" \
-                "https://huggingface.co/${repository}/resolve/${revision}/${path}" \
-                || die "Could not download ${repository}/${path} from Hugging Face — run ut-install again to resume"
+            download_resuming "https://huggingface.co/${repository}/resolve/${revision}/${path}" "$target.part" "$size" \
+                || die "Could not download ${repository}/${path} from Hugging Face after 7 attempts — run ut-install again to resume"
             if [[ "$(sha256_of "$target.part")" != "sha256:$sha" ]]; then
                 rm -f "$target.part"
                 die "${repository}/${path} is not the file this release lists — run ut-install again"
