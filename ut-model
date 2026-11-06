@@ -1,0 +1,57 @@
+#!/bin/bash
+# Choose the model nim-llm serves.
+#
+# Usage:
+#   ./ut-model        # List the models, marking the one in use
+#   ./ut-model ID     # Serve models/ID.env and restart what reads its names
+set -euo pipefail
+
+cd "$(dirname "$0")"
+ENV_FILE=.env
+
+value_of() {
+    sed -n "s/^$1=\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" "$2" | tail -n1
+}
+
+list_models() {
+    local entry id in_use
+    in_use=$(value_of UT_MODEL "$ENV_FILE")
+    for entry in models/*.env; do
+        id=$(basename "$entry" .env)
+        if [[ "$id" == "$in_use" ]]; then echo "$id (in use)"; else echo "$id"; fi
+    done
+}
+
+# Copied line by line, never re-quoted: VLLM_ENGINE_ARGS holds bare JSON.
+put_line() {
+    local line=$1 key=${1%%=*} kept
+    kept=$(grep -v "^${key}=" "$ENV_FILE" || true)
+    printf '%s\n%s\n' "$kept" "$line" > "$ENV_FILE"
+}
+
+[[ -f "$ENV_FILE" ]] || { echo "No .env here: copy .env.example first" >&2; exit 1; }
+if [[ $# -eq 0 ]]; then
+    list_models
+    exit 0
+fi
+
+entry="models/$1.env"
+if [[ ! -f "$entry" ]]; then
+    echo "No model called $1. Choose one of:" >&2
+    list_models >&2
+    exit 1
+fi
+
+previous=$(value_of LLM_MODEL "$ENV_FILE")
+served=$(value_of LLM_MODEL "$entry")
+while IFS= read -r line; do
+    put_line "$line"
+done < "$entry"
+put_line "UT_MODEL=\"$1\""
+gateway=$(grep '^GATEWAY_MODELS=' "$ENV_FILE" | tail -n1 || true)
+if [[ -n "$previous" && -n "$gateway" ]]; then
+    put_line "${gateway//\"served\": \"${previous}\"/\"served\": \"${served}\"}"
+fi
+
+echo "Serving $1 ($served). Restarting what reads it; the first start of a model downloads its weights."
+docker compose up -d

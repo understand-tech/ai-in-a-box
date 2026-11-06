@@ -404,38 +404,30 @@ chmod +x ut-logs-archive
 ./ut-logs-archive --install
 ```
 
-## The chat model: Nemotron Bolt on vLLM
+## Choosing the chat model
 
-`nim-llm` keeps its name but runs vLLM, serving `nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB`;
-it reads images too. `.env` is yours, so `git pull` does not change it. Before
-`docker compose up -d`, copy from `.env.example` into `.env`:
-`VLLM_ENGINE_IMAGE`, `UT_MODEL`, `VLLM_ENGINE_MODEL`, `VLLM_ENGINE_ARGS`, and
-set to `nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB`:
+`nim-llm` runs vLLM and serves one of the models in `models/`:
+`nemotron-3.5-bolt-74b`, the default, or `qwen3.8-27b-nvfp4`. It reads images
+too.
 
 ```bash
-LLM_MODEL  CONDENSE_MODEL  VLLM_LLM_MODEL  VLLM_CONDENSE_MODEL  VLLM_VLM_MODEL
-GATEWAY_LLM_SERVED_NAME  GATEWAY_VLM_MODEL
+./ut-model                      # list the models, marking the one in use
+./ut-model qwen3.8-27b-nvfp4    # serve it
 ```
 
-with `VLLM_VLM_BASE_URL="http://nim-llm:8000/v1"`, and the `served` name of the
-`uai-large` and `uai-vision` entries in `GATEWAY_MODELS`. All of them must match
-`VLLM_ENGINE_MODEL`, the only name `nim-llm` answers to. `NIM_IMAGE`,
-`NIM_LLM_MODEL_PATH`, `NIM_LLM_PASSTHROUGH_ARGS`, `NIM_VLM_PASSTHROUGH_ARGS`
-and `VLM_MODEL` are no longer read and can be deleted.
+`ut-model` writes the model's settings into `.env` — the engine image and
+arguments, `UT_MODEL`, and every name the platform calls the model by,
+`GATEWAY_MODELS` included — then runs `docker compose up -d`. The first start of
+a model downloads its weights into `ut-nim-llm-cache`: about 24 GiB for Bolt,
+its speculative draft included.
 
-Then:
-
-```bash
-docker compose pull nim-llm
-docker compose up -d --remove-orphans
-```
-
-The first start downloads about 24 GiB of weights, the speculative draft
-included, into `ut-nim-llm-cache`.
-
-A box still running `nim-vlm` keeps its weights in `ut-nim-vlm-cache`; once an
-image has been read in the platform, `docker volume rm ut-nim-vlm-cache` frees
-the disk.
+A box that served Qwen on NIM before this change runs `git pull`, then
+`./ut-model nemotron-3.5-bolt-74b` or `./ut-model qwen3.8-27b-nvfp4`, then
+`docker compose up -d --remove-orphans`. `NIM_IMAGE`, `NIM_LLM_MODEL_PATH`,
+`NIM_LLM_PASSTHROUGH_ARGS`, `NIM_VLM_PASSTHROUGH_ARGS` and `VLM_MODEL` are no
+longer read and can be deleted from `.env`. A box still running `nim-vlm` keeps
+its weights in `ut-nim-vlm-cache`; once an image has been read in the platform,
+`docker volume rm ut-nim-vlm-cache` frees the disk.
 
 ## Auto-Start on Boot
 

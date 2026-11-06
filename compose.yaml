@@ -603,11 +603,12 @@ services:
     shm_size: "16gb"
     # VLLM_ENGINE_ARGS is split on spaces and never unquoted: a JSON argument goes in
     # bare, with no space inside and no quotes around it.
-    entrypoint: ["/bin/sh", "-c", "exec vllm serve \"$$VLLM_ENGINE_MODEL\" --served-model-name \"$$VLLM_ENGINE_MODEL\" --host 0.0.0.0 --port 8000 $$VLLM_ENGINE_ARGS"]
+    entrypoint: ["/bin/sh", "-c", "exec vllm serve \"$$VLLM_ENGINE_MODEL\" --served-model-name \"$$LLM_MODEL\" --host 0.0.0.0 --port 8000 $$VLLM_ENGINE_ARGS"]
     environment:
       - HF_TOKEN=${HF_TOKEN:-${HF_API_TOKEN:-}}
       - HF_HOME=/opt/nim/.cache/huggingface
       - VLLM_ENGINE_MODEL=${VLLM_ENGINE_MODEL:-}
+      - LLM_MODEL=${LLM_MODEL:-}
       - VLLM_ENGINE_ARGS=${VLLM_ENGINE_ARGS:-}
     ports:
       - "8001:8000"
