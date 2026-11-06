@@ -65,7 +65,7 @@ settings_computed_for_this_machine() {
     local local_file=$1 compose_files memory_kb ceiling
     compose_files=$(env_get "$local_file" COMPOSE_FILE 2>/dev/null || release_declares COMPOSE_FILE || true)
     [[ "$compose_files" == *compose.appbuilder.yaml* ]] || return 0
-    memory_kb=$(awk '/^MemTotal:/ { print $2 }' /proc/meminfo 2>/dev/null || true)
+    memory_kb=$(awk '/^MemTotal:/ { print $2 }' "$MEMINFO" 2>/dev/null || true)
     [[ -n "$memory_kb" ]] || return 0
     ceiling=$(ceiling_of_the_apps_docker "$(kind_of_this_machine "$local_file")" "$memory_kb" "$(nproc)")
     set -- $ceiling

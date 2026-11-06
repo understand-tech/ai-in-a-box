@@ -104,6 +104,8 @@ cat > /stub/df <<'DF'
 echo "Avail"
 echo "${DISK_AVAIL_BYTES:-$((400 * 1000 * 1000 * 1000))}"
 DF
+echo "MemTotal: 127600000 kB" > /stub/meminfo
+export UT_MEMINFO=/stub/meminfo
 chmod +x /stub/docker /stub/nvidia-smi /stub/df
 mkdir -p /etc/cdi && : > /etc/cdi/nvidia.yaml
 : > /stub/docker-calls
@@ -162,7 +164,7 @@ stat -c '%a %U' /etc/understandtech/machine.lic > /w/$state/machine-mode 2>/dev/
 stat -c '%n %u' /var/lib/understandtech/appbuilder/workspaces/*/mongo-data > /w/$state/app-databases 2>/dev/null || : > /w/$state/app-databases
 cat /etc/understandtech/app-builder-docker/subuid > /w/$state/apps-docker-subuid 2>/dev/null || : > /w/$state/apps-docker-subuid
 ls /etc/understandtech/app-builder-docker/holds-the-apps > /w/$state/apps-marker 2>/dev/null || : > /w/$state/apps-marker
-awk '/^MemTotal:/ { print \$2 }' /proc/meminfo > /w/$state/memory-kb; nproc > /w/$state/cores
+awk '/^MemTotal:/ { print \$2 }' \$UT_MEMINFO > /w/$state/memory-kb; nproc > /w/$state/cores
 chmod -R a+rw /w/$state
 PROBE
 
@@ -1824,8 +1826,8 @@ the_way_back_keeps_the_app_builder_on_this_machine_s_docker() {
     return 1
 }
 
-# The walk runs on whatever memory and cores its machine has: the share is
-# checked against them, the stub's GPU being a GB10.
+# The walk runs on a GB10 stub's memory and its own machine's cores: the share
+# is checked against them.
 the_apps_ceiling_is_computed_for_the_machine_into_env_alone() {
     local state=app_builder_moved_to_its_docker memory_kb cores memory cpus env
     memory_kb=$(cat "$WORK_DIR/$state/memory-kb"); cores=$(cat "$WORK_DIR/$state/cores")
