@@ -30,11 +30,13 @@ MIN_DISK_BYTES_NO_INFERENCE=$((60 * 1000 * 1000 * 1000))
 # the rest 64 to 512 MB. 12 leaves the host its own.
 MIN_RAM_KB_NO_INFERENCE=$((12 * 1024 * 1024))
 # A GPU with no memory of its own takes it from the machine's: what the engines
-# reserve, the system and the platform do not have. NVIDIA's DGX Spark playbook serves vLLM
-# at 0.8 on one machine; the reserve covers the 10 GB the platform's services
-# reserve. vLLM's own reserve on unified memory (PR 49760) is not released yet.
+# reserve, the system and the platform do not have. NVIDIA's DGX Spark playbook serves
+# vLLM at 0.8 on one machine; vLLM can take more than its share while it starts on
+# unified memory (vLLM issue 46307), which the reserve absorbs.
 SHARED_MEMORY_ENGINE_SHARE_CEILING=0.80
 SYSTEM_RESERVE_KB=$((10 * 1024 * 1024))
+# A ceiling so that a hung driver cannot stall the install, not a measurement.
+NVIDIA_SMI_SECONDS=10
 NIM_COLD_START_SECONDS=2700
 
 ACTION="install"
@@ -544,7 +546,7 @@ say_what_is_installed() {
 }
 
 an_accelerator_answers() {
-    command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1
+    command -v nvidia-smi >/dev/null 2>&1 && timeout "$NVIDIA_SMI_SECONDS" nvidia-smi -L >/dev/null 2>&1
 }
 
 this_machine_goes_without_its_accelerator() {
@@ -1590,13 +1592,21 @@ setting_in_effect() {
 }
 
 # The setting and the flag through which each engine family takes its share of the
-# GPU's memory: the only place that names an engine's flag. No SGLang engine ships yet.
+# GPU's memory, and the settings holding the shares of the engines ut-llm runs beside it
+# for each LLM_BACKEND: the only place that names them. No SGLang engine ships yet.
 memory_share_setting_of() {
     case "$1" in
         nim) echo "NIM_LLM_PASSTHROUGH_ARGS --gpu-memory-utilization" ;;
         vllm) echo "VLLM_ENGINE_ARGS --gpu-memory-utilization" ;;
         sglang) echo "SGLANG_ENGINE_ARGS --mem-fraction-static" ;;
         *) return 1 ;;
+    esac
+}
+
+memory_shares_beside() {
+    case "$1" in
+        vllm) echo "VLLM_LLM_GPU_MEM_UTIL VLLM_VLM_GPU_MEM_UTIL" ;;
+        *) echo "" ;;
     esac
 }
 
@@ -1616,9 +1626,21 @@ share_given_by() {
 }
 
 # nvidia-smi gives no memory total for a GPU that has none of its own (GB10: "[N/A]").
+gpu_memory_of_this_machine() {
+    if [[ -z "${GPU_MEMORY_MEASURED:-}" ]]; then
+        if ! an_accelerator_answers; then
+            GPU_MEMORY_MEASURED=absent
+        elif [[ "$(timeout "$NVIDIA_SMI_SECONDS" nvidia-smi --query-gpu=memory.total --format=csv,noheader 2>/dev/null | head -1)" == *N/A* ]]; then
+            GPU_MEMORY_MEASURED=the-machine-s
+        else
+            GPU_MEMORY_MEASURED=its-own
+        fi
+    fi
+    echo "$GPU_MEMORY_MEASURED"
+}
+
 the_gpu_has_no_memory_of_its_own() {
-    an_accelerator_answers || return 1
-    [[ "$(nvidia-smi --query-gpu=memory.total --format=csv,noheader 2>/dev/null | head -1)" == *N/A* ]]
+    [[ "$(gpu_memory_of_this_machine)" == the-machine-s ]]
 }
 
 engine_share_ceiling() {
@@ -1635,25 +1657,23 @@ engines_share() {
     args=$(setting_in_effect "$local_file" "$key" || true)
     total=$(share_given_by "$flag" "$args")
     [[ -n "$total" ]] || { printf 'unset %s %s' "$key" "$flag"; return 1; }
-    if [[ "$(setting_in_effect "$local_file" LLM_BACKEND || true)" == vllm ]]; then
-        for key in VLLM_LLM_GPU_MEM_UTIL VLLM_VLM_GPU_MEM_UTIL; do
-            share=$(setting_in_effect "$local_file" "$key" || echo 0)
-            total=$(LC_ALL=C awk -v a="$total" -v b="$share" 'BEGIN { printf "%.2f", a + b }')
-        done
-    fi
+    for key in $(memory_shares_beside "$(setting_in_effect "$local_file" LLM_BACKEND || true)"); do
+        share=$(setting_in_effect "$local_file" "$key" || echo 0)
+        total=$(LC_ALL=C awk -v a="$total" -v b="$share" 'BEGIN { printf "%.2f", a + b }')
+    done
     printf '%s' "$total"
 }
 
 die_on_engines_taking_the_memory_the_system_needs() {
-    local local_file=$1 memory_kb share ceiling runs_the_platform=yes
+    local local_file=$1 memory_kb share ceiling runs_the_platform=yes status=0
     this_machine_goes_without_its_accelerator && return 0
     [[ -z "$INFERENCE_FROM" ]] || return 0
     the_gpu_has_no_memory_of_its_own || return 0
     this_machine_is_a_compute_node && runs_the_platform=no
     memory_kb=$(awk '/^MemTotal:/ { print $2 }' /proc/meminfo)
     ceiling=$(engine_share_ceiling "$memory_kb" "$runs_the_platform")
-    share=$(engines_share "$local_file")
-    case $? in
+    share=$(engines_share "$local_file") || status=$?
+    case $status in
         2)
             log_error "The engine family ${share#unknown } has no known memory share setting."
             log_error "  Its GPU has no memory of its own: its share cannot be checked, so the install stops."
@@ -2019,7 +2039,7 @@ render_settings() {
         printf '%s\n' "$line" >> "$tmp"
     done < "$release"
 
-    computed=$(settings_computed_for_this_machine "$local_file")
+    computed=$(printf 'GPU_MEMORY="%s"\n' "$(gpu_memory_of_this_machine)"; settings_computed_for_this_machine "$local_file")
     if [[ -n "$computed" ]]; then
         printf '\n# ---------------------------- computed for this machine, each install ----\n' >> "$tmp"
         while IFS= read -r line; do
