@@ -82,7 +82,16 @@ In order, on `ubuntu-24.04`:
 8. **Checksums**: `sha256sum` over the package, its signature, the bill of
    materials, `ut-verify`, `ut-get` and `release.pub`, written to
    `SHA256SUMS`.
-9. **Publish**: `gh release create` on the tag, titled with the version,
+9. **Publish to Keygen**: `packaging/publish-to-keygen.sh "$VERSION"` puts
+   the same seven files in the raw package `understandtech`, and every private
+   image `release.env` pins in an OCI package named after its repository,
+   under the release's version — where a box downloads them with its license
+   key alone. An image keeps the digest `release.env` pins. Keygen takes no
+   file above 5 GB, so an image above that stops the release. A version
+   already published to a package is left as it is: a release stopped half
+   way is run again. It needs `KEYGEN_PRODUCT_TOKEN` in the workflow's
+   secrets, and read access to the private images for this repository.
+10. **Publish**: `gh release create` on the tag, titled with the version,
    marked a pre-release when the version carries a suffix, with all seven
    files attached. What they are and how to check them before installing is in
    [installing — get the release](install.md#1--get-the-release) and

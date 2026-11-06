@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  packages: read
   id-token: write
   attestations: write
 
@@ -109,6 +110,19 @@ jobs:
           set -euo pipefail
           cp bin/ut-verify bin/ut-get packaging/release.pub dist/
           ( cd dist && sha256sum understandtech_*.deb understandtech_*.deb.sig understandtech_*.cdx.json ut-verify ut-get release.pub > SHA256SUMS )
+
+      - name: Publish to Keygen
+        env:
+          KEYGEN_PRODUCT_TOKEN: ${{ secrets.KEYGEN_PRODUCT_TOKEN }}
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [ -n "$KEYGEN_PRODUCT_TOKEN" ] || {
+            echo "::error::KEYGEN_PRODUCT_TOKEN is not set — boxes could not download this release with their license key"
+            exit 1
+          }
+          printf '%s' "$GHCR_TOKEN" | skopeo login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          ./packaging/publish-to-keygen.sh "$VERSION"
 
       - name: Publish
         env:
