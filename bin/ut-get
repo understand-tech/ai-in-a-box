@@ -10,9 +10,9 @@ MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEIeeiLHqWayycgLe6biw7lXXcdsMO
 -----END PUBLIC KEY-----'
 
 if [[ -t 1 ]]; then
-    RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; CYAN=$'\033[0;36m'; BOLD=$'\033[1m'; NC=$'\033[0m'
+    RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'; CYAN=$'\033[0;36m'; BOLD=$'\033[1m'; NC=$'\033[0m'
 else
-    RED=""; GREEN=""; CYAN=""; BOLD=""; NC=""
+    RED=""; GREEN=""; YELLOW=""; CYAN=""; BOLD=""; NC=""
 fi
 
 RELEASES_URL="${UT_RELEASES_URL:-https://github.com/understand-tech/ai-in-a-box/releases}"
@@ -84,6 +84,7 @@ EOF
 }
 
 log_info() { printf '%s[ ok ]%s %s\n' "$GREEN" "$NC" "$*"; }
+log_warn() { printf '%s[warn]%s %s\n' "$YELLOW" "$NC" "$*"; }
 log_step() { printf '\n%s==>%s %s%s%s\n' "$CYAN" "$NC" "$BOLD" "$*" "$NC"; }
 fail()     { printf '%s[fail]%s %s\n' "$RED" "$NC" "$*" >&2; exit 1; }
 
@@ -290,6 +291,26 @@ copy_a_tool() {
         "docker-archive:/folder/tools/$name.part:${tool%@*}"
 }
 
+PROGRESS_EVERY=30
+
+# A large image copies for minutes without a word from skopeo: what has landed in
+# the folder is said instead, so that a slow copy does not pass for a stuck one.
+with_progress() {
+    local destination=$1 started=$SECONDS next pid status
+    shift
+    "$@" & pid=$!
+    next=$(( SECONDS + PROGRESS_EVERY ))
+    while kill -0 "$pid" 2>/dev/null; do
+        sleep 1
+        if (( SECONDS >= next )); then
+            log_info "  $(du -sm "$destination" 2>/dev/null | cut -f1) MB so far, $(( (SECONDS - started) / 60 )) min $(( (SECONDS - started) % 60 )) s"
+            next=$(( SECONDS + PROGRESS_EVERY ))
+        fi
+    done
+    wait "$pid" && status=0 || status=$?
+    return "$status"
+}
+
 copy_the_images_into() {
     local folder=$1 auth=$2 reference path source
     while read -r reference; do
@@ -302,7 +323,7 @@ copy_the_images_into() {
         rm -rf "${folder:?}/$path"
         mkdir -p "$folder/$path"
         source="docker://$(fully_qualified "$reference")"
-        with_retries copy_an_image "$folder" "$auth" "$path" "$source" \
+        with_progress "$folder/$path" with_retries copy_an_image "$folder" "$auth" "$path" "$source" \
             || fail "Could not copy ${reference%@*} — check the token and the network, then run the same command again"
         log_info "${reference%@*} copied"
     done
@@ -348,6 +369,22 @@ weight_path_of() {
 
 sha256_of_file() { openssl dgst -sha256 -r "$1" | cut -d' ' -f1; }
 
+# curl's --retry neither counts a cut HTTP/2 stream as transient nor keeps what a failed
+# attempt wrote (curl(1), 8.5): a large file is resumed by calling curl again.
+download_resuming() {
+    local url=$1 output=$2 size=$3 attempt delay=1
+    for attempt in 1 2 3 4 5 6 7; do
+        [[ -f "$output" && "$(wc -c < "$output" | tr -d ' ')" == "$size" ]] && return 0
+        curl -fsSL --proto '=https' --connect-timeout 20 --speed-limit 1 --speed-time 60 --continue-at - \
+            --output "$output" "$url" && return 0
+        (( attempt < 7 )) || break
+        log_warn "Download cut, resuming in ${delay} s (attempt $(( attempt + 1 )) of 7)"
+        sleep "$delay"
+        delay=$(( delay * 2 ))
+    done
+    return 1
+}
+
 download_the_weights_into() {
     local folder=$1 list sha size repository revision path target
     while read -r list sha size repository revision path; do
@@ -358,8 +395,8 @@ download_the_weights_into() {
             continue
         fi
         mkdir -p "$(dirname "$target")"
-        fetch --location --continue-at - --output "$target.part" "https://huggingface.co/${repository}/resolve/${revision}/${path}" \
-            || fail "Could not download ${repository}/${path} — run the same command again to resume"
+        download_resuming "https://huggingface.co/${repository}/resolve/${revision}/${path}" "$target.part" "$size" \
+            || fail "Could not download ${repository}/${path} after 7 attempts — run the same command again to resume"
         if [[ "$(wc -c < "$target.part" | tr -d ' ')" != "$size" || "$(sha256_of_file "$target.part")" != "$sha" ]]; then
             rm -f "$target.part"
             fail "${repository}/${path} is not the file the release lists — run the same command again"
