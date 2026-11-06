@@ -637,7 +637,7 @@ a_model_on_vllm_brings_its_engine_and_its_arguments_whole() {
     local settings
     settings=$(cat "$WORK_DIR/model_on_vllm/local-env" 2>/dev/null)
     grep -q '^COMPOSE_FILE=.*compose.engine-vllm.yaml' <<< "$settings" \
-        && grep -qxF 'VLLM_ENGINE_ARGS=--trust-remote-code --override-generation-config {"temperature":0.2,"top_p":0.9}' <<< "$settings" \
+        && grep -qxF 'VLLM_ENGINE_ARGS=--gpu-memory-utilization 0.75 --trust-remote-code --override-generation-config {"temperature":0.2,"top_p":0.9}' <<< "$settings" \
         && grep -q 'Model test-vllm, served by vLLM' <<< "$(output_of model_on_vllm)" && return 0
     grep -E '^(VLLM_ENGINE_ARGS|COMPOSE_FILE)=' <<< "$settings"
     output_of model_on_vllm | tail -4
@@ -1860,7 +1860,7 @@ prepare_a_vllm_entry() {
 # A model served by vLLM, for the walk.
 VLLM_ENGINE_IMAGE="registry.example/vllm@sha256:0000000000000000000000000000000000000000000000000000000000000000"
 VLLM_ENGINE_MODEL="org/model"
-VLLM_ENGINE_ARGS=--trust-remote-code --override-generation-config {"temperature":0.2,"top_p":0.9}
+VLLM_ENGINE_ARGS=--gpu-memory-utilization 0.75 --trust-remote-code --override-generation-config {"temperature":0.2,"top_p":0.9}
 LLM_MODEL="org/model"
 VLLM_LLM_MODEL="org/model"
 ENTRY
