@@ -12,6 +12,7 @@ CHECKOUT_INSTALL_DIR="/opt/understandtech"
 INSTALL_DIR="${UT_INSTALL_DIR:-}"
 FROM_CHECKOUT="${UT_FROM_CHECKOUT:-}"
 DATA_DIR="/var/lib/understandtech"
+MEMINFO="${UT_MEMINFO:-/proc/meminfo}"
 LOG_FILE="/var/log/ut-install.log"
 TARGET_USER="${SUDO_USER:-root}"
 DOMAIN="${UT_DOMAIN:-}"
@@ -723,7 +724,7 @@ preflight() {
     fi
 
     local ram_kb
-    ram_kb=$(awk '/MemTotal/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
+    ram_kb=$(awk '/MemTotal/ {print $2}' "$MEMINFO" 2>/dev/null || echo 0)
     if (( ram_kb >= ram_floor )); then
         log_info "Memory: $((ram_kb / 1024 / 1024)) GB"
     else
@@ -1670,7 +1671,7 @@ die_on_engines_taking_the_memory_the_system_needs() {
     [[ -z "$INFERENCE_FROM" ]] || return 0
     the_gpu_has_no_memory_of_its_own || return 0
     this_machine_is_a_compute_node && runs_the_platform=no
-    memory_kb=$(awk '/^MemTotal:/ { print $2 }' /proc/meminfo)
+    memory_kb=$(awk '/^MemTotal:/ { print $2 }' "$MEMINFO")
     ceiling=$(engine_share_ceiling "$memory_kb" "$runs_the_platform")
     share=$(engines_share "$local_file") || status=$?
     case $status in

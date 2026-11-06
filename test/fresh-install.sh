@@ -82,7 +82,7 @@ case "$1 $2" in
     "version --format")   echo "29.0.0" ;;
     "compose version")    echo "v5.0.0" ;;
     "info --format")      case "$*" in *Architecture*) echo aarch64 ;; *) echo '{"nvidia":{}}' ;; esac ;;
-    "volume inspect")     case "$*" in *mongodb*) [ "${MONGO_VOLUME_EXISTS:-no}" = yes ] ;; *) [ "${WEIGHT_VOLUMES_EXIST:-yes}" = yes ] ;; esac ;;
+    "volume inspect")     case "$*" in *mongodb*) [ "${MONGO_VOLUME_EXISTS:-no}" = yes ] ;; *postgres*) [ "${POSTGRES_VOLUME_EXISTS:-no}" = yes ] ;; *) [ "${WEIGHT_VOLUMES_EXIST:-yes}" = yes ] ;; esac ;;
     "network inspect")    exit 1 ;;
     "network create")     exit "${NETWORK_CREATE_EXIT:-0}" ;;
     "compose pull")       exit "${PULL_EXIT:-0}" ;;
@@ -93,8 +93,9 @@ esac
 DOCKER
 cat > /stub/nvidia-smi <<'NVIDIA'
 #!/bin/sh
-case "$1" in
+case "$*" in
     -L) echo "GPU 0: NVIDIA GB10 (UUID: GPU-test)" ;;
+    *memory.total*) echo "[N/A]" ;;
     *)  echo "NVIDIA GB10" ;;
 esac
 NVIDIA
@@ -103,6 +104,8 @@ cat > /stub/df <<'DF'
 echo "Avail"
 echo "${DISK_AVAIL_BYTES:-$((400 * 1000 * 1000 * 1000))}"
 DF
+echo "MemTotal: 127600000 kB" > /stub/meminfo
+export UT_MEMINFO=/stub/meminfo
 chmod +x /stub/docker /stub/nvidia-smi /stub/df
 mkdir -p /etc/cdi && : > /etc/cdi/nvidia.yaml
 : > /stub/docker-calls
@@ -161,7 +164,7 @@ stat -c '%a %U' /etc/understandtech/machine.lic > /w/$state/machine-mode 2>/dev/
 stat -c '%n %u' /var/lib/understandtech/appbuilder/workspaces/*/mongo-data > /w/$state/app-databases 2>/dev/null || : > /w/$state/app-databases
 cat /etc/understandtech/app-builder-docker/subuid > /w/$state/apps-docker-subuid 2>/dev/null || : > /w/$state/apps-docker-subuid
 ls /etc/understandtech/app-builder-docker/holds-the-apps > /w/$state/apps-marker 2>/dev/null || : > /w/$state/apps-marker
-awk '/^MemTotal:/ { print \$2 }' /proc/meminfo > /w/$state/memory-kb; nproc > /w/$state/cores
+awk '/^MemTotal:/ { print \$2 }' \$UT_MEMINFO > /w/$state/memory-kb; nproc > /w/$state/cores
 chmod -R a+rw /w/$state
 PROBE
 
@@ -634,7 +637,7 @@ a_model_on_vllm_brings_its_engine_and_its_arguments_whole() {
     local settings
     settings=$(cat "$WORK_DIR/model_on_vllm/local-env" 2>/dev/null)
     grep -q '^COMPOSE_FILE=.*compose.engine-vllm.yaml' <<< "$settings" \
-        && grep -qxF 'VLLM_ENGINE_ARGS=--trust-remote-code --override-generation-config {"temperature":0.2,"top_p":0.9}' <<< "$settings" \
+        && grep -qxF 'VLLM_ENGINE_ARGS=--gpu-memory-utilization 0.75 --trust-remote-code --override-generation-config {"temperature":0.2,"top_p":0.9}' <<< "$settings" \
         && grep -q 'Model test-vllm, served by vLLM' <<< "$(output_of model_on_vllm)" && return 0
     grep -E '^(VLLM_ENGINE_ARGS|COMPOSE_FILE)=' <<< "$settings"
     output_of model_on_vllm | tail -4
@@ -1823,8 +1826,8 @@ the_way_back_keeps_the_app_builder_on_this_machine_s_docker() {
     return 1
 }
 
-# The walk runs on whatever memory and cores its machine has: the share is
-# checked against them, the stub's GPU being a GB10.
+# The walk runs on a GB10 stub's memory and its own machine's cores: the share
+# is checked against them.
 the_apps_ceiling_is_computed_for_the_machine_into_env_alone() {
     local state=app_builder_moved_to_its_docker memory_kb cores memory cpus env
     memory_kb=$(cat "$WORK_DIR/$state/memory-kb"); cores=$(cat "$WORK_DIR/$state/cores")
@@ -1857,7 +1860,7 @@ prepare_a_vllm_entry() {
 # A model served by vLLM, for the walk.
 VLLM_ENGINE_IMAGE="registry.example/vllm@sha256:0000000000000000000000000000000000000000000000000000000000000000"
 VLLM_ENGINE_MODEL="org/model"
-VLLM_ENGINE_ARGS=--trust-remote-code --override-generation-config {"temperature":0.2,"top_p":0.9}
+VLLM_ENGINE_ARGS=--gpu-memory-utilization 0.75 --trust-remote-code --override-generation-config {"temperature":0.2,"top_p":0.9}
 LLM_MODEL="org/model"
 VLLM_LLM_MODEL="org/model"
 ENTRY
