@@ -93,8 +93,9 @@ esac
 DOCKER
 cat > /stub/nvidia-smi <<'NVIDIA'
 #!/bin/sh
-case "$1" in
+case "$*" in
     -L) echo "GPU 0: NVIDIA GB10 (UUID: GPU-test)" ;;
+    *memory.total*) echo "[N/A]" ;;
     *)  echo "NVIDIA GB10" ;;
 esac
 NVIDIA
