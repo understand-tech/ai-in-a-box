@@ -2512,6 +2512,13 @@ step_images_from_a_folder() {
 
     while IFS= read -r line; do
         key=${line%%=*}; reference=${line#*=}
+        # Another name for the same image is another image to Compose, which would
+        # recreate its container: the inference engine would load its model again.
+        if docker image inspect "$(repository_of "$reference")@${reference##*@}" >/dev/null 2>&1 \
+            && [[ "$(env_get "$local_file" "$key" 2>/dev/null || true)" != "${FOLDER_REGISTRY_ADDRESS}/"* ]]; then
+            log_info "${reference%@*}, already here under the digest the release names"
+            continue
+        fi
         local_name=$(name_in_the_folder_registry "$(repository_of "$reference")@$(box_digest_in_the_folder "$reference")")
         docker run --rm --network host -v "$IMAGES_FROM":/folder:ro "${FOLDER_SKOPEO_TOOL%@*}" \
             copy -q --preserve-digests --dest-tls-verify=false \
