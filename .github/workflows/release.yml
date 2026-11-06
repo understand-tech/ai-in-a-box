@@ -32,6 +32,9 @@ jobs:
       - name: Repository invariants
         run: ./test/invariants.sh
 
+      - name: Docker keeps its images in containerd's store, as on a box
+        run: ./test/keep-docker-images-in-containerd.sh
+
       - name: Capabilities
         run: ./test/capabilities.sh
 

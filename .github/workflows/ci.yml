@@ -142,6 +142,8 @@ jobs:
       - if: needs.changes.outputs.beyond-docs == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - if: needs.changes.outputs.beyond-docs == 'true'
+        run: ./test/keep-docker-images-in-containerd.sh
+      - if: needs.changes.outputs.beyond-docs == 'true'
         run: ./test/capabilities.sh
 
   # The only suite that reaches a service actually running. It can, because the

@@ -290,16 +290,17 @@ folder_load_report() {
     echo "--- local.env"; cat "$probe/install/local.env"
     echo "--- run"
     local ref
-    for ref in $(sed -n 's/^[A-Z_]*_IMAGE="\(.*\)"$/\1/p' "$probe/install/local.env"); do
-        docker run --rm --pull never --network none "$ref" true && echo "$ref: ran"
+    for ref in "$BUSYBOX_IMAGE" "$ALPINE_INDEX_IMAGE"; do
+        docker run --rm --pull never --network none "$ref" true >/dev/null 2>&1 && echo "$ref: ran"
     done
 }
 
 images_from_a_folder_start_under_their_digest() {
     local report
     report=$(folder_load_report)
-    grep -qE '^BUSYBOX_IMAGE="127\.0\.0\.1:15000/e2e-test-images/busybox@sha256:[0-9a-f]{64}"$' <<< "$report" \
-        && grep -qE '^ALPINE_INDEX_IMAGE="127\.0\.0\.1:15000/linuxcontainers/alpine@sha256:[0-9a-f]{64}"$' <<< "$report" \
+    [[ $(grep -c 'busybox[^ ]*, under the digest the release names$' <<< "$report") -eq 1 ]] \
+        && [[ $(grep -c 'alpine[^ ]*, under the digest the release names$' <<< "$report") -eq 1 ]] \
+        && ! grep -q '_IMAGE=' <<< "$(sed -n '/^--- local.env/,/^--- run/p' <<< "$report")" \
         && [[ $(grep -c ': ran$' <<< "$report") -eq 2 ]] \
         && ! grep -q 'STILL THERE' <<< "$report" && return 0
     echo "$report" | tail -15
@@ -320,7 +321,7 @@ a_folder_leaves_the_images_already_here_alone() {
 
 a_folder_image_the_release_does_not_name_is_refused() {
     local report
-    report=$(folder_load_report 'sed -i.bak "s/linux/linux /" "$probe"/folder/images/ghcr.io_linuxcontainers_alpine/*/named.json; rm -f "$probe"/folder/images/*/*/named.json.bak')
+    report=$(folder_load_report 'cp "$probe"/folder/images/registry.k8s.io_e2e-test-images_busybox/*/image.tar "$probe"/folder/images/ghcr.io_linuxcontainers_alpine/*/image.tar')
     grep -q 'missing or not the one the release names' <<< "$report" \
         && ! grep -q 'IMAGE="127.0.0.1:15000' <<< "$report" && return 0
     echo "$report" | tail -8
@@ -401,8 +402,8 @@ weights_download_report() {
     find "$probe/folder" -type f | sed "s|$probe/folder/||"
 }
 
-# skopeo says nothing while it copies an image: the preparation says how much of it
-# has landed instead, at least every PROGRESS_EVERY seconds.
+# Docker says nothing while it copies an image: the preparation says how much of
+# it has landed instead, at least every PROGRESS_EVERY seconds.
 a_long_image_copy_shows_its_progress() {
     local probe="$WORK_DIR/progress-probe" output
     rm -rf "$probe"; mkdir -p "$probe/folder"
@@ -501,7 +502,8 @@ TAMPER
 a_compute_folder_loads_the_inference_images_only() {
     local report
     report=$(folder_role_report "printf 'COMPOSE_FILE=\"compose.yaml:compose.compute.yaml\"\\n' >> \"\$probe/install/.env\"; echo compute > \"\$probe/folder/role\"")
-    grep -qE '^ALPINE_INDEX_IMAGE="127\.0\.0\.1:15000/' <<< "$report" && ! grep -q '^BUSYBOX_IMAGE=' <<< "$report" \
+    grep -q 'alpine[^ ]*, under the digest the release names$' <<< "$report" \
+        && ! grep -q 'busybox[^ ]*, under the digest the release names$' <<< "$report" \
         && ! grep -q 'lacks what this install runs' <<< "$report" && return 0
     echo "$report" | tail -10
     return 1
@@ -612,7 +614,7 @@ a_folder_for_another_architecture_is_refused() {
 a_tool_the_release_does_not_name_is_refused() {
     local report
     report=$(folder_load_report 'docker pull -q "$BUSYBOX_IMAGE" >/dev/null && docker tag "$BUSYBOX_IMAGE" ghcr.io/distribution/distribution:3.0.0 && docker save -o "$probe/folder/tools/distribution.tar" ghcr.io/distribution/distribution:3.0.0 && docker rmi ghcr.io/distribution/distribution:3.0.0 >/dev/null')
-    grep -q 'is not the ghcr.io/distribution/distribution:3.0.0 this release loads images with' <<< "$report" \
+    grep -q 'is not the ghcr.io/distribution/distribution:3.0.0 this release places the weights with' <<< "$report" \
         && ! grep -q 'IMAGE="127.0.0.1:15000' <<< "$report" && return 0
     echo "$report" | tail -8
     return 1
@@ -620,7 +622,7 @@ a_tool_the_release_does_not_name_is_refused() {
 
 the_folder_tools_are_those_ut_get_carries() {
     local key installer getter
-    for key in FOLDER_REGISTRY_TOOL FOLDER_SKOPEO_TOOL; do
+    for key in FOLDER_REGISTRY_TOOL; do
         installer=$(sed -n "s/^${key}=\"\(.*\)\"$/\1/p" "$REPO_ROOT/bin/ut-install")
         getter=$(sed -n "s/^${key}=\"\(.*\)\"$/\1/p" "$REPO_ROOT/bin/ut-get")
         [[ -n "$installer" && "$installer" == "$getter" ]] || { echo "${key}: ut-install '${installer}', ut-get '${getter}'"; return 1; }
@@ -4160,7 +4162,7 @@ EOF
 
 the_installer_keeps_every_run_from_its_first_step() {
     sed -n '/^main() {/,/^}/p' "$REPO_ROOT/bin/ut-install" \
-        | sed -n '/start_logging/,/preflight/p' | grep -q 'trap record_this_install EXIT'
+        | sed -n '/start_logging/,/preflight/p' | grep -q 'trap finish_this_install EXIT'
 }
 
 a_failed_install_is_kept_with_the_step_it_stopped_at() {
@@ -4223,7 +4225,7 @@ a_release_runs_the_settings_it_ships_for() {
 
 the_installer_checks_the_settings_before_changing_anything() {
     sed -n '/^main() {/,/^}/p' "$REPO_ROOT/bin/ut-install" \
-        | sed -n '/trap record_this_install EXIT/,/step_registry_login/p' | grep -q 'die_on_settings_this_release_cannot_run'
+        | sed -n '/trap finish_this_install EXIT/,/step_registry_login/p' | grep -q 'die_on_settings_this_release_cannot_run'
 }
 
 secrets_shown_after() {

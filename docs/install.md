@@ -83,9 +83,12 @@ step 5. Nothing is installed from a package it cannot verify.
 - Without `--version`, it takes the latest release. A pre-release — a version
   with a suffix, such as `2026.10.0-rc3` — is never the latest, so installing one
   takes `--version`.
-- A machine with no network: on any connected Linux or macOS machine with Docker
-  and `jq`, prepare a folder with the release, every image it runs and the
-  weights of its models —
+- A machine with no network: on any connected Linux or macOS machine with `jq`
+  and Docker keeping its images in containerd's store — the default of a Docker
+  29 installed fresh; Docker Desktop: *Settings › General › Use containerd for
+  pulling and storing images*; elsewhere `"features": {"containerd-snapshotter":
+  true}` in `/etc/docker/daemon.json` — prepare a folder with the release, every
+  image it runs and the weights of its models —
   `bash ut-get --prepare <folder> --version "$VERSION" --license-file license.key`,
   with `--model <id>` for a model other than the release's, and the engine it
   runs on when that is not NIM,
