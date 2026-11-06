@@ -4160,7 +4160,7 @@ EOF
 
 the_installer_keeps_every_run_from_its_first_step() {
     sed -n '/^main() {/,/^}/p' "$REPO_ROOT/bin/ut-install" \
-        | sed -n '/start_logging/,/preflight/p' | grep -q 'trap record_this_install EXIT'
+        | sed -n '/start_logging/,/preflight/p' | grep -q 'trap finish_this_install EXIT'
 }
 
 a_failed_install_is_kept_with_the_step_it_stopped_at() {
@@ -4223,7 +4223,7 @@ a_release_runs_the_settings_it_ships_for() {
 
 the_installer_checks_the_settings_before_changing_anything() {
     sed -n '/^main() {/,/^}/p' "$REPO_ROOT/bin/ut-install" \
-        | sed -n '/trap record_this_install EXIT/,/step_registry_login/p' | grep -q 'die_on_settings_this_release_cannot_run'
+        | sed -n '/trap finish_this_install EXIT/,/step_registry_login/p' | grep -q 'die_on_settings_this_release_cannot_run'
 }
 
 secrets_shown_after() {

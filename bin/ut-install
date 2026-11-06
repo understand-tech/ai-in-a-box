@@ -649,6 +649,8 @@ preflight() {
         blocking=1
     fi
 
+    check_the_image_store || blocking=1
+
     if an_accelerator_answers; then
         log_info "GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"
         if nvidia_runtime_registered; then
@@ -2887,6 +2889,7 @@ step_wait_healthy() {
         if [[ -z "$pending" ]]; then
             printf '\r\033[K'
             log_info "The platform is ready"
+            PLATFORM_READY=true
             report_inference_still_loading "$loading"
             report_backup_not_working "$backup"
             report_inference_that_failed "$failed" && return 0
@@ -3261,8 +3264,14 @@ install_history() {
 
 # Failed runs are kept too: an install re-run until it works must not read as
 # one that served the first time.
+finish_this_install() {
+    local status=$?
+    (( status == 0 )) || put_overlay2_back_if_the_move_failed
+    record_this_install "$status"
+}
+
 record_this_install() {
-    local status=$? outcome="done" step="" release history
+    local status=${1:-$?} outcome="done" step="" release history
     if (( status != 0 )); then
         outcome="failed"
         step=${CURRENT_STEP//\"/}
@@ -3531,7 +3540,7 @@ main() {
     [[ $EUID -eq 0 ]] || die "Run with sudo: sudo $0"
 
     start_logging
-    trap record_this_install EXIT
+    trap finish_this_install EXIT
     die_on_settings_this_release_cannot_run
     preflight
     read_domain
@@ -3545,15 +3554,19 @@ main() {
     step_check_resolution
     step_docker_group
     step_networks
+    step_keep_the_images_in_containerd
     step_images_from_a_folder
     step_weights_from_a_folder
     step_pull
+    step_settle_the_images_on_disk
     step_point_the_relay_at_what_restic_dials
     step_weights_from_the_network
     step_finish_an_interrupted_database_password_change
     step_give_the_app_builder_its_docker
+    forget_how_to_undo_the_move_to_containerd
     step_start_with_the_apps_where_they_went
     step_wait_healthy
+    step_free_what_overlay2_kept
     step_rotate_a_published_database_password
     step_autostart
     step_reporting

@@ -81,11 +81,19 @@ printf '%s\n' "$*" >> /stub/docker-calls
 case "$1 $2" in
     "version --format")   echo "29.0.0" ;;
     "compose version")    echo "v5.0.0" ;;
-    "info --format")      case "$*" in *Architecture*) echo aarch64 ;; *) echo '{"nvidia":{}}' ;; esac ;;
+    "info --format")      case "$*" in
+                              *Architecture*)    echo aarch64 ;;
+                              *DriverStatus*)    case "$(cat /stub/docker-store)" in containerd) echo '[["driver-type","io.containerd.snapshotter.v1"]]' ;; *) echo '[["Backing Filesystem","extfs"]]' ;; esac ;;
+                              *SecurityOptions*) if [ "${DOCKER_USERNS:-no}" = yes ]; then echo '["name=seccomp","name=userns"]'; else echo '["name=seccomp"]'; fi ;;
+                              *DockerRootDir*)   echo /var/lib/docker ;;
+                              *)                 echo '{"nvidia":{}}' ;;
+                          esac ;;
     "volume inspect")     case "$*" in *mongodb*) [ "${MONGO_VOLUME_EXISTS:-no}" = yes ] ;; *postgres*) [ "${POSTGRES_VOLUME_EXISTS:-no}" = yes ] ;; *) [ "${WEIGHT_VOLUMES_EXIST:-yes}" = yes ] ;; esac ;;
+    "image inspect")      case "$*" in *"${MISSING_IMAGE:-no image is missing}"*) exit 1 ;; esac ;;
     "network inspect")    exit 1 ;;
     "network create")     exit "${NETWORK_CREATE_EXIT:-0}" ;;
     "compose pull")       exit "${PULL_EXIT:-0}" ;;
+    "compose config")     case "$*" in *--images*) [ "${MISSING_IMAGE:-no image is missing}" = "no image is missing" ] || echo "$MISSING_IMAGE:2-alpine" ;; esac ;;
     "compose --progress") case "$*" in *" pull") exit "${PULL_EXIT:-0}" ;; esac ;;
     "login "*)            cat > /stub/docker-login-stdin ;;
     *)                    exit 0 ;;
@@ -107,9 +115,28 @@ DF
 echo "MemTotal: 127600000 kB" > /stub/meminfo
 export UT_MEMINFO=/stub/meminfo
 chmod +x /stub/docker /stub/nvidia-smi /stub/df
+echo "${DOCKER_STORE:-containerd}" > /stub/docker-store
 mkdir -p /etc/cdi && : > /etc/cdi/nvidia.yaml
 : > /stub/docker-calls
 export PATH=/stub:$PATH
+# A Docker on overlay2 whose images and data the install is to move: restarting
+# it reads the store daemon.json asks for, the way the daemon does.
+docker_on_overlay2_with_images() {
+    install -d /etc/docker /var/lib/docker/overlay2/l /var/lib/docker/image/overlay2
+    printf '{"log-driver":"local","features":{"buildkit":true}}\n' > /etc/docker/daemon.json
+    head -c 2097152 /dev/zero > /var/lib/docker/overlay2/l/layer
+    cat > /stub/systemctl <<'SYSTEMCTL'
+#!/bin/sh
+printf '%s\n' "$*" >> /stub/systemctl-calls
+[ "$*" = "restart docker" ] || exit 0
+if grep -q '"containerd-snapshotter": *true' /etc/docker/daemon.json 2>/dev/null; then
+    echo containerd > /stub/docker-store
+else
+    echo overlay2 > /stub/docker-store
+fi
+SYSTEMCTL
+    chmod +x /stub/systemctl
+}
 start_a_fake_keygen() {
     : > "/w/$1/keygen-requests"
     python3 /w/licenses/fake-keygen.py 8765 "/w/$1/keygen-requests" /w/licenses/certificates &
@@ -165,6 +192,10 @@ stat -c '%n %u' /var/lib/understandtech/appbuilder/workspaces/*/mongo-data > /w/
 cat /etc/understandtech/app-builder-docker/subuid > /w/$state/apps-docker-subuid 2>/dev/null || : > /w/$state/apps-docker-subuid
 ls /etc/understandtech/app-builder-docker/holds-the-apps > /w/$state/apps-marker 2>/dev/null || : > /w/$state/apps-marker
 awk '/^MemTotal:/ { print \$2 }' \$UT_MEMINFO > /w/$state/memory-kb; nproc > /w/$state/cores
+cp /etc/docker/daemon.json /w/$state/daemon-json 2>/dev/null || : > /w/$state/daemon-json
+cp /stub/systemctl-calls /w/$state/systemctl-calls 2>/dev/null || : > /w/$state/systemctl-calls
+cat /stub/docker-store > /w/$state/docker-store
+ls -d /var/lib/docker/overlay2 /var/lib/docker/image/overlay2 > /w/$state/overlay2-left 2>/dev/null || : > /w/$state/overlay2-left
 chmod -R a+rw /w/$state
 PROBE
 
@@ -174,6 +205,9 @@ PROBE
         -e NETWORK_CREATE_EXIT="${NETWORK_CREATE_EXIT:-0}" \
         -e PULL_EXIT="${PULL_EXIT:-9}" \
         -e DISK_AVAIL_BYTES="${DISK_AVAIL_BYTES:-}" \
+        -e DOCKER_STORE="${DOCKER_STORE:-containerd}" \
+        -e DOCKER_USERNS="${DOCKER_USERNS:-no}" \
+        -e MISSING_IMAGE="${MISSING_IMAGE:-no image is missing}" \
         "${WALK_IMAGE:-$WITH_OPENSSL_IMAGE}" bash /w/walk-$state.sh >/dev/null 2>&1
 }
 
@@ -191,6 +225,10 @@ state_setup() {
     case "$1" in
         bare)          echo ': # nothing beyond the package' ;;
         install_runs_through) echo ': # like bare, but the pull is allowed to succeed' ;;
+        images_moved_to_containerd|images_move_undone|images_kept_from_userns_remap)
+            echo 'docker_on_overlay2_with_images' ;;
+        images_kept_from_an_old_toolkit)
+            echo 'docker_on_overlay2_with_images && printf '"'"'#!/bin/sh\ncase "$*" in *nvidia-container-toolkit*) printf 1.19.0-1 ;; *) exec /usr/bin/dpkg-query "$@" ;; esac\n'"'"' > /stub/dpkg-query && chmod +x /stub/dpkg-query' ;;
         # A checkout of the repository, the way an operator who cloned it has one.
         # The package is installed too, which is what makes the choice interesting.
         launched_from_a_checkout|checkout_but_no_key)
@@ -2323,6 +2361,11 @@ prepare_apps_on_this_machine_s_docker
 
 run_install_from_state bare
 PULL_EXIT=0 run_install_from_state install_runs_through
+PULL_EXIT=0 DOCKER_STORE=overlay2 run_install_from_state images_moved_to_containerd
+DOCKER_STORE=overlay2 run_install_from_state images_move_undone
+DOCKER_STORE=overlay2 DOCKER_USERNS=yes run_install_from_state images_kept_from_userns_remap
+DOCKER_STORE=overlay2 run_install_from_state images_kept_from_an_old_toolkit
+PULL_EXIT=0 MISSING_IMAGE=caddy run_install_from_state images_missing_after_the_pull
 PULL_EXIT=0 run_install_from_state compute_node_runs_through
 # state_setup only fabricates the checkout: without INSTALL_COMMAND too, the
 # harness still runs the packaged ut-install from $PATH, and never reads it.
@@ -2841,6 +2884,93 @@ property "a change a service does not come back from is undone in the database, 
     a_change_a_service_does_not_survive_is_undone_everywhere
 property "a change the database did not take is never written to local.env" \
     a_change_the_database_did_not_take_is_not_written_down
+
+DAEMON_SETTINGS_BEFORE_THE_MOVE='{"log-driver":"local","features":{"buildkit":true}}'
+
+docker_settings_left_as_they_were() {
+    [[ "$(of_state "$1" daemon-json)" == "$DAEMON_SETTINGS_BEFORE_THE_MOVE" ]] \
+        && [[ "$(of_state "$1" docker-store)" == overlay2 ]] \
+        && [[ -n "$(of_state "$1" overlay2-left)" ]]
+}
+
+the_images_move_to_containerd_keeping_docker_s_other_settings() {
+    local state=images_moved_to_containerd settings
+    settings=$(of_state "$state" daemon-json)
+    [[ "$(of_state "$state" docker-store)" == containerd ]] \
+        && jq -e '.features["containerd-snapshotter"] == true and .features.buildkit == true and ."log-driver" == "local"' <<< "$settings" >/dev/null \
+        && grep -qx 'restart docker' <<< "$(of_state "$state" systemctl-calls)" \
+        && grep -q 'The platform stops now, and starts again once its images are back' <<< "$(output_of "$state")" \
+        && grep -q '^EXIT=0$' <<< "$(output_of "$state")" && return 0
+    echo "$settings"; of_state "$state" docker-store; output_of "$state" | grep -iE 'containerd|overlay2|EXIT=' | tail -6
+    return 1
+}
+
+overlay2_is_freed_once_the_platform_is_ready() {
+    local state=images_moved_to_containerd
+    [[ -z "$(of_state "$state" overlay2-left)" ]] \
+        && grep -qE 'Freed [0-9]+ GB that overlay2 kept' <<< "$(output_of "$state")" && return 0
+    of_state "$state" overlay2-left; output_of "$state" | grep -iE 'overlay2|ready' | tail -4
+    return 1
+}
+
+a_move_that_fails_before_the_platform_starts_puts_overlay2_back() {
+    local state=images_move_undone output
+    output=$(output_of "$state")
+    docker_settings_left_as_they_were "$state" \
+        && [[ $(grep -cx 'restart docker' <<< "$(of_state "$state" systemctl-calls)") -eq 2 ]] \
+        && grep -q 'Docker is on overlay2 again' <<< "$output" \
+        && grep -qE '^EXIT=[1-9]' <<< "$output" && return 0
+    of_state "$state" daemon-json; of_state "$state" docker-store; of_state "$state" systemctl-calls
+    grep -iE 'overlay2|containerd|EXIT=' <<< "$output" | tail -6
+    return 1
+}
+
+an_image_store_that_cannot_move_stops_before_anything_changes() {
+    local state=$1 why=$2
+    docker_settings_left_as_they_were "$state" \
+        && [[ -z "$(of_state "$state" systemctl-calls)" ]] \
+        && grep -qF "$why" <<< "$(output_of "$state")" \
+        && grep -qE '^EXIT=[1-9]' <<< "$(output_of "$state")" && return 0
+    of_state "$state" daemon-json; of_state "$state" systemctl-calls; output_of "$state" | tail -6
+    return 1
+}
+
+a_docker_already_on_containerd_is_left_alone() {
+    local output
+    output=$(output_of install_runs_through)
+    [[ -z "$(of_state install_runs_through daemon-json)" ]] \
+        && [[ -z "$(of_state install_runs_through systemctl-calls)" ]] \
+        && grep -q "Images: in containerd's store" <<< "$output" \
+        && ! grep -q "Moving Docker's images" <<< "$output" && return 0
+    grep -iE 'images:|containerd' <<< "$output" | tail -4
+    return 1
+}
+
+an_image_missing_after_the_pull_stops_before_the_platform_starts() {
+    local output
+    output=$(output_of images_missing_after_the_pull)
+    grep -qE 'These images are missing after the download:.*caddy' <<< "$output" \
+        && ! grep -q 'up -d' <<< "$(calls_of images_missing_after_the_pull)" \
+        && grep -qE '^EXIT=[1-9]' <<< "$output" && return 0
+    tail -5 <<< "$output"
+    return 1
+}
+
+printf '\n%s%s%s\n' "$BOLD" "Docker's image store" "$NC"
+property "a Docker on overlay2 moves to containerd's store, keeping its other settings" \
+    the_images_move_to_containerd_keeping_docker_s_other_settings
+property "what overlay2 kept is freed once the platform is ready" \
+    overlay2_is_freed_once_the_platform_is_ready
+property "a move that fails before the platform starts puts overlay2 back" \
+    a_move_that_fails_before_the_platform_starts_puts_overlay2_back
+property "userns-remap stops the install before Docker is touched" \
+    an_image_store_that_cannot_move_stops_before_anything_changes images_kept_from_userns_remap 'userns-remap'
+property "an NVIDIA Container Toolkit that would undo the move stops the install before Docker is touched" \
+    an_image_store_that_cannot_move_stops_before_anything_changes images_kept_from_an_old_toolkit 'older than 1.20.1'
+property "a Docker already on containerd's store is left alone" \
+    a_docker_already_on_containerd_is_left_alone
+property "an image missing after the download stops the install before the platform starts" \
+    an_image_missing_after_the_pull_stops_before_the_platform_starts
 
 printf '\n%s%d verified%s' "$GREEN" "$PASSED" "$NC"
 if (( FAILED )); then

@@ -590,7 +590,7 @@ capability_discriminates "a platform relay that starts without its token" \
 if grep -q 'record_this_install' "$REPO_ROOT/bin/ut-install"; then
     capability_discriminates "an install run nobody keeps" \
         "every install run is kept, from its first step" \
-        "sed -i.bak '/trap record_this_install EXIT/d' bin/ut-install"
+        "sed -i.bak '/trap finish_this_install EXIT/d' bin/ut-install"
 
     capability_discriminates "a failed install kept as a success" \
         "a failed install is kept, with the step it stopped at" \
