@@ -683,7 +683,7 @@ fi
 
 capability_discriminates "a folder image taken without proving it is the one the release names" \
     "a folder holding an image the release does not name is refused" \
-    "sed -i.bak 's/\\[\\[ \"\\\$(sha256_of \"\\\$dir\/named.json\")\" == \"\\\${reference#\\*@}\" \\]\\] || return 1/:/' bin/ut-install"
+    "sed -i.bak 's/the_folder_holds_the_image \"\\\${line#\\*=}\" \&\& continue/continue/' bin/ut-install"
 
 capability_discriminates "a weight placed without checking its content" \
     "a weight that is not the file the release lists is refused" \
@@ -823,7 +823,7 @@ capability_discriminates "two license files in a folder, one taken at random" \
 
 capability_discriminates "ut-get preparing with another tool than ut-install loads with" \
     "ut-get prepares with the tools ut-install loads with" \
-    "sed -i.bak 's|^FOLDER_SKOPEO_TOOL=.*|FOLDER_SKOPEO_TOOL=\"quay.io/skopeo/stable:v1.19.0@sha256:0000000000000000000000000000000000000000000000000000000000000000\"|' bin/ut-get"
+    "sed -i.bak 's|^FOLDER_REGISTRY_TOOL=.*|FOLDER_REGISTRY_TOOL=\"ghcr.io/distribution/distribution:2.8.3@sha256:0000000000000000000000000000000000000000000000000000000000000000\"|' bin/ut-get"
 
 capability_discriminates "App Builder's Traefik left to check for updates" \
     "App Builder's Traefik checks for no update and sends no statistics" \

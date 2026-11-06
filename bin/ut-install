@@ -2280,15 +2280,13 @@ say_each_image_as_it_lands() {
 # Compose draws its progress bars only on a terminal, and start_logging sends
 # everything through tee: without JSON, a pull of tens of GB shows "0B" per layer.
 # The JSON comes on stderr, beside any error that is not JSON.
-# The tools a folder carries, as ut-get --prepare names them, as docker archives:
-# overlay2 loads no OCI archive skopeo writes. A tool is loaded only when its
-# config has one of these digests, arm64 then amd64 for each; docker load then
-# refuses any layer the config does not list, in either store.
+# The tool a folder carries to place the weights, as ut-get --prepare names it.
+# It is loaded only when its config has one of these digests, arm64 then amd64;
+# docker load then refuses any layer the config does not list.
 FOLDER_REGISTRY_TOOL="ghcr.io/distribution/distribution:3.0.0@sha256:4ba3adf47f5c866e9a29288c758c5328ef03396cb8f5f6454463655fa8bc83e2"
-FOLDER_SKOPEO_TOOL="quay.io/skopeo/stable:v1.20.0@sha256:47853bb9fb24202af9110531ebd6e43c5f97701254ca290596640290d17942f4"
-FOLDER_TOOL_CONFIGS="sha256:ab30a3bba4ba93e95d10e1805239b169e9ac0c0a8a25df9715192ac98cdcb261 sha256:4030e89c351e33ab32ba5abff03c553a0a9af89b118814b260556e5c1948bf36 sha256:376e07f615c23241d20f43a5816d9e5faec33b44838cef233ee30faf70b882f6 sha256:ed9ceaa074fd5f77d47b826b5be839568ba4676ff1011a5cbf60b73038dd8fa3"
+FOLDER_TOOL_CONFIGS="sha256:ab30a3bba4ba93e95d10e1805239b169e9ac0c0a8a25df9715192ac98cdcb261 sha256:4030e89c351e33ab32ba5abff03c553a0a9af89b118814b260556e5c1948bf36"
+# Where the images of a folder loaded before 2026-Q4 were named in local.env.
 FOLDER_REGISTRY_ADDRESS="127.0.0.1:15000"
-FOLDER_LOADER="ut-images-from-a-folder"
 
 repository_of() {
     local repository=${1%@*} last
@@ -2301,13 +2299,6 @@ folder_path_of() {
     printf 'images/%s/%s' "$(repository_of "$1" | tr '/:' '__')" "${1#*@sha256:}"
 }
 
-name_in_the_folder_registry() {
-    local reference=$1 repository first
-    repository=$(repository_of "$reference")
-    first=${repository%%/*}
-    [[ "$repository" == */* && ( "$first" == *.* || "$first" == *:* ) ]] && repository=${repository#*/}
-    printf '%s/%s@%s' "$FOLDER_REGISTRY_ADDRESS" "$repository" "${reference#*@}"
-}
 
 role_this_install_takes() {
     local compose_files
@@ -2386,16 +2377,25 @@ every_image_the_stack_names() {
 
 sha256_of() { printf 'sha256:%s' "$(openssl dgst -sha256 -r "$1" | cut -d' ' -f1)"; }
 
-# The manifest the folder holds for the box is the one release.env names, or one
-# that manifest lists: either way its digest is proven from the signed package.
-box_digest_in_the_folder() {
-    local reference=$1 dir box
-    dir="$IMAGES_FROM/$(folder_path_of "$reference")"
-    [[ -f "$dir/named.json" && -f "$dir/box/manifest.json" ]] || return 1
-    [[ "$(sha256_of "$dir/named.json")" == "${reference#*@}" ]] || return 1
-    box=$(sha256_of "$dir/box/manifest.json")
-    [[ "$box" == "${reference#*@}" ]] || tr -d ' \n' < "$dir/named.json" | grep -qF "\"digest\":\"${box}\"" || return 1
-    printf '%s' "$box"
+folder_archive_of() {
+    printf '%s/%s/image.tar' "$IMAGES_FROM" "$(folder_path_of "$1")"
+}
+
+# The archive names one image, by the digest release.env names, and holds the
+# manifest of that digest: what it lists, containerd checks as it loads.
+# ut-get adds a second index.json after Docker's own; extracted, the last one stays.
+the_folder_holds_the_image() {
+    local reference=$1 archive dir status=1
+    archive=$(folder_archive_of "$reference")
+    [[ -f "$archive" ]] || return 1
+    dir=$(mktemp -d)
+    if tar -xf "$archive" -C "$dir" index.json "blobs/sha256/${reference##*@sha256:}" 2>/dev/null \
+        && [[ "$(jq -r '[.manifests[].digest] | join(" ")' "$dir/index.json")" == "${reference##*@}" ]] \
+        && [[ "$(sha256_of "$dir/blobs/sha256/${reference##*@sha256:}")" == "${reference##*@}" ]]; then
+        status=0
+    fi
+    rm -rf "$dir"
+    return "$status"
 }
 
 architecture_docker_runs() {
@@ -2458,12 +2458,10 @@ die_on_a_folder_that_misses_an_image() {
     die_on_a_folder_of_another_release
     die_on_a_folder_for_another_role
     local line missing="" tool
-    for tool in distribution.tar stable.tar; do
-        [[ -f "$IMAGES_FROM/tools/$tool" ]] || missing+="  tools/${tool}"$'\n'
-    done
+    [[ -f "$IMAGES_FROM/tools/distribution.tar" ]] || missing+="  tools/distribution.tar"$'\n'
     local version extra="" released
     while IFS= read -r line; do
-        box_digest_in_the_folder "${line#*=}" >/dev/null && continue
+        the_folder_holds_the_image "${line#*=}" && continue
         missing+="  ${line#*=}, missing or not the one the release names"$'\n'
         released=$(env_get "$INSTALL_DIR/release.env" "${line%%=*}" 2>/dev/null || true)
         [[ "${line#*=}" == "$released" ]] || extra+=" --image ${line#*=}"
@@ -2487,23 +2485,15 @@ config_digest_of_the_archive() {
 
 load_the_folder_tools() {
     local tool archive config
-    for tool in "$FOLDER_REGISTRY_TOOL" "$FOLDER_SKOPEO_TOOL"; do
+    for tool in "$FOLDER_REGISTRY_TOOL"; do
         archive="$IMAGES_FROM/tools/$(basename "${tool%%:*}").tar"
         config=$(config_digest_of_the_archive "$archive" || true)
         [[ -n "$config" && " $FOLDER_TOOL_CONFIGS " == *" $config "* ]] \
-            || die "${archive} is not the ${tool%@*} this release loads images with — prepare the folder again"
+            || die "${archive} is not the ${tool%@*} this release places the weights with — prepare the folder again"
         docker load -q -i "$archive" >/dev/null || die "Could not load ${archive}"
     done
 }
 
-folder_registry_answers() {
-    local waited=0
-    while (( waited < 30 )); do
-        docker exec "$FOLDER_LOADER" wget -q -O /dev/null "http://127.0.0.1:5000/v2/" 2>/dev/null && return 0
-        sleep 1; waited=$((waited + 1))
-    done
-    return 1
-}
 
 forget_the_images_of_a_folder() {
     local local_file=$1 tmp
@@ -2512,14 +2502,13 @@ forget_the_images_of_a_folder() {
     grep -vE "^[A-Z_]+_IMAGE=\"?${FOLDER_REGISTRY_ADDRESS}/" "$local_file" > "$tmp" || true
     replace_file_with "$local_file" < "$tmp"
     rm -f "$tmp"
-    log_info "Images come from the registry again, no longer from a folder"
+    log_info "Images go by the names the release gives them again, no longer by a folder's registry"
 }
 
-# docker load forgets an image's digest on overlay2, the store of every box
-# measured, so the images go through a registry that lives for this step only,
-# and are pulled from it by the digest release.env names.
+# containerd's store keeps an image docker load brings under the digest the
+# release names, so Compose finds it where it would have pulled it.
 step_images_from_a_folder() {
-    local local_file line key reference local_name
+    local local_file line reference
     local_file="$(settings_directory "$INSTALL_DIR/.env")/local.env"
     if [[ -z "$IMAGES_FROM" ]]; then
         if $DO_PULL; then forget_the_images_of_a_folder "$local_file"; fi
@@ -2527,32 +2516,21 @@ step_images_from_a_folder() {
     fi
 
     log_step "Loading the images from ${IMAGES_FROM}"
+    docker_keeps_images_in_containerd || die "Docker keeps its images in overlay2: a folder loads only into containerd's store."
     load_the_folder_tools
-    docker rm -f "$FOLDER_LOADER" >/dev/null 2>&1 || true
-    docker run -d --name "$FOLDER_LOADER" -p "${FOLDER_REGISTRY_ADDRESS}:5000" "${FOLDER_REGISTRY_TOOL%@*}" >/dev/null \
-        || die "Could not start the registry the images load through on ${FOLDER_REGISTRY_ADDRESS}"
-    folder_registry_answers || { docker rm -f "$FOLDER_LOADER" >/dev/null 2>&1; die "The registry on ${FOLDER_REGISTRY_ADDRESS} never answered"; }
-
+    forget_the_images_of_a_folder "$local_file"
     while IFS= read -r line; do
-        key=${line%%=*}; reference=${line#*=}
-        # Another name for the same image is another image to Compose, which would
-        # recreate its container: the inference engine would load its model again.
-        if docker image inspect "$(repository_of "$reference")@${reference##*@}" >/dev/null 2>&1 \
-            && [[ "$(env_get "$local_file" "$key" 2>/dev/null || true)" != "${FOLDER_REGISTRY_ADDRESS}/"* ]]; then
+        reference=${line#*=}
+        if docker image inspect "$(repository_of "$reference")@${reference##*@}" >/dev/null 2>&1; then
             log_info "${reference%@*}, already here under the digest the release names"
             continue
         fi
-        local_name=$(name_in_the_folder_registry "$(repository_of "$reference")@$(box_digest_in_the_folder "$reference")")
-        docker run --rm --network host -v "$IMAGES_FROM":/folder:ro "${FOLDER_SKOPEO_TOOL%@*}" \
-            copy -q --preserve-digests --dest-tls-verify=false \
-            "dir:/folder/$(folder_path_of "$reference")/box" "docker://${local_name%@*}:from-a-folder" >/dev/null \
-            && docker pull -q "$local_name" >/dev/null \
-            || { docker rm -f "$FOLDER_LOADER" >/dev/null 2>&1; die "Could not load ${reference%@*} under its digest from ${IMAGES_FROM}"; }
-        env_set "$local_file" "$key" "$local_name"
+        docker load -q -i "$(folder_archive_of "$reference")" >/dev/null \
+            && docker image inspect "$(repository_of "$reference")@${reference##*@}" >/dev/null 2>&1 \
+            || die "Could not load ${reference%@*} under its digest from ${IMAGES_FROM}"
         log_info "${reference%@*}, under the digest the release names"
     done < <(images_the_stack_runs)
 
-    docker rm -f "$FOLDER_LOADER" >/dev/null 2>&1 || true
     render_settings "$INSTALL_DIR/.env" "$local_file"
     log_info "Every image is here, and nothing was downloaded"
 }

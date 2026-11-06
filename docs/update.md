@@ -277,6 +277,20 @@ Every service `healthy`. Then check one document you know, in the platform.
 
 ## What changes that you will notice
 
+**Docker keeps its images in containerd's store.** A box installed before
+Docker 29 keeps them in overlay2, and the update moves them: it adds
+`"features": {"containerd-snapshotter": true}` to `/etc/docker/daemon.json`,
+keeping the rest of the file, restarts Docker, and loads every image again — from
+the registry, or from the folder of a box with no network. The platform is
+stopped from Docker's restart until its images are back, which takes as long as
+downloading them, or loading them from the folder. An update that fails before
+the platform starts puts `daemon.json` and overlay2 back, with the platform as it
+ran. Once the platform is ready, what overlay2 kept is deleted, and the space
+freed is printed. Two things stop the update before Docker is touched:
+`userns-remap`, which containerd's store does not support, and an NVIDIA
+Container Toolkit older than 1.20.1, which would drop the setting the next time
+it configures Docker.
+
 **The backup keeps a repository on the machine, even with a destination.**
 Each run writes to `/backup/restic` first, then copies it to the destination
 named by `BACKUP_FILES_DESTINATION` or `BACKUP_FILES_REPOSITORY`. On a box that
@@ -472,6 +486,9 @@ sudo dnf versionlock add kernel docker-ce containerd.io nvidia-container-toolkit
 
 No minor version of the host — an RHEL point release, a new driver branch — goes
 on a box in service before it has been qualified on a machine of the same kind.
+The NVIDIA container toolkit held is 1.20.1 or newer: an older one rewrites
+`daemon.json` without the setting that keeps Docker's images in containerd's
+store.
 
 ## Rehearsing an update
 

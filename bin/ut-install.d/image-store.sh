@@ -17,13 +17,19 @@ docker_remaps_user_namespaces() {
     docker info --format '{{json .SecurityOptions}}' 2>/dev/null | grep -q 'name=userns'
 }
 
+nvidia_toolkit_version() {
+    dpkg-query -W -f '${Version}' nvidia-container-toolkit 2>/dev/null \
+        || rpm -q --qf '%{VERSION}' nvidia-container-toolkit 2>/dev/null
+}
+
 # Before 1.20.1, `nvidia-ctk runtime configure` rewrote daemon.json without the
 # features it held, which sends Docker back to overlay2 at its next restart.
 nvidia_toolkit_drops_docker_features() {
     local version
-    version=$(dpkg-query -W -f '${Version}' nvidia-container-toolkit 2>/dev/null) || return 1
-    [[ -n "$version" ]] || return 1
-    dpkg --compare-versions "$version" lt "$NVIDIA_TOOLKIT_KEEPING_DOCKER_FEATURES"
+    version=$(nvidia_toolkit_version) || return 1
+    version=${version%%-*}
+    [[ "$version" =~ ^[0-9]+(\.[0-9]+)*$ && "$version" != "$NVIDIA_TOOLKIT_KEEPING_DOCKER_FEATURES" ]] || return 1
+    [[ "$(printf '%s\n' "$version" "$NVIDIA_TOOLKIT_KEEPING_DOCKER_FEATURES" | sort -V | head -1)" == "$version" ]]
 }
 
 check_the_image_store() {
@@ -42,6 +48,7 @@ check_the_image_store() {
         log_error "Images: overlay2, and the NVIDIA Container Toolkit is older than ${NVIDIA_TOOLKIT_KEEPING_DOCKER_FEATURES}."
         log_error "  It would put Docker back on overlay2 the next time it configures Docker. Upgrade it:"
         log_error "    sudo apt-get update && sudo apt-get install --only-upgrade nvidia-container-toolkit"
+        log_error "    or, on RHEL: sudo dnf upgrade nvidia-container-toolkit"
         return 1
     fi
     log_warn "Images: overlay2 — this install moves them to containerd's store."
