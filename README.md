@@ -68,17 +68,17 @@ sudo ./setup-autostart.sh
 
 Access the platform at `https://understand.local` — or at whatever `UT_DOMAIN`
 you set — once all services are healthy.
-The first pull takes 10–20 minutes; the first NIM start takes longer still while
+The first pull takes 10–20 minutes; the first engine start takes longer still while
 the model cache fills.
 
 `docker compose` reads `.env` from this directory for both interpolation and its
 own settings — `COMPOSE_FILE` (which overlays the App Builder) and
-`COMPOSE_PROFILES` (which enables the NIM containers) are set there, so always
+`COMPOSE_PROFILES` (which enables the inference engine) are set there, so always
 run compose from the repository root.
 
 ## Services
 
-Only Caddy, MongoDB, the NIM containers and the App Builder publish host ports.
+Only Caddy, MongoDB, the inference engine and the App Builder publish host ports.
 Everything else is reachable only from inside the Docker networks.
 
 | Service | Container | Host port | Description |
@@ -93,7 +93,7 @@ Everything else is reachable only from inside the Docker networks.
 | Assistants App | `ut-app-assistants` | — | Assistant builder, at `assistants.understand.local` |
 | Admin Portal | `ut-admin-portal` | — | Tenant and user administration, at `admin.understand.local` |
 | LLM | `ut-llm` | — | RAG, embeddings and reranking on GPU, `:8000` internal |
-| NIM LLM | `nim-llm` | 8001 | NVIDIA NIM serving the chat model (profile `nim`) |
+| LLM engine | `nim-llm` | 8001 | vLLM serving the chat model (profile `nim`) |
 | MongoDB | `ut-mongodb` | 27018 | Document database (container port 27017) |
 | Redis | `ut-redis` | — | Task queue and cache |
 | MongoDB Backup | `ut-mongodb-backup` | — | Daily full-server dump of every database |
@@ -261,10 +261,10 @@ for the App Builder:
 - **`ut-frontend-network`** — everything Caddy has to reach: `caddy`, `frontend`,
   `api`, `api-customer`, `app-llms`, `app-assistants`, `admin-portal`,
   `app-builder`, `app-builder-traefik`, the workers, `llm`, `mongodb` and the
-  NIM containers.
+  inference engine.
 - **`ut-backend-network`** (internal, no external access) — `api`,
   `api-customer`, the workers, `app-assistants`, `admin-portal`, `llm`,
-  the NIM containers, `redis`, `mongodb` and `mongodb-backup`.
+  the inference engine, `redis`, `mongodb` and `mongodb-backup`.
 - **`proxy`** (external, App Builder only) — shared with the generated apps'
   own compose projects, so no single project owns it. Create it once with
   `docker network create proxy`; `setup-autostart.sh` also creates it if the
@@ -283,7 +283,7 @@ for the App Builder:
 | `ut-llm-ollama` | Ollama configuration |
 | `ut-llm-models` | LLM model files |
 | `ut-vllm-models` | Hugging Face cache for the LLM service |
-| `ut-nim-llm-cache` | NIM chat-model weights (survives updates — do not prune casually) |
+| `ut-nim-llm-cache` | Chat-model weights (survives updates — do not prune casually) |
 
 Every volume carries an explicit `name:`, so the names are fixed rather than
 prefixed with the compose project. Data therefore survives a project rename or
@@ -404,32 +404,30 @@ chmod +x ut-logs-archive
 ./ut-logs-archive --install
 ```
 
-## Vision runs on the chat model
+## Choosing the chat model
 
-`nim-vlm` is no longer part of the stack: `nim-llm` reads images too. `.env` is
-yours, so `git pull` does not change it. Before `docker compose up -d`, set in
-`.env`:
-
-```bash
-VLLM_VLM_MODEL="Qwen/Qwen3.8-27B"
-GATEWAY_VLM_MODEL="Qwen/Qwen3.8-27B"
-VLLM_VLM_BASE_URL="http://nim-llm:8000/v1"
-```
-
-and the `served` name of the `uai-vision` entry in `GATEWAY_MODELS` to
-`Qwen/Qwen3.8-27B`. All of them must match `LLM_MODEL`, the only name `nim-llm`
-answers to. Left on the old values, images are no longer read once the old
-container is gone. `NIM_VLM_PASSTHROUGH_ARGS` and `VLM_MODEL` are no longer read
-and can be deleted.
-
-The old container keeps running, and holding its GPU memory, until:
+`nim-llm` runs vLLM and serves one of the models in `models/`:
+`nemotron-3.5-bolt-74b`, the default, or `qwen3.8-27b-nvfp4`. It reads images
+too.
 
 ```bash
-docker compose up -d --remove-orphans
+./ut-model                      # list the models, marking the one in use
+./ut-model qwen3.8-27b-nvfp4    # serve it
 ```
 
-Its weights stay in the `ut-nim-vlm-cache` volume. Once an image has been read
-in the platform, `docker volume rm ut-nim-vlm-cache` frees the disk.
+`ut-model` writes the model's settings into `.env` — the engine image and
+arguments, `UT_MODEL`, and every name the platform calls the model by,
+`GATEWAY_MODELS` included — then runs `docker compose up -d`. The first start of
+a model downloads its weights into `ut-nim-llm-cache`: about 24 GiB for Bolt,
+its speculative draft included.
+
+A box that served Qwen on NIM before this change runs `git pull`, then
+`./ut-model nemotron-3.5-bolt-74b` or `./ut-model qwen3.8-27b-nvfp4`, then
+`docker compose up -d --remove-orphans`. `NIM_IMAGE`, `NIM_LLM_MODEL_PATH`,
+`NIM_LLM_PASSTHROUGH_ARGS`, `NIM_VLM_PASSTHROUGH_ARGS` and `VLM_MODEL` are no
+longer read and can be deleted from `.env`. A box still running `nim-vlm` keeps
+its weights in `ut-nim-vlm-cache`; once an image has been read in the platform,
+`docker volume rm ut-nim-vlm-cache` frees the disk.
 
 ## Auto-Start on Boot
 
@@ -574,7 +572,7 @@ docker compose --env-file ../.env -f docker-compose.monitoring.yml up -d
 
 | Service | Container | Host port | Description |
 |---|---|---|---|
-| Prometheus | `ut-prometheus` | 9090 | Scrapes the NIMs at 5s, 15-day retention, alert rules in `alerts.yml` |
+| Prometheus | `ut-prometheus` | 9090 | Scrapes the engine at 5s, 15-day retention, alert rules in `alerts.yml` |
 | Grafana | `ut-grafana` | 3000 | Dashboard *UAI Inference Observability*, provisioned from disk |
 | DCGM exporter | `ut-dcgm-exporter` | 9400 | GPU utilization, memory and power |
 
@@ -600,6 +598,5 @@ Full setup and administration guides can be found at https://docs.understand.tec
 - NVIDIA Container Toolkit (pre-installed on DGX)
 - `avahi-daemon` and `avahi-utils` for the `.local` hostnames
 - GitHub Container Registry access (provided by UnderstandTech) — this covers
-  the NVIDIA NIM inference containers too. They are re-hosted on the
-  UnderstandTech GHCR, so `docker compose pull` fetches them like any other
-  image and **no NVIDIA NGC account or API key is required on the box**.
+  the vLLM inference image too, so `docker compose pull` fetches it like any
+  other image.
