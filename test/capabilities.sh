@@ -401,6 +401,24 @@ weights_download_report() {
     find "$probe/folder" -type f | sed "s|$probe/folder/||"
 }
 
+# skopeo says nothing while it copies an image: the preparation says how much of it
+# has landed instead, at least every PROGRESS_EVERY seconds.
+a_long_image_copy_shows_its_progress() {
+    local probe="$WORK_DIR/progress-probe" output
+    rm -rf "$probe"; mkdir -p "$probe/folder"
+    output=$(
+        set +u; source "$REPO_ROOT/bin/ut-get" >/dev/null 2>&1
+        set +eE; trap - ERR
+        PROGRESS_EVERY=1
+        with_retries() { "$@"; }
+        copy_an_image() { local i; for i in 1 2 3 4; do head -c 1100000 /dev/zero >> "$1/$3/blob.$i"; sleep 1; done; }
+        printf '%s\n' "ghcr.io/example/engine:1@sha256:$(printf '%064d' 0)" | copy_the_images_into "$probe/folder" "$probe/auth.json" 2>&1
+    )
+    [[ $(grep -cE 'MB so far, 0 min [0-9]+ s' <<< "$output") -ge 2 ]] && grep -q 'example/engine:1 copied' <<< "$output" && return 0
+    echo "$output" | tail -8
+    return 1
+}
+
 # A connection cut twice in the middle of a file, as a Wi-Fi drop cuts an HTTP/2
 # stream: each attempt keeps what it received and the next one resumes from there.
 a_cut_download_resumes_where_it_stopped() {
@@ -3714,6 +3732,8 @@ if grep -q 'step_images_from_a_folder' "$REPO_ROOT/bin/ut-install"; then
         weights_are_downloaded_as_the_release_lists_them
     capability "a download that is not the listed file is refused" \
         a_download_that_is_not_the_listed_file_is_refused
+    capability "a long image copy into a folder shows its progress" \
+        a_long_image_copy_shows_its_progress
     capability "ut-install resumes a weight download cut twice, from where it stopped" \
         a_cut_download_resumes_where_it_stopped "$REPO_ROOT/bin/ut-install"
     capability "ut-get resumes a weight download cut twice, from where it stopped" \
