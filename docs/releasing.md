@@ -45,6 +45,11 @@ approved merge, on no fixed schedule; `ci.yml` still runs on pushes to
 service, or who approves a merge to `main`. Not verified: not seen rendered —
 no Mermaid engine is installed here.
 
+Only an administrator can create, move or delete a `v*` tag (the ruleset
+*Release tags by admins only*). `release.yml` runs in the `release`
+environment, which only `v*` tags may use: its secrets — the signing key and
+the tokens that publish — reach no workflow started from a branch.
+
 A tag with a suffix, such as `v2026.10.0-rc3`, is a pre-release candidate: it
 is published but never shown as *Latest*, and installing one by version
 requires naming it explicitly — see
@@ -89,8 +94,8 @@ In order, on `ubuntu-24.04`:
    key alone. An image keeps the digest `release.env` pins. Keygen takes no
    file above 5 GB, so an image above that stops the release. A version
    already published to a package is left as it is: a release stopped half
-   way is run again. It needs `KEYGEN_PRODUCT_TOKEN` in the workflow's
-   secrets, and read access to the private images for this repository.
+   way is run again. It needs `KEYGEN_PRODUCT_TOKEN` and `GHCR_READ_TOKEN`,
+   a token that can only read packages, in the `release` environment.
 10. **Publish**: `gh release create` on the tag, titled with the version,
    marked a pre-release when the version carries a suffix, with all seven
    files attached. What they are and how to check them before installing is in

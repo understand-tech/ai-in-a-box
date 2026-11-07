@@ -8,13 +8,13 @@ on:
 
 permissions:
   contents: write
-  packages: read
   id-token: write
   attestations: write
 
 jobs:
   release:
     runs-on: ubuntu-24.04
+    environment: release
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -114,14 +114,18 @@ jobs:
       - name: Publish to Keygen
         env:
           KEYGEN_PRODUCT_TOKEN: ${{ secrets.KEYGEN_PRODUCT_TOKEN }}
-          GHCR_TOKEN: ${{ github.token }}
+          GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
         run: |
           set -euo pipefail
           [ -n "$KEYGEN_PRODUCT_TOKEN" ] || {
             echo "::error::KEYGEN_PRODUCT_TOKEN is not set — boxes could not download this release with their license key"
             exit 1
           }
-          printf '%s' "$GHCR_TOKEN" | skopeo login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          [ -n "$GHCR_READ_TOKEN" ] || {
+            echo "::error::GHCR_READ_TOKEN is not set — the private images cannot be copied to Keygen"
+            exit 1
+          }
+          printf '%s' "$GHCR_READ_TOKEN" | skopeo login ghcr.io --username token --password-stdin
           ./packaging/publish-to-keygen.sh "$VERSION"
 
       - name: Publish
