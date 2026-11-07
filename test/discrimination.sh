@@ -1077,9 +1077,17 @@ if [[ -x "$REPO_ROOT/bin/ut-get" ]]; then
         "the manual install downloads every file SHA256SUMS lists" \
         "sed -i.bak 's| ut-verify ut-get release.pub SHA256SUMS; do| ut-verify release.pub SHA256SUMS; do|' docs/install.md"
 
-    capability_discriminates "a launcher that reads a version where GitHub names none" \
-        "nothing is fetched and the reason is said" \
-        "sed -i.bak 's|^    \[\[ \"\$tag_url\" == \*/releases/tag/v\* \]\] \\\\$|    true \\\\|' bin/ut-get"
+    capability_discriminates "a launcher that takes the release published last for the latest" \
+        "the latest release is downloaded, checked, installed" \
+        "sed -i.bak 's/ | sort -V)\$/)/' bin/ut-get"
+
+    capability_discriminates "a launcher that hands the license key to curl on its command line" \
+        "the license key never appears on a command line" \
+        "sed -i.bak 's|--write-out .%{http_code}. -K|--user license:\$LICENSE_KEY --write-out %{http_code} -K|' bin/ut-get"
+
+    capability_discriminates "a launcher that never reads the key the box stores" \
+        "an update downloads with the license key the box already stores" \
+        "sed -i.bak 's|^    elif \[\[ -s .\$LICENSE_STORE. .*|    elif false; then|' bin/ut-get"
 fi
 
 if [[ -x "$REPO_ROOT/bin/ut-license" ]]; then
