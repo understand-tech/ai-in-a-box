@@ -5,14 +5,11 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUT_DIR="${OUT_DIR:-$REPO_ROOT/dist}"
-RELEASE_ENV="${RELEASE_ENV:-$REPO_ROOT/release.env}"
 KEYGEN_API="${KEYGEN_API:-https://api.keygen.sh/v1/accounts/cdfe8998-3b6e-4f86-8f9f-c51a7cb642e0}"
 KEYGEN_PRODUCT="856fd43a-b015-4e0f-9f45-f0c4353b69a8"
 PACKAGE_PREFIX="${KEYGEN_PACKAGE_PREFIX:-}"
-PRIVATE_IMAGES="${PRIVATE_IMAGES:-ghcr.io/understand-tech/}"
 ARTIFACT_LIMIT_BYTES=$((5 * 1000 * 1000 * 1000))
 UPLOAD_WAIT_SECONDS=1800
-BOX_ARCHITECTURE="arm64"
 
 usage() {
     cat <<EOF
@@ -22,14 +19,13 @@ with its license key alone.
   KEYGEN_PRODUCT_TOKEN=... ./packaging/publish-to-keygen.sh VERSION
 
 The package and its files (\$OUT_DIR, default dist/) go to the raw package
-"understandtech"; every private image release.env pins goes to an OCI package
-named after its repository, under the same version. A version already
-published is left as it is, so a run that stopped half way is run again.
+"understandtech", under the release's version. A version already published is
+left as it is, so a run that stopped half way is run again.
 
 KEYGEN_PACKAGE_PREFIX publishes under other package names, to try this without
 touching the ones boxes download from.
 
-Needs curl, jq, and skopeo logged in to the registry of the private images.
+Needs curl and jq.
 EOF
 }
 
@@ -137,63 +133,6 @@ publish() {
     printf '%s %s: published\n' "$key" "$version"
 }
 
-private_images() {
-    grep -oE '^[A-Z_]*_IMAGE="[^"]+"' "$RELEASE_ENV" | cut -d'"' -f2 | grep -F "$PRIVATE_IMAGES" | sort -u
-}
-
-package_key_of_image() {
-    local repository=${1#"$PRIVATE_IMAGES"}
-    repository=${repository%%@*}
-    repository=${repository%%:*}
-    printf '%s%s' "$PACKAGE_PREFIX" "${repository//\//-}"
-}
-
-by_digest_alone() {
-    local name=${1%@*}
-    printf '%s@%s' "${name%:*}" "${1##*@}"
-}
-
-blob_in() {
-    cat "$1/blobs/${2%%:*}/${2#*:}"
-}
-
-# Keygen leaves an image layout PROCESSING for good when index.json names its
-# manifest without the index media type and the platform, as skopeo writes it.
-with_platform_in_index() {
-    local layout=$1 manifest config
-    manifest=$(jq -r '.manifests[0].digest' "$layout/index.json")
-    config=$(blob_in "$layout" "$manifest" | jq -r .config.digest)
-    jq --argjson platform "$(blob_in "$layout" "$config" | jq -c '{architecture, os}')" \
-        '.mediaType = "application/vnd.oci.image.index.v1+json" | .manifests[0].platform = $platform' \
-        "$layout/index.json" > "$layout/index.json.new"
-    mv "$layout/index.json.new" "$layout/index.json"
-}
-
-image_layout_of() {
-    local reference=$1 version=$2 into=$3 layout
-    layout=$(mktemp -d)
-    skopeo copy -q --retry-times 3 --preserve-digests --override-os linux --override-arch "$BOX_ARCHITECTURE" \
-        "docker://$(by_digest_alone "$reference")" "oci:$layout:$version"
-    with_platform_in_index "$layout"
-    tar -C "$layout" -cf "$into" oci-layout index.json blobs
-    rm -rf "$layout"
-}
-
-publish_images() {
-    local version=$1 work=$2 reference key
-    while IFS= read -r reference; do
-        [[ -n "$reference" ]] || continue
-        key=$(package_key_of_image "$reference")
-        if [[ "$(release_of "$(package_id "$key" oci)" "$version")" == *" PUBLISHED" ]]; then
-            printf '%s %s: already published\n' "$key" "$version"
-            continue
-        fi
-        image_layout_of "$reference" "$version" "$work/$key-$version.tar"
-        publish "$key" oci "$version" "$work/$key-$version.tar"
-        rm -f "$work/$key-$version.tar"
-    done <<< "$(private_images)"
-}
-
 publish_package() {
     local version=$1 file files=()
     for file in "understandtech_${version}_all.deb" "understandtech_${version}_all.deb.sig" \
@@ -210,9 +149,6 @@ main() {
         "") usage >&2; exit 2 ;;
     esac
     [[ -n "${KEYGEN_PRODUCT_TOKEN:-}" ]] || die "KEYGEN_PRODUCT_TOKEN is not set"
-    WORK_DIR=$(mktemp -d)
-    trap 'rm -rf "$WORK_DIR"' EXIT
-    publish_images "$1" "$WORK_DIR"
     publish_package "$1"
 }
 
