@@ -15,7 +15,7 @@ else
     RED=""; GREEN=""; YELLOW=""; CYAN=""; BOLD=""; NC=""
 fi
 
-RELEASES_URL="${UT_RELEASES_URL:-https://github.com/understand-tech/ai-in-a-box/releases}"
+DOWNLOADS_URL="${UT_DOWNLOADS_URL:-https://raw.pkg.keygen.sh/cdfe8998-3b6e-4f86-8f9f-c51a7cb642e0/856fd43a-b015-4e0f-9f45-f0c4353b69a8/@understandtech}"
 DOWNLOAD_DIR="/var/cache/understandtech/releases"
 RELEASE_DIR=""
 PREPARE_DIR=""
@@ -23,6 +23,9 @@ MODEL_ID=""
 FOLDER_ROLE="appliance"
 EXTRA_IMAGES=()
 LICENSE_FILE=""
+LICENSE_STORE="/etc/understandtech/license"
+LICENSE_KEY=""
+LICENSE_KEY_ASKED=""
 REGISTRY_TOKEN=""
 REGISTRY_USER="${UT_REGISTRY_USER:-dgx-access}"
 KEYGEN_API="${UT_KEYGEN_API:-https://api.keygen.sh/v1/accounts/cdfe8998-3b6e-4f86-8f9f-c51a7cb642e0}"
@@ -40,9 +43,9 @@ usage() {
     cat <<'EOF'
 ut-get — installs UnderstandTech AI in a Box from a release, then runs ut-install.
 
-  sudo ./ut-get [--version <version>] [ut-install options]
+  sudo ./ut-get [--version <version>] [--license-file <file>] [ut-install options]
   sudo ./ut-get --from <directory> [ut-install options]
-  ./ut-get --prepare <directory> [--version <version>] --license-file <file>
+  ./ut-get --prepare <directory> [--version <version>] [--license-file <file>]
 
   --version <version>  the release to install, 2026.09.1 for example.
                        Without it, the latest one.
@@ -57,9 +60,11 @@ ut-get — installs UnderstandTech AI in a Box from a release, then runs ut-inst
                        into the directory, for a box with no network to install
                        with --from. Runs again where it stopped.
   --license-file <file>
-                       the license key. With --prepare, the registry access it
-                       carries is read from Keygen, never shown; ut-install
-                       takes it too.
+                       the license key, which downloads the release from
+                       Keygen. Without it: UT_LICENSE, then the key this box
+                       already stores, then a hidden prompt. With --prepare,
+                       the registry access it carries is read from Keygen,
+                       never shown; ut-install takes it too.
   --role appliance|control-plane|compute
                        with --prepare, what the box runs: all of it (the default),
                        the platform taking its inference from another machine, or
@@ -112,27 +117,68 @@ parse_arguments() {
 
 is_a_release_version() { [[ "$1" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]+(-rc[0-9]+)?$ ]]; }
 
-fetch() {
-    curl --fail --silent --show-error --proto '=https' --connect-timeout 20 --max-time 900 --retry 3 "$@"
+is_a_license_key() { [[ "$1" =~ ^[A-Za-z0-9._/+=-]+$ && "$1" != UT1.* ]]; }
+
+terminal_is_reachable() { ( exec 3<> /dev/tty ) 2>/dev/null; }
+
+read_the_license_key() {
+    [[ -z "$LICENSE_KEY" ]] || return 0
+    if [[ -n "${UT_LICENSE:-}" ]]; then
+        LICENSE_KEY=$(tr -d ' \t\r\n' <<< "$UT_LICENSE")
+    elif [[ -n "$LICENSE_FILE" ]]; then
+        [[ -r "$LICENSE_FILE" ]] || fail "Cannot read ${LICENSE_FILE}"
+        LICENSE_KEY=$(tr -d ' \t\r\n' < "$LICENSE_FILE")
+    elif [[ -s "$LICENSE_STORE" && -r "$LICENSE_STORE" ]]; then
+        LICENSE_KEY=$(tr -d ' \t\r\n' < "$LICENSE_STORE")
+    else
+        terminal_is_reachable \
+            || fail "A license key is needed to download the release, and there is no terminal to ask on. Pass --license-file, or set UT_LICENSE."
+        printf 'License key from UnderstandTech (input hidden): ' > /dev/tty
+        read -rs LICENSE_KEY < /dev/tty
+        printf '\n' > /dev/tty
+        LICENSE_KEY_ASKED=yes
+    fi
+    is_a_license_key "$LICENSE_KEY" || fail "That is not a license key UnderstandTech issued"
+}
+
+# curl sends the credentials to the first host only: the signed URL Keygen
+# redirects to never sees the license key (curl(1), --location).
+licensed_fetch() {
+    curl --fail --silent --show-error --proto '=https' --connect-timeout 20 --max-time 900 --retry 3 \
+        --write-out '%{http_code}' -K <(printf 'user = "license:%s"\n' "$LICENSE_KEY") "$@"
+}
+
+fail_on_keygen_answer() {
+    local code=$1 what=$2
+    case "$code" in
+        000)     fail "Cannot reach Keygen — check the network, or carry the release in and use --from" ;;
+        401|403) fail "Keygen refused the license key — check it, or ask UnderstandTech. Nothing was installed" ;;
+        404)     fail "${what}" ;;
+        *)       fail "Keygen answered ${code} — run the same command again" ;;
+    esac
 }
 
 latest_version() {
-    local tag_url
-    tag_url=$(fetch --output /dev/null --write-out '%{redirect_url}' "$RELEASES_URL/latest") \
-        || fail "Cannot reach ${RELEASES_URL} — check the network, or carry the release in and use --from"
-    [[ "$tag_url" == */releases/tag/v* ]] \
-        || fail "${RELEASES_URL} has published no release yet, only pre-releases — name one with --version"
-    printf '%s' "${tag_url##*/tag/v}"
+    local answer code versions
+    answer=$(mktemp)
+    code=$(licensed_fetch --output "$answer" -H 'Accept: application/vnd.api+json' \
+        "${KEYGEN_API}/releases?package=understandtech&channel=stable&limit=100") \
+        || { rm -f "$answer"; fail_on_keygen_answer "$code" "Keygen knows no understandtech package"; }
+    versions=$(jq -r '.data[]?.attributes.version' "$answer" 2>/dev/null) || versions=""
+    rm -f "$answer"
+    versions=$(while read -r version; do is_a_release_version "$version" && printf '%s\n' "$version"; done <<< "$versions" | sort -V)
+    [[ -n "$versions" ]] || fail "UnderstandTech has published no release yet, only pre-releases — name one with --version"
+    printf '%s' "$(tail -n 1 <<< "$versions")"
 }
 
 download_release() {
-    local version=$1 dir=${2:-$DOWNLOAD_DIR/$1} name
+    local version=$1 dir=${2:-$DOWNLOAD_DIR/$1} name code
     shift $(( $# < 2 ? $# : 2 ))
     mkdir -p "$dir"
     for name in "understandtech_${version}_all.deb" "understandtech_${version}_all.deb.sig" "$@"; do
         [[ -f "$dir/$name" ]] && continue
-        fetch --location --continue-at - --output "$dir/$name.part" "$RELEASES_URL/download/v${version}/$name" \
-            || fail "Could not download ${name} — run the same command again to resume"
+        code=$(licensed_fetch --location --continue-at - --output "$dir/$name.part" "$DOWNLOADS_URL/${version}/$name") \
+            || fail_on_keygen_answer "$code" "Release ${version} is not published, or holds no ${name} — check the version"
         mv "$dir/$name.part" "$dir/$name"
     done
     printf '%s' "$dir"
@@ -220,10 +266,9 @@ fully_qualified() {
 # license authentication Keygen gives our policies.
 read_the_registry_access_of_the_license() {
     local key answer user
-    command -v jq >/dev/null 2>&1 || fail "--prepare with --license-file needs jq on this machine"
-    key=$(tr -d ' \t\r\n' < "$LICENSE_FILE")
-    [[ "$key" =~ ^[A-Za-z0-9._/+=-]+$ && "$key" != UT1.* ]] \
-        || fail "${LICENSE_FILE} does not hold a license key UnderstandTech issued"
+    command -v jq >/dev/null 2>&1 || fail "--prepare needs jq on this machine"
+    read_the_license_key
+    key=$LICENSE_KEY
     answer=$(curl -sS --max-time 20 "${KEYGEN_API}/me" \
         -K <(printf 'header = "Authorization: License %s"\n' "$key") \
         -H 'Accept: application/vnd.api+json' -H 'Keygen-Version: 1.8') \
@@ -434,7 +479,8 @@ prepare_a_folder() {
     for image in ${EXTRA_IMAGES[@]+"${EXTRA_IMAGES[@]}"}; do
         [[ "$image" =~ @sha256:[0-9a-f]{64}$ ]] || fail "--image takes an image pinned by digest, name:tag@sha256:..., not ${image}"
     done
-    [[ -r "$LICENSE_FILE" ]] || fail "--prepare needs --license-file: the license key UnderstandTech issued"
+    command -v jq >/dev/null 2>&1 || fail "--prepare needs jq on this machine"
+    read_the_license_key
     [[ -n "$VERSION" ]] || VERSION=$(latest_version) || exit 1
     is_a_release_version "$VERSION" || fail "${VERSION:-nothing} is not a release version — expected one like 2026.09.1"
 
@@ -487,6 +533,8 @@ main() {
     [[ $EUID -eq 0 ]] || fail "Run with sudo: sudo $0 $*"
 
     if [[ -z "$RELEASE_DIR" ]]; then
+        read_the_license_key
+        [[ -z "$VERSION" ]] && { command -v jq >/dev/null 2>&1 || fail "jq is required: sudo apt-get install jq"; }
         [[ -n "$VERSION" ]] || VERSION=$(latest_version) || exit 1
         is_a_release_version "$VERSION" \
             || fail "${VERSION:-nothing} is not a release version — expected one like 2026.09.1"
@@ -509,6 +557,7 @@ main() {
     if [[ -n "$license_file" ]]; then
         INSTALL_ARGUMENTS+=(--machine-file "$license_file")
     fi
+    [[ -n "$LICENSE_KEY_ASKED" ]] && export UT_LICENSE="$LICENSE_KEY"
     exec "$NEXT" ${INSTALL_ARGUMENTS[@]+"${INSTALL_ARGUMENTS[@]}"}
 }
 

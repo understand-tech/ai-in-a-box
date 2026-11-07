@@ -1521,31 +1521,47 @@ download_verdicts() {
         cp "$WORK_DIR/launcher/ut-get" "$work/ut-get"
         cp "$WORK_DIR/launcher/bin/apt-get" "$WORK_DIR/launcher/bin/ut-install" "$work/bin/"
 
-        for version in 2026.99.1 2026.98.1 2026.97.1; do
-            dir="$work/site/releases/download/v${version}"
+        for version in 2026.99.1 2026.98.1 2026.97.1 2026.95.1; do
+            dir="$work/site/${version}"
             mkdir -p "$dir"
             cp "$signing/package.deb" "$dir/understandtech_${version}_all.deb"
             cp "$signing/package.deb.sig" "$dir/understandtech_${version}_all.deb.sig"
         done
-        printf 'x' >> "$work/site/releases/download/v2026.97.1/understandtech_2026.97.1_all.deb"
-        printf 'v2026.99.1' > "$work/latest"
+        printf 'x' >> "$work/site/2026.97.1/understandtech_2026.97.1_all.deb"
+        printf '%s' "$DOWNLOAD_TEST_KEY" > "$work/license.key"
+        published_as_keygen_lists_them 2026.97.1 2026.99.1 2026.98.1 > "$work/releases.json"
+        printf '#!/bin/sh\nprintf "%%s\\n" "curl $*" >> /w/curl-argv\nexec /usr/bin/curl "$@"\n' > "$work/bin/curl"
+        chmod 755 "$work/bin/curl"
 
         cat > "$work/serve.py" <<'SERVE'
-import http.server, pathlib, ssl
-class Releases(http.server.SimpleHTTPRequestHandler):
+import base64, http.server, pathlib, ssl
+KEY = pathlib.Path("/w/license.key").read_text().strip()
+LICENSED = "Basic " + base64.b64encode(("license:" + KEY).encode()).decode()
+class Keygen(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory="/w/site", **kwargs)
     def do_GET(self):
-        if self.path == "/releases/latest":
-            tag = pathlib.Path("/w/latest").read_text().strip()
-            self.send_response(302)
-            self.send_header("Location", "https://releases.test/releases" + ("/tag/" + tag if tag else ""))
+        if self.headers.get("Authorization") != LICENSED:
+            self.send_response(401)
             self.end_headers()
             return
+        if self.path == "/v1/accounts/test/releases?package=understandtech&channel=stable&limit=100":
+            body = pathlib.Path("/w/releases.json").read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/vnd.api+json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if not self.path.startswith("/raw/"):
+            self.send_response(404)
+            self.end_headers()
+            return
+        self.path = self.path[len("/raw"):]
         super().do_GET()
     def log_message(self, *args):
         pass
-server = http.server.ThreadingHTTPServer(("", 443), Releases)
+server = http.server.ThreadingHTTPServer(("", 443), Keygen)
 context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 context.load_cert_chain("/w/tls/server.pem", "/w/tls/server.key")
 server.socket = context.wrap_socket(server.socket, server_side=True)
@@ -1556,7 +1572,7 @@ SERVE
         docker run -d --name "$client" --network "$net" -v "$work":/w "$DEBIAN_IMAGE" sleep 600 >/dev/null
         docker exec "$client" bash -c '
             for attempt in 1 2 3; do
-                apt-get update -qq && apt-get install -y -qq --no-install-recommends curl openssl ca-certificates && break
+                apt-get update -qq && apt-get install -y -qq --no-install-recommends curl jq openssl ca-certificates && break
                 sleep 5
             done >/dev/null 2>&1
             cd /w/tls
@@ -1571,29 +1587,48 @@ SERVE
             "$PYTHON_IMAGE" python3 /w/serve.py >/dev/null
         sleep 2
 
-        launch() {
-            local case=$1; shift
-            docker exec -e CASE="$case" -e PATH=/w/bin:/usr/bin:/bin \
-                -e UT_RELEASES_URL=https://releases.test/releases -e CURL_CA_BUNDLE=/w/tls/ca.pem \
+        launch_with() {
+            local key=$1 case=$2; shift 2
+            docker exec -e CASE="$case" -e PATH=/w/bin:/usr/bin:/bin ${key:+-e UT_LICENSE="$key"} \
+                -e UT_DOWNLOADS_URL=https://releases.test/raw -e UT_KEYGEN_API=https://releases.test/v1/accounts/test \
+                -e CURL_CA_BUNDLE=/w/tls/ca.pem \
                 "$client" /w/ut-get "$@" > "$work/said-$case" 2>&1
             printf '%s=%s\n' "$case" "$(tr '\n' ';' < "$work/calls-$case" 2>/dev/null || echo nothing)"
         }
+        launch() { launch_with "$DOWNLOAD_TEST_KEY" "$@"; }
         {
             launch latest --domain box.test
             launch pinned --version 2026.98.1 --domain box.test
             launch tampered --version 2026.97.1 --domain box.test
-            printf '' > "$work/latest"
+            launch_with TEST-SOMEONE-ELSE refused --version 2026.96.1 --domain box.test
+            docker exec "$client" sh -c "mkdir -p /etc/understandtech && cp /w/license.key /etc/understandtech/license"
+            launch_with "" stored --version 2026.95.1 --domain box.test
+            docker exec "$client" rm -f /etc/understandtech/license
+            published_as_keygen_lists_them > "$work/releases.json"
             launch unpublished --domain box.test
             launch notaversion --version ../2026.98.1 --domain box.test
             docker rm -f "$server" >/dev/null 2>&1
             launch offline --version 2026.98.1 --domain box.test
             grep -q 'has published no release yet' "$work/said-unpublished" && echo 'unpublished_said=no release yet'
             grep -q 'is not a release version' "$work/said-notaversion" && echo 'notaversion_said=not a version'
+            grep -q 'refused the license key' "$work/said-refused" && echo 'refused_said=key refused'
+            grep -qF "$DOWNLOAD_TEST_KEY" "$work/curl-argv" || echo 'key_on_a_command_line=never'
         } > "$work/verdicts.txt"
         docker rm -f "$client" "$server" >/dev/null 2>&1
         docker network rm "$net" >/dev/null 2>&1
     fi
     cat "$work/verdicts.txt"
+}
+
+DOWNLOAD_TEST_KEY="TEST-DOWNLOAD-KEY-0123"
+
+# Keygen lists releases newest first: the latest published need not be the highest.
+published_as_keygen_lists_them() {
+    local version data=""
+    for version in "$@"; do
+        data+="${data:+,}{\"attributes\":{\"version\":\"${version}\",\"channel\":\"stable\"}}"
+    done
+    printf '{"data":[%s]}\n' "$data"
 }
 
 download_verdict_is() {
@@ -1625,6 +1660,20 @@ with_no_release_published_or_no_version_nothing_is_fetched() {
         && download_verdict_is unpublished_said "no release yet" \
         && download_verdict_is notaversion nothing \
         && download_verdict_is notaversion_said "not a version"
+}
+
+a_refused_license_key_downloads_and_installs_nothing() {
+    download_verdict_is refused nothing \
+        && download_verdict_is refused_said "key refused"
+}
+
+the_license_key_this_box_stores_downloads_its_update() {
+    download_verdict_is stored \
+        "apt-get install -y ${DOWNLOADED}/2026.95.1/understandtech_2026.95.1_all.deb;ut-install --domain box.test;"
+}
+
+the_license_key_is_never_on_a_command_line() {
+    download_verdict_is key_on_a_command_line never
 }
 
 a_release_already_downloaded_installs_again_offline() {
@@ -3930,6 +3979,12 @@ if [[ -x "$REPO_ROOT/bin/ut-get" ]]; then
         a_downloaded_release_that_was_altered_installs_nothing
     capability "with no release published, or a version that is not one, nothing is fetched and the reason is said" \
         with_no_release_published_or_no_version_nothing_is_fetched
+    capability "a license key Keygen refuses downloads nothing and installs nothing, and says why" \
+        a_refused_license_key_downloads_and_installs_nothing
+    capability "an update downloads with the license key the box already stores" \
+        the_license_key_this_box_stores_downloads_its_update
+    capability "the license key never appears on a command line" \
+        the_license_key_is_never_on_a_command_line
     capability "a release already downloaded installs again with its server gone" \
         a_release_already_downloaded_installs_again_offline
     capability "every release publishes ut-get beside the package" \
