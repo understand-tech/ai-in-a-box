@@ -125,6 +125,8 @@ request-duration histogram buckets, sum and count, keeping every other label
 separate. Equal contributions from different hosts still count separately.
 Engine metrics and other gauges are not added together; identical repeated
 samples are kept once, and conflicting values stop that window's export.
+Aggregation preserves the standard arithmetic of the valid OpenMetrics values
+`NaN`, `+Inf` and `-Inf`.
 Samples are ordered chronologically within each final series, using the same
 millisecond timestamp interpretation as Prometheus. Unique values and their
 timestamps are preserved. The export accepts timestamped scalar samples and
@@ -133,7 +135,8 @@ unchanged and queues no partial file.
 
 Sources consulted on 10 November 2026:
 [Caddy metric definitions](https://caddyserver.com/docs/metrics) and
-[Prometheus backfilling](https://prometheus.io/docs/prometheus/latest/storage/#backfilling-from-openmetrics-format).
+[Prometheus backfilling](https://prometheus.io/docs/prometheus/latest/storage/#backfilling-from-openmetrics-format) and
+[OpenMetrics values](https://prometheus.io/docs/specs/om/open_metrics_spec/#values).
 
 ## Writing one by hand
 
