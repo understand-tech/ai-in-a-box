@@ -119,6 +119,22 @@ What goes out on top of the report below:
   door's counters, at the recorder's resolution. Requests are counted per
   surface, never per address.
 
+Several hosts can map to the same `apps` or `_other` surface. At each timestamp,
+the export adds their contributions to Caddy's request and error counters and
+request-duration histogram buckets, sum and count, keeping every other label
+separate. Equal contributions from different hosts still count separately.
+Engine metrics and other gauges are not added together; identical repeated
+samples are kept once, and conflicting values stop that window's export.
+Samples are ordered chronologically within each final series, using the same
+millisecond timestamp interpretation as Prometheus. Unique values and their
+timestamps are preserved. The export accepts timestamped scalar samples and
+the OpenMetrics end marker; unsupported data leaves that window's export mark
+unchanged and queues no partial file.
+
+Sources consulted on 10 November 2026:
+[Caddy metric definitions](https://caddyserver.com/docs/metrics) and
+[Prometheus backfilling](https://prometheus.io/docs/prometheus/latest/storage/#backfilling-from-openmetrics-format).
+
 ## Writing one by hand
 
 ```bash
