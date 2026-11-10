@@ -177,9 +177,6 @@ func rewriteSurfaces(dump, domain string) (string, error) {
 		}
 		value := first.valueText
 		if first.additive && len(values) > 1 {
-			if math.IsNaN(sum) || math.IsInf(sum, 0) {
-				return "", errors.New("non-finite sum of Caddy counters")
-			}
 			value = strconv.FormatFloat(sum, 'g', -1, 64)
 		}
 		fmt.Fprintf(&output, "%s %s %s\n", first.series, value, first.timeText)

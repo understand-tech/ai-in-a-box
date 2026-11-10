@@ -105,6 +105,26 @@ func TestCollapsedHostContributionsAreAddedAndSorted(t *testing.T) {
 	}
 }
 
+func TestCollapsedHostsPreserveUnknownAndInfiniteUsageValues(t *testing.T) {
+	for _, test := range []struct{ name, left, right, want string }{
+		{"unknown", "NaN", "2", "NaN"},
+		{"positive infinity", "+Inf", "2", "+Inf"},
+		{"negative infinity", "-Inf", "2", "-Inf"},
+		{"overflow", "1e308", "1e308", "+Inf"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dump := fmt.Sprintf(`caddy_http_request_duration_seconds_sum{host="one.box.example"} %s 10
+caddy_http_request_duration_seconds_sum{host="two.box.example"} %s 10
+# EOF
+`, test.left, test.right)
+			want := fmt.Sprintf("caddy_http_request_duration_seconds_sum{host=\"_other\"} %s 10\n# EOF\n", test.want)
+			if got, err := rewriteSurfaces(dump, "box.example"); err != nil || got != want {
+				t.Fatalf("got %q, error %v; want %q", got, err, want)
+			}
+		})
+	}
+}
+
 func TestUsageKeepsDistinctLabelsAndUnrelatedValues(t *testing.T) {
 	dump := `vllm:num_requests_running{engine="0"} 1.250 1791449021.214
 caddy_http_requests_total{host="one.box.client.example",method="POST"} 2 1791449020.214
@@ -141,7 +161,6 @@ func TestUnsupportedUsageExportsAreRefused(t *testing.T) {
 		"conflicting engine": "vllm:requests 1 1791449020\nvllm:requests 2 1791449020\n# EOF\n",
 		"non additive host":  "caddy_unknown{host=\"one.box.client.example\"} 1 1791449020\ncaddy_unknown{host=\"two.box.client.example\"} 2 1791449020\n# EOF\n",
 		"conflicting source": "caddy_http_requests_total{host=\"one.box.client.example\"} 1 1791449020\ncaddy_http_requests_total{host=\"one.box.client.example\"} 2 1791449020\n# EOF\n",
-		"counter overflow":   "caddy_http_requests_total{host=\"one.box.client.example\"} 1e308 1791449020\ncaddy_http_requests_total{host=\"two.box.client.example\"} 1e308 1791449020\n# EOF\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got, err := rewriteSurfaces(dump, "box.client.example"); err == nil || got != "" {
