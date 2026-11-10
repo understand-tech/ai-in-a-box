@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -70,8 +71,104 @@ vllm:num_requests_running{engine="0",host="llms.box.client.example"} 1 179144902
 vllm:num_requests_running{engine="0",host="llms.box.client.example"} 1 1791449020.214
 # EOF
 `
-	if got := rewriteSurfaces(dump, "box.client.example"); got != want {
-		t.Fatalf("got\n%s", got)
+	if got, err := rewriteSurfaces(dump, "box.client.example"); err != nil || got != want {
+		t.Fatalf("got\n%s, error %v", got, err)
+	}
+}
+
+func TestCollapsedHostContributionsAreAddedAndSorted(t *testing.T) {
+	for metric := range additiveCaddySeries {
+		for _, category := range []struct{ host1, host2, surface string }{
+			{"one.apps.box.client.example", "two.apps.box.client.example", "apps"},
+			{"one.box.client.example", "two.box.client.example", "_other"},
+		} {
+			t.Run(metric+"/"+category.surface, func(t *testing.T) {
+				dump := fmt.Sprintf(`%[1]s{server="srv1",host="%[2]s",method="GET"} 4 1791449021.214
+%[1]s{method="GET",host="%[3]s",server="srv1"} 4 1791449020.214
+%[1]s{server="srv1",host="%[2]s",method="GET"} 3 1791449020.214
+%[1]s{method="GET",host="%[3]s",server="srv1"} 4 1791449021.214
+# EOF
+`, metric, category.host1, category.host2)
+				want := fmt.Sprintf(`%[1]s{host="%[2]s",method="GET",server="srv1"} 7 1791449020.214
+%[1]s{host="%[2]s",method="GET",server="srv1"} 8 1791449021.214
+# EOF
+`, metric, category.surface)
+				got, err := rewriteSurfaces(dump, "box.client.example")
+				if err != nil || got != want {
+					t.Fatalf("got %q, error %v; want %q", got, err, want)
+				}
+				if strings.Contains(got, "client.example") {
+					t.Fatal("an original host escaped anonymization")
+				}
+			})
+		}
+	}
+}
+
+func TestUsageKeepsDistinctLabelsAndUnrelatedValues(t *testing.T) {
+	dump := `vllm:num_requests_running{engine="0"} 1.250 1791449021.214
+caddy_http_requests_total{host="one.box.client.example",method="POST"} 2 1791449020.214
+caddy_http_requests_total{host="two.box.client.example",method="GET"} 3 1791449020.214
+caddy_admin_config_last_reload_successful 1.0 1791449020.214
+vllm:num_requests_running{engine="0"} 0.500 1791449020.214
+vllm:num_requests_running{engine="0"} 0.500 1791449020.214
+# EOF
+`
+	want := `caddy_admin_config_last_reload_successful 1.0 1791449020.214
+caddy_http_requests_total{host="_other",method="GET"} 3 1791449020.214
+caddy_http_requests_total{host="_other",method="POST"} 2 1791449020.214
+vllm:num_requests_running{engine="0"} 0.500 1791449020.214
+vllm:num_requests_running{engine="0"} 1.250 1791449021.214
+# EOF
+`
+	if got, err := rewriteSurfaces(dump, "box.client.example"); err != nil || got != want {
+		t.Fatalf("got %q, error %v; want %q", got, err, want)
+	}
+}
+
+func TestUnsupportedUsageExportsAreRefused(t *testing.T) {
+	for name, dump := range map[string]string{
+		"missing EOF":        "vllm:requests 1 1791449020\n",
+		"after EOF":          "# EOF\nvllm:requests 1 1791449020\n",
+		"metadata":           "# TYPE vllm:requests gauge\n# EOF\n",
+		"missing timestamp":  "vllm:requests 1\n# EOF\n",
+		"invalid timestamp":  "vllm:requests 1 NaN\n# EOF\n",
+		"hexadecimal":        "vllm:requests 0x1p2 1791449020\n# EOF\n",
+		"exemplar":           "vllm:requests 1 1791449020 # {trace_id=\"id\"} 1\n# EOF\n",
+		"duplicate labels":   "vllm:requests{engine=\"0\",engine=\"1\"} 1 1791449020\n# EOF\n",
+		"invalid escape":     `vllm:requests{engine="\t"} 1 1791449020` + "\n# EOF\n",
+		"trailing comma":     "vllm:requests{engine=\"0\",} 1 1791449020\n# EOF\n",
+		"conflicting engine": "vllm:requests 1 1791449020\nvllm:requests 2 1791449020\n# EOF\n",
+		"non additive host":  "caddy_unknown{host=\"one.box.client.example\"} 1 1791449020\ncaddy_unknown{host=\"two.box.client.example\"} 2 1791449020\n# EOF\n",
+		"conflicting source": "caddy_http_requests_total{host=\"one.box.client.example\"} 1 1791449020\ncaddy_http_requests_total{host=\"one.box.client.example\"} 2 1791449020\n# EOF\n",
+		"counter overflow":   "caddy_http_requests_total{host=\"one.box.client.example\"} 1e308 1791449020\ncaddy_http_requests_total{host=\"two.box.client.example\"} 1e308 1791449020\n# EOF\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got, err := rewriteSurfaces(dump, "box.client.example"); err == nil || got != "" {
+				t.Fatalf("invalid export accepted: %q, error %v", got, err)
+			}
+		})
+	}
+}
+
+func TestRejectedUsageExportKeepsItsMarkAndQueuesNothing(t *testing.T) {
+	b := newBox(t, newFakeReceiver(t))
+	mark := b.clock.Add(-2 * time.Hour).UnixMilli()
+	saveState(b.place.State, State{LastExported: mark})
+	answers := map[string]string{}
+	for command, answer := range usageAnswers {
+		answers[command] = answer
+	}
+	answers["docker exec mmmm promtool tsdb dump-openmetrics"] = "vllm:requests 1 1791449020\nvllm:requests 2 1791449020\n# EOF\n"
+	var out bytes.Buffer
+	if code := runOn([]string{"collect", "usage"}, b.place, machineAnswering(t, answers), &out, &out); code == 0 {
+		t.Fatal("a conflicting export was reported as done")
+	}
+	if state, _ := loadState(b.place.State); state.LastExported != mark {
+		t.Fatalf("the mark moved to %d after a validation failure", state.LastExported)
+	}
+	if b.waiting(t) != 0 {
+		t.Fatal("something was queued from an invalid export")
 	}
 }
 
