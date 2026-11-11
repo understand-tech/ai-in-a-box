@@ -35,9 +35,9 @@ x-public-urls:
   vite-api-base:       &url-vite-api-base       ${VITE_API_BASE_URL:-${UT_PUBLIC_SCHEME:-https}://${UT_DOMAIN:-understand.local}/api}
   vite-ut-app:         &url-vite-ut-app         ${VITE_UT_APP_URL:-${UT_PUBLIC_SCHEME:-https}://${UT_DOMAIN:-understand.local}}
   app-llms:            &url-app-llms            ${APP_LLMS_BASE_URL:-${UT_PUBLIC_SCHEME:-https}://llms.${UT_DOMAIN:-understand.local}}
-  app-llms-cors:       &url-app-llms-cors       ${APP_LLMS_CORS_ORIGINS:-${UT_PUBLIC_SCHEME:-https}://llms.${UT_DOMAIN:-understand.local}}
+  app-llms-cors:       &url-app-llms-cors       ${APP_LLMS_CORS_ORIGINS:-${UT_PUBLIC_SCHEME:-https}://llms.${UT_DOMAIN:-understand.local},${UT_PUBLIC_SCHEME:-https}://${UT_DOMAIN:-understand.local}}
   app-assistants:      &url-app-assistants      ${APP_ASSISTANTS_BASE_URL:-${UT_PUBLIC_SCHEME:-https}://assistants.${UT_DOMAIN:-understand.local}}
-  app-assistants-cors: &url-app-assistants-cors ${APP_ASSISTANTS_CORS_ORIGINS:-${UT_PUBLIC_SCHEME:-https}://assistants.${UT_DOMAIN:-understand.local}}
+  app-assistants-cors: &url-app-assistants-cors ${APP_ASSISTANTS_CORS_ORIGINS:-${UT_PUBLIC_SCHEME:-https}://assistants.${UT_DOMAIN:-understand.local},${UT_PUBLIC_SCHEME:-https}://${UT_DOMAIN:-understand.local}}
   app-builder:         &url-app-builder         ${APP_BUILDER_BASE_URL:-${UT_PUBLIC_SCHEME:-https}://builder.${UT_DOMAIN:-understand.local}}
 
 services:
