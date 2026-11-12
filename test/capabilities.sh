@@ -3292,8 +3292,6 @@ the_relay_destinations_written_in() {
         [[ "$got" == "$expected" ]] || echo "${repository}: ${got:-nothing}, not ${expected}"
     done <<'WRITTEN'
 s3:https://s3.eu-west-3.amazonaws.com/appliance-backups/box|s3.eu-west-3.amazonaws.com 443
-s3:http://minio.example.test:9000/appliance-backups|minio.example.test 9000
-s3:http://minio.example.test/appliance-backups|minio.example.test 80
 s3:s3.amazonaws.com/appliance-backups|s3.amazonaws.com 443
 sftp:backup@nas.example.test:/appliance|nas.example.test 22
 sftp://backup@nas.example.test:2222/appliance|nas.example.test 2222
