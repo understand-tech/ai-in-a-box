@@ -58,7 +58,7 @@ installed here.
 
 > **Losing `BACKUP_FILES_PASSWORD` makes every snapshot unreadable**, including
 > the offsite ones and including the authority's root. There is no recovery
-> path. It is one of the two secrets `ut-install` prints once at the end.
+> path. It is one of the secrets `ut-install` prints once at the end.
 
 ## Before anything else
 
@@ -148,6 +148,48 @@ A healthy appliance prints five databases. `test/database-restore.sh` performs
 this whole cycle against a throwaway database, and compares document counts per
 collection — run it if you want the mechanism checked before trusting it with
 real data.
+
+## 1 b · PostgreSQL
+
+PostgreSQL comes back to any instant since the oldest backup its repository
+keeps, from the `ut-postgres-backup` volume, with one command. Everything
+written after that instant is lost.
+
+**List what you have.**
+
+```bash
+cd /usr/share/understandtech
+docker compose exec postgres pgbackrest info
+```
+
+It needs `POSTGRES_BACKUP_PASSWORD` as the repository was created with it: an
+error here means the one in `/etc/understandtech/.env` is not that one; put the
+escrowed one back before going further.
+
+**Bring it back to an instant**, giving its offset:
+
+```bash
+sudo ut-restore-postgres --to "2026-11-03 14:32:00+01"
+```
+
+It stops `postgres` and `postgres-backup`, restores, starts them again, and
+says when PostgreSQL answers. Then take a full backup at once, since the
+restored database starts a new timeline:
+
+```bash
+docker compose exec postgres-backup pgbackrest backup --type=full
+```
+
+**From the copy that left the machine**, restore the `ut-postgres-backup`
+volume's content from the `restic` snapshot first, as for
+[the customer's files](#2--the-customers-files) (it is under `/backup/postgres`),
+then run the command above.
+
+`test/postgres-restore.sh` proves it: it writes, notes an instant, writes again,
+restores to that instant with the image the release ships, and finds what was
+noted. It belongs to the nightly check, which does not run on its own yet
+([why](ci-and-tests.md#why-the-nightly-check-does-not-run-on-its-own)); until
+then it is run by hand.
 
 ## 2 · The customer's files
 
@@ -365,7 +407,7 @@ recovery path and no support path. What is lost is the history, not the data —
 as long as the machine runs, its documents and its database are intact.
 
 Start a new repository at once, so that the machine is backed up again, then
-put the new password in escrow — see [backing up](backup.md#the-two-secrets-kept-away-from-the-machine):
+put the new password in escrow — see [backing up](backup.md#the-secrets-kept-away-from-the-machine):
 
 ```bash
 cd /usr/share/understandtech

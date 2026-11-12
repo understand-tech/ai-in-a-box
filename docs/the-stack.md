@@ -34,8 +34,10 @@ follows `COMPOSE_PROJECT_NAME`.
 | `nim-llm` | `understandtech-nim-llm-*` | — | NVIDIA NIM serving the chat model (profile `nim`), `:8000` internal |
 | `metrics` | `ut-metrics` | — | Records how loaded the engine is, how long users wait for it, and what each surface of the front door answered and how long it took, 35 days or 1 GB, whichever comes first. Runs in every role: a machine without a GPU still records its gateway and front door |
 | `mongodb` | `ut-mongodb` | — | Document database |
+| `postgres` | `ut-postgres` | — | PostgreSQL 18 with pgvector, the durable store of the new services; no service uses it yet |
 | `redis` | `ut-redis` | — | Task queue and cache |
 | `mongodb-backup` | `ut-mongodb-backup` | — | Full-server dump of every database |
+| `postgres-backup` | `ut-postgres-backup` | — | PostgreSQL backups with pgBackRest, encrypted; no network, it reaches the database through its socket. `ut-restore-postgres` brings the database back to an instant |
 | `files-backup` | `ut-files-backup` | — | Encrypted file snapshots, and the offsite copy |
 | `app-builder` | `ut-app-builder` | 8011 (`APP_BUILDER_HOST_PORT`) | Builds and hosts generated apps (add-on) |
 | `app-builder-docker` | `ut-app-builder-docker` | — | Rootless Docker that runs the generated apps and the Traefik routing them; only `app-builder` reaches it, through a socket (add-on) |
@@ -57,7 +59,7 @@ which means the containers attached only to those have no route off the box.
 | `ut-frontend-network` | no | `caddy`, `frontend`, `api`, `api-customer`, the workers, `app-llms`, `app-assistants`, `admin-portal`, `llm` |
 | `ut-backend-network` | **yes** | `api`, `api-customer`, the workers, `app-assistants`, `admin-portal`, `llm`, `nim-llm`, `metrics`, `files-backup` |
 | `ut-redis-network` | **yes** | `redis`, and the four services that use it: `api`, `api-customer` and their workers |
-| `ut-data-network` | **yes** | `mongodb`, `mongodb-backup`, `api`, `api-customer`, the workers, `app-llms`, `app-assistants`, `llm` |
+| `ut-data-network` | **yes** | `mongodb`, `mongodb-backup`, `postgres`, `api`, `api-customer`, the workers, `app-llms`, `app-assistants`, `llm` |
 | `ut-metrics-network` | **yes** | `caddy`, `metrics` — the recorder reads Caddy's counters on `:2020`, which no compose file publishes |
 
 Three more, each for one overlay only:
@@ -90,6 +92,10 @@ internet is kept off it.
 | `ut-redis-data` | Redis AOF persistence |
 | `ut-mongodb-data` | MongoDB database files |
 | `ut-mongodb-backup` | Compressed backup archives |
+| `ut-postgres-data` | PostgreSQL database files |
+| `ut-postgres-socket` | PostgreSQL's socket, shared with `postgres-backup` |
+| `ut-postgres-backup` | pgBackRest repository: the archived write-ahead log and the backups, encrypted |
+| `ut-postgres-spool` | pgBackRest's spool: write-ahead log segments waiting to be archived in a batch |
 | `ut-uploads-data` | Shared upload scratch space (API + workers) |
 | `ut-llm-models` | LLM model files |
 | `ut-vllm-models` | Hugging Face cache for the LLM service |
