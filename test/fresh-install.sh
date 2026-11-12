@@ -381,6 +381,11 @@ state_setup() {
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_REPOSITORY="s3:https://s3.example.test/appliance-backups"\n'"'"' > /etc/understandtech/local.env' ;;
         backup_relay_on_another_subnet)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_REPOSITORY="s3:https://s3.example.test/appliance-backups"\nBACKUP_RELAY_SUBNET="198.19.0.0/24"\n'"'"' > /etc/understandtech/local.env' ;;
+        backup_over_plain_http)
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_REPOSITORY="rest:http://backup.example.test:8000/appliance"\n'"'"' > /etc/understandtech/local.env' ;;
+        # What an install made when plain HTTP was still accepted leaves behind.
+        backup_over_plain_http_on_an_update)
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_REPOSITORY="s3:http://s3.example.test/appliance-backups"\nCOMPOSE_FILE="compose.yaml:compose.backup-relay.yaml"\nBACKUP_RELAY_HOST="s3.example.test"\nBACKUP_RELAY_PORT="80"\nBACKUP_RELAY_ADDRESS="198.18.255.250"\n'"'"' > /etc/understandtech/local.env' ;;
         backup_in_two_places)
             echo 'install -d /w/backup_in_two_places/nas && install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_DESTINATION="/w/backup_in_two_places/nas"\nBACKUP_FILES_REPOSITORY="s3:https://s3.example.test/appliance"\n'"'"' > /etc/understandtech/local.env' ;;
         # The App Builder enabled, with two apps: app-a running, with a volume,
@@ -1216,6 +1221,20 @@ a_host_restic_does_not_name_stops_the_install() {
         && ! grep -q 'Starting services' <<< "$output" && return 0
     echo "$output"
     return 1
+}
+
+a_destination_over_plain_http_stops_the_install() {
+    local state output
+    for state in backup_over_plain_http backup_over_plain_http_on_an_update; do
+        output=$(output_of "$state")
+        grep -q 'over plain HTTP' <<< "$output" \
+            && grep -q 'rest:https://host/path' <<< "$output" \
+            && grep -q 'sftp:user@host:/path' <<< "$output" \
+            && ! grep -q 'Downloading images' <<< "$output" \
+            && ! grep -q 'Starting services' <<< "$output" \
+            && grep -q '^BACKUP_FILES_REPOSITORY=.*:http://' <<< "$(of_state "$state" local-env)" \
+            || { echo "${state}:"; echo "$output"; return 1; }
+    done
 }
 
 two_destinations_stop_the_install() {
@@ -2469,6 +2488,8 @@ run_install_from_state backup_on_its_own_network_before_the_relay
 run_install_from_state backup_relay_on_another_subnet
 PULL_EXIT=0 run_install_from_state backup_relay_pointed_where_restic_dials
 PULL_EXIT=0 run_install_from_state backup_relay_restic_names_nothing
+run_install_from_state backup_over_plain_http
+run_install_from_state backup_over_plain_http_on_an_update
 run_install_from_state backup_in_two_places
 PULL_EXIT=0 run_install_from_state app_builder_moved_to_its_docker
 PULL_EXIT=0 run_install_from_state app_builder_already_moved
@@ -2751,6 +2772,8 @@ property "an install restic names no host for stops before starting, and says wh
     a_host_restic_does_not_name_stops_the_install
 property "the default destination adds no way out" \
     the_default_destination_adds_no_way_out
+property "a destination over plain HTTP stops the install, fresh or left by an earlier one, and says what to give" \
+    a_destination_over_plain_http_stops_the_install
 property "naming two destinations stops the install, before anything is written" \
     two_destinations_stop_the_install
 property "a destination gone during an update holds the update back no more than it says so" \
