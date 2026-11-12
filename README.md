@@ -427,7 +427,9 @@ of the model and its Engram tables held in host memory. It reads text only, so
 an image sent to the platform is refused. Its weights are about 510 GB, and the
 engine is given two hours to load them, `VLLM_ENGINE_READY_TIMEOUT_S`, where vLLM
 allows ten minutes. It takes 0.94 of the GPU where vLLM's recipe takes 0.97, to
-leave memory to the platform's own models.
+leave memory to the platform's own models, and so holds 262144 tokens of context
+where the recipe holds a million: what remains for the KV cache does not fit one
+request of a million, and the platform sends at most 100000.
 
 A box that served Qwen on NIM before this change runs `git pull`, then
 `./ut-model nemotron-3.5-bolt-74b` or `./ut-model qwen3.8-27b-nvfp4`, then
