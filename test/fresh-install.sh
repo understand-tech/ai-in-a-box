@@ -82,7 +82,7 @@ case "$1 $2" in
     "version --format")   echo "29.0.0" ;;
     "compose version")    echo "v5.0.0" ;;
     "info --format")      case "$*" in *Architecture*) echo aarch64 ;; *) echo '{"nvidia":{}}' ;; esac ;;
-    "volume inspect")     case "$*" in *mongodb*) [ "${MONGO_VOLUME_EXISTS:-no}" = yes ] ;; *postgres*) [ "${POSTGRES_VOLUME_EXISTS:-no}" = yes ] ;; *) [ "${WEIGHT_VOLUMES_EXIST:-yes}" = yes ] ;; esac ;;
+    "volume inspect")     case "$*" in *mongodb*) [ "${MONGO_VOLUME_EXISTS:-no}" = yes ] ;; *) [ "${WEIGHT_VOLUMES_EXIST:-yes}" = yes ] ;; esac ;;
     "network inspect")    exit 1 ;;
     "network create")     exit "${NETWORK_CREATE_EXIT:-0}" ;;
     "compose pull")       exit "${PULL_EXIT:-0}" ;;

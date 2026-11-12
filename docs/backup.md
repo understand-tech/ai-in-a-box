@@ -2,7 +2,7 @@
 
 For whoever answers for an appliance's backups, and for whoever audits them.
 After reading you will know what is backed up and what is not, how much data a
-loss can cost, what the backup destination has to provide, which secrets
+loss can cost, what the backup destination has to provide, which two secrets
 must be kept away from the machine, and what to check, how often, and where to
 write it down.
 
@@ -16,8 +16,6 @@ how to get the data back is in [restoring](restore.md).
 | Every database | a full-server `mongodump`, gzip, by `mongodb-backup` | the `ut-mongodb-backup` volume |
 | Documents and App Builder projects | `restic`, encrypted, by `files-backup` | `DATA_ROOT`, `/var/lib/understandtech` by default |
 | The database dumps above | the same `restic` run | the `ut-mongodb-backup` volume |
-| PostgreSQL | pgBackRest, by `postgres` and `postgres-backup`: every change as it is written (the write-ahead log, at most a minute late), and a backup every `POSTGRES_BACKUP_INTERVAL` minutes, full one run in `POSTGRES_BACKUP_FULL_EVERY`, differential otherwise; encrypted | the `ut-postgres-backup` volume |
-| The PostgreSQL backups above | the same `restic` run | the `ut-postgres-backup` volume |
 | The authority browsers trust | the same `restic` run | the `ut-caddy-data` volume |
 
 The database leaves the machine inside the `restic` repository, never on its
@@ -28,7 +26,7 @@ own.
 | What | Why |
 |---|---|
 | The databases of App Builder applications (`workspaces/*/mongo-data`) | Database files copied while they are written restore into a corrupt state. Each needs a dump of its own, which is not built. |
-| `/etc/understandtech/local.env` | It lives outside `DATA_ROOT`. It goes into [escrow](#the-secrets-kept-away-from-the-machine) instead. |
+| `/etc/understandtech/local.env` | It lives outside `DATA_ROOT`. It goes into [escrow](#the-two-secrets-kept-away-from-the-machine) instead. |
 | The link authority between a compute node and its platform | On purpose: whoever held a backup could otherwise pass for the box. A restored box is paired again. |
 | The models | They come with the release, or are downloaded again. |
 | Redis | It holds the queue of background jobs and short-lived state: sign-in challenges, login attempt counters, session revocations, caches. A restore loses the jobs that were running, which are submitted again; on another machine, new secrets end every session anyway. |
@@ -65,14 +63,6 @@ value.
 **With that setting, the recovery point objective is 24 hours**, and 24 hours 30
 minutes for the copy that left the machine: a loss costs at most what was
 written since the last 02:30 dump and 03:00 run.
-
-**PostgreSQL loses less.** Its changes are archived as they are written, at
-most a minute late, so the copy on the machine can be brought back to any
-instant of the last `POSTGRES_BACKUP_KEEP_DAYS` days, 30 by default, as long as the
-dumps of MongoDB are kept on the machine. The copy that leaves the machine is the one the
-`restic` run carries, so off the machine the loss is up to a day, as for
-MongoDB. The health of `postgres-backup` reads `unhealthy` when no full backup is
-younger than two days, or when archiving has failed since it last succeeded.
 
 Two limits remain, and an audit should see them written:
 
@@ -151,17 +141,16 @@ last day) applies to all the snapshots tagged `files` at once. Snapshots that
 releases up to 2026.10.0-rc23 took under their containers' names are pruned
 with the rest at the first run after the update.
 
-## The secrets kept away from the machine
+## The two secrets kept away from the machine
 
 | Secret | Why it matters |
 |---|---|
 | `BACKUP_FILES_PASSWORD`, in `/etc/understandtech/.env` | Without it, no snapshot can be read — not the ones off the machine, not the authority's root. There is no recovery path. `ut-install` prints it once at the end of the install. |
-| `POSTGRES_BACKUP_PASSWORD`, in `/etc/understandtech/.env` | It encrypts the PostgreSQL backups, inside the snapshots as on the machine. Without it they cannot be read. `ut-install` prints it once, with the one above; keep the two together. |
 | `/etc/understandtech/local.env` | The TLS mode and the customer's certificate, the backup destination and its credentials, and every value changed from the release. It is in no backup. |
 
 For each appliance, write down before it holds data:
 
-- where each of them is kept — a vault of the customer's, a sealed envelope,
+- where each of the two is kept — a vault of the customer's, a sealed envelope,
   a password manager — never on the machine alone;
 - who holds it, and who can get it back when that person is away;
 - the date it was last checked.
@@ -186,11 +175,11 @@ For each appliance, name a person for each line:
 | When | What | How |
 |---|---|---|
 | At install | the destination is configured, the first copy is there | `docker exec ut-files-backup cat /backup/.understandtech-backup-status.json` reads `"destination":"copied"` |
-| At install | both secrets are in escrow | the [escrow check](#the-secrets-kept-away-from-the-machine) |
+| At install | both secrets are in escrow | the [escrow check](#the-two-secrets-kept-away-from-the-machine) |
 | Every day | both backup services are healthy — `files-backup` only when its last run reached the destination, less than 26 hours ago | `docker compose ps mongodb-backup files-backup` |
 | Every week | every run of the week ended with `done`, none with `failed at` | the log of `files-backup`, below |
 | Every quarter | a restore, end to end | [restoring](restore.md), on a machine other than the one in service |
-| Every year | the escrowed password opens the repository | the [escrow check](#the-secrets-kept-away-from-the-machine) |
+| Every year | the escrowed password opens the repository | the [escrow check](#the-two-secrets-kept-away-from-the-machine) |
 
 The commands run from `/usr/share/understandtech`. The week's runs:
 
