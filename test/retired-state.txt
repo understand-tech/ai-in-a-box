@@ -18,3 +18,11 @@ ut-llm-ollama
 
 # step-ca is gone; its network held nothing (docs/update.md).
 ut-ca-network
+
+# Postgres leaves the release until a service uses it. Only 2026.10.0-rc24
+# declared these; they stay on disk until the operator removes them
+# (docs/update.md).
+ut-postgres-data
+ut-postgres-socket
+ut-postgres-backup
+ut-postgres-spool
