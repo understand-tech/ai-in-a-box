@@ -425,7 +425,7 @@ its speculative draft included.
 machine: DeepSeek-V4.1-Flash-1017 with vLLM's own settings for that station, 60 GiB
 of the model and its Engram tables held in host memory. It reads text only, so
 an image sent to the platform is refused. Its weights are about 510 GB, and the
-engine is given an hour to load them, `VLLM_ENGINE_READY_TIMEOUT_S`, where vLLM
+engine is given two hours to load them, `VLLM_ENGINE_READY_TIMEOUT_S`, where vLLM
 allows ten minutes. It takes 0.94 of the GPU where vLLM's recipe takes 0.97, to
 leave memory to the platform's own models.
 
