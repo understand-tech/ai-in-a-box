@@ -383,7 +383,6 @@ state_setup() {
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_REPOSITORY="s3:https://s3.example.test/appliance-backups"\nBACKUP_RELAY_SUBNET="198.19.0.0/24"\n'"'"' > /etc/understandtech/local.env' ;;
         backup_over_plain_http)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_REPOSITORY="rest:http://backup.example.test:8000/appliance"\n'"'"' > /etc/understandtech/local.env' ;;
-        # What an install made when plain HTTP was still accepted leaves behind.
         backup_over_plain_http_on_an_update)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_REPOSITORY="s3:http://s3.example.test/appliance-backups"\nCOMPOSE_FILE="compose.yaml:compose.backup-relay.yaml"\nBACKUP_RELAY_HOST="s3.example.test"\nBACKUP_RELAY_PORT="80"\nBACKUP_RELAY_ADDRESS="198.18.255.250"\n'"'"' > /etc/understandtech/local.env' ;;
         backup_in_two_places)
@@ -1223,15 +1222,14 @@ a_host_restic_does_not_name_stops_the_install() {
     return 1
 }
 
-a_destination_over_plain_http_stops_the_install() {
+a_destination_over_plain_http_is_installed_with_a_warning() {
     local state output
     for state in backup_over_plain_http backup_over_plain_http_on_an_update; do
         output=$(output_of "$state")
         grep -q 'over plain HTTP' <<< "$output" \
             && grep -q 'rest:https://host/path' <<< "$output" \
             && grep -q 'sftp:user@host:/path' <<< "$output" \
-            && ! grep -q 'Downloading images' <<< "$output" \
-            && ! grep -q 'Starting services' <<< "$output" \
+            && grep -q 'Downloading images' <<< "$output" \
             && grep -q '^BACKUP_FILES_REPOSITORY=.*:http://' <<< "$(of_state "$state" local-env)" \
             || { echo "${state}:"; echo "$output"; return 1; }
     done
@@ -2772,8 +2770,8 @@ property "an install restic names no host for stops before starting, and says wh
     a_host_restic_does_not_name_stops_the_install
 property "the default destination adds no way out" \
     the_default_destination_adds_no_way_out
-property "a destination over plain HTTP stops the install, fresh or left by an earlier one, and says what to give" \
-    a_destination_over_plain_http_stops_the_install
+property "a destination over plain HTTP is installed, fresh or left by an earlier one, with a warning that says what to give" \
+    a_destination_over_plain_http_is_installed_with_a_warning
 property "naming two destinations stops the install, before anything is written" \
     two_destinations_stop_the_install
 property "a destination gone during an update holds the update back no more than it says so" \

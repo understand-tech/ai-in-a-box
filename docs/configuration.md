@@ -515,9 +515,9 @@ relay at it; changing the destination means running the installer again.
 - **Give the destination by name.** An address such as `s3:https://192.0.2.10/…`
   is refused: the relay is reached under the destination's name.
 - **Give it over an encrypted transport.** `rest:http://…` and `s3:http://…` are
-  refused, and so is an installation whose `local.env` already holds one: the
-  installer stops before changing anything and says what to give instead,
-  `rest:https://…`, `s3:https://…` or `sftp:…`.
+  accepted with a warning at each run of the installer: the repository is
+  encrypted, the traffic that carries it is not. Prefer `rest:https://…`,
+  `s3:https://…` or `sftp:…`.
 - **On AWS, give the region's endpoint**, as in the example above. The relay
   stands for one host; a request that AWS redirects to another region fails.
 - **Two appliances on one Docker host** need two networks for their relays: set

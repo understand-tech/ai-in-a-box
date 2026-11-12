@@ -1708,16 +1708,13 @@ the_backup_repository_is_in_clear() {
     esac
 }
 
-die_on_a_backup_destination_in_clear() {
+warn_of_a_backup_destination_in_clear() {
     local local_file=$1 repository
     repository=$(env_get "$local_file" BACKUP_FILES_REPOSITORY 2>/dev/null || true)
     the_backup_repository_is_in_clear "$repository" || return 0
-    log_error "BACKUP_FILES_REPOSITORY is a ${repository%%:*} repository over plain HTTP: the backup would cross the network unencrypted."
-    log_error ""
-    log_error "Give the destination over HTTPS (rest:https://host/path, s3:https://host/bucket) or"
-    log_error "over SFTP (sftp:user@host:/path), in $(settings_directory "$INSTALL_DIR/.env")/local.env,"
-    log_error "then run ut-install again. Nothing has been changed on this machine."
-    exit 1
+    log_warn "BACKUP_FILES_REPOSITORY is a ${repository%%:*} repository over plain HTTP: the backup is encrypted, the traffic that carries it is not."
+    log_warn "To encrypt the traffic too, give the destination over HTTPS (rest:https://host/path, s3:https://host/bucket) or"
+    log_warn "over SFTP (sftp:user@host:/path), in $(settings_directory "$INSTALL_DIR/.env")/local.env, then run ut-install again."
 }
 
 # A destination on the root disk, or on the one holding DATA_ROOT, is either a
@@ -1824,6 +1821,7 @@ backup_destination_written_in() {
     local address port="" default=443
     case "$1" in
         sftp:*)     address=${1#sftp:}; default=22 ;;
+        *:http://*) address=${1#*:http://}; default=80 ;;
         *)          address=${1#*:}; address=${address#https://} ;;
     esac
     address=${address#//}
@@ -2112,7 +2110,7 @@ step_configure() {
     fi
     write_the_settings_the_app_builder_s_docker_needs "$local_file"
     die_on_two_backup_destinations "$local_file"
-    die_on_a_backup_destination_in_clear "$local_file"
+    warn_of_a_backup_destination_in_clear "$local_file"
     write_the_settings_a_backup_destination_needs "$local_file"
     write_the_settings_a_local_backup_disk_needs "$local_file"
     write_the_settings_a_backup_over_the_network_needs "$local_file"

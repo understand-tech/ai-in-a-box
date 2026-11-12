@@ -1864,9 +1864,9 @@ fi
         "two destinations stops the install, before" \
         "sed -i.bak '/^    die_on_two_backup_destinations \"\$local_file\"\$/d' bin/ut-install"
 
-    install_walk_discriminates "a backup destination over plain HTTP let through" \
-        "a destination over plain HTTP stops the install" \
-        "sed -i.bak '/^    die_on_a_backup_destination_in_clear \"\$local_file\"\$/d' bin/ut-install"
+    install_walk_discriminates "a backup destination over plain HTTP installed without a word" \
+        "a destination over plain HTTP is installed" \
+        "sed -i.bak '/^    warn_of_a_backup_destination_in_clear \"\$local_file\"\$/d' bin/ut-install"
 
     install_walk_discriminates "two backup destinations let through" \
         "naming two destinations stops the install" \
