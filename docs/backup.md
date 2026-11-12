@@ -68,8 +68,8 @@ written since the last 02:30 dump and 03:00 run.
 
 **PostgreSQL loses less.** Its changes are archived as they are written, at
 most a minute late, so the copy on the machine can be brought back to any
-instant of the last `POSTGRES_BACKUP_KEEP_DAYS` days, 30 by default, as long as the
-dumps of MongoDB are kept on the machine. The copy that leaves the machine is the one the
+instant since the oldest backup kept (`POSTGRES_BACKUP_KEEP_FULL` full backups,
+two by default, a week apart). The copy that leaves the machine is the one the
 `restic` run carries, so off the machine the loss is up to a day, as for
 MongoDB. The health of `postgres-backup` reads `unhealthy` when no full backup is
 younger than two days, or when archiving has failed since it last succeeded.

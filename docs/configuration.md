@@ -578,7 +578,7 @@ memory.
 POSTGRES_MAINTENANCE_WORK_MEM="256MB"
 POSTGRES_SHM_SIZE="256m"
 POSTGRES_BACKUP_PROCESSES="2"
-POSTGRES_BACKUP_KEEP_DAYS="30"
+POSTGRES_BACKUP_KEEP_FULL="2"
 ```
 
 The `postgres` service has 4 GB of memory, of which `shared_buffers` takes 1 GB: a quarter, as
@@ -592,11 +592,8 @@ parallel index build fails with "could not resize shared memory segment".
 `POSTGRES_BACKUP_PROCESSES` is how many processes pgBackRest uses, and the CPUs the
 `postgres-backup` service may use; its default of one is, by pgBackRest's own guide, almost never
 right. The write-ahead log is archived asynchronously, in batches, through a spool on the
-`ut-postgres-spool` volume. `POSTGRES_BACKUP_KEEP_DAYS` is how far back the
-database can be brought, 30 days by default, as for MongoDB's dumps: pgBackRest keeps full backups
-by age (`repo-retention-full-type=time`) and removes one only when another at least that old
-remains, so the window never shrinks below it; the write-ahead log follows the backups kept. With
-a full backup a week, about five are on disk at a time. The repository's encryption is set before the first backup and
+`ut-postgres-spool` volume. `POSTGRES_BACKUP_KEEP_FULL` is how many full backups are kept; the
+oldest goes when one more is taken. The repository's encryption is set before the first backup and
 cannot change afterwards: `POSTGRES_BACKUP_PASSWORD` is kept across updates for that reason.
 
 Sources, read on 2026-11-03: [pgvector](https://github.com/pgvector/pgvector/blob/master/README.md),
