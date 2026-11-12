@@ -37,7 +37,6 @@ follows `COMPOSE_PROJECT_NAME`.
 | `postgres` | `ut-postgres` | — | PostgreSQL 18 with pgvector, the durable store of the new services; no service uses it yet |
 | `redis` | `ut-redis` | — | Task queue and cache |
 | `mongodb-backup` | `ut-mongodb-backup` | — | Full-server dump of every database |
-| `postgres-backup` | `ut-postgres-backup` | — | PostgreSQL backups with pgBackRest, encrypted; no network, it reaches the database through its socket |
 | `files-backup` | `ut-files-backup` | — | Encrypted file snapshots, and the offsite copy |
 | `app-builder` | `ut-app-builder` | 8011 (`APP_BUILDER_HOST_PORT`) | Builds and hosts generated apps (add-on) |
 | `app-builder-docker` | `ut-app-builder-docker` | — | Rootless Docker that runs the generated apps and the Traefik routing them; only `app-builder` reaches it, through a socket (add-on) |
@@ -86,8 +85,6 @@ internet is kept off it.
 | `ut-mongodb-data` | MongoDB database files |
 | `ut-mongodb-backup` | Compressed backup archives |
 | `ut-postgres-data` | PostgreSQL database files |
-| `ut-postgres-socket` | PostgreSQL's socket, shared with `postgres-backup` |
-| `ut-postgres-backup` | pgBackRest repository: the archived write-ahead log and the backups, encrypted |
 | `ut-uploads-data` | Shared upload scratch space (API + workers) |
 | `ut-llm-models` | LLM model files |
 | `ut-vllm-models` | Hugging Face cache for the LLM service |

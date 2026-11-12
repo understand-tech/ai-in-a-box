@@ -112,7 +112,7 @@ boundary are the ones that have to answer a browser.
 | What | Where | Carried by a backup |
 |---|---|---|
 | The databases | `ut-mongodb-data` volume | through `mongodb-backup`, which dumps them |
-| PostgreSQL | `ut-postgres-data` volume | through `postgres` and `postgres-backup`, with pgBackRest: the write-ahead log as it is written, and nightly backups into the `ut-postgres-backup` volume |
+| PostgreSQL | `ut-postgres-data` volume | **not yet**: its continuous archiving is the next change; no service writes to it until then |
 | Uploaded documents and generated artefacts | `/var/lib/understandtech/app-data` | yes, directly |
 | The App Builder's projects | `/var/lib/understandtech/appbuilder` | yes, directly |
 | The certificate authority's root | `ut-caddy-data` volume | yes, directly |
