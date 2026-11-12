@@ -54,8 +54,6 @@ services:
     profiles: ["control-plane-only"]
   mongodb-backup:
     profiles: ["control-plane-only"]
-  postgres:
-    profiles: ["control-plane-only"]
   files-backup:
     profiles: ["control-plane-only"]
   api:
