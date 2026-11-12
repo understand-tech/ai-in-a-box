@@ -2485,6 +2485,21 @@ a_platform_reaches_its_node_through_its_own_relay() {
     ! grep -q 'SSL_CERT_FILE' <<< "$config" || { echo "a service still replaces its trust store to reach the node"; return 1; }
 }
 
+the_relay_is_joined_only_by_the_services_that_call_it() {
+    command -v jq >/dev/null || { echo "jq absent"; return 1; }
+    local config
+    config=$( cd "$WORK_DIR" && VLLM_API_KEY=k VLLM_LLM_BASE_URL=http://inference-relay:8445/v1 \
+        docker compose -f compose.yaml -f compose.remote-inference.yaml config --format json 2>/dev/null )
+    jq -e '
+        .networks["ut-inference-relay-network"].internal == true
+        and ([.services | to_entries[] | select(.value.networks | has("ut-inference-relay-network")) | .key] | sort)
+            == (["caddy"] + [.services | to_entries[] | select(.value.environment.VLLM_LLM_BASE_URL == "http://inference-relay:8445/v1") | .key] | sort)
+        and (.services.caddy.networks["ut-inference-relay-network"].aliases == ["inference-relay"])' <<< "$config" >/dev/null && return 0
+    echo "on the relay network: $(jq -c '[.services | to_entries[] | select(.value.networks | has("ut-inference-relay-network")) | .key]' <<< "$config" 2>/dev/null)"
+    echo "calling the relay: $(jq -c '[.services | to_entries[] | select(.value.environment.VLLM_LLM_BASE_URL == "http://inference-relay:8445/v1") | .key]' <<< "$config" 2>/dev/null)"
+    return 1
+}
+
 VLLM_TEST_ARGS='--trust-remote-code --max-model-len 262144 --override-generation-config {"temperature":0.2,"top_p":0.9} --speculative-config {"method":"dflash","num_speculative_tokens":7}'
 
 rendered_vllm_engine() {
@@ -4086,6 +4101,8 @@ if [[ -f "$REPO_ROOT/compose.compute.yaml" ]]; then
         the_compute_engine_is_reached_only_through_the_link
     capability "a platform reaches its compute node through its own relay" \
         a_platform_reaches_its_node_through_its_own_relay
+    capability "the relay to a compute node is joined only by Caddy and the services that call it" \
+        the_relay_is_joined_only_by_the_services_that_call_it
     capability "on the bash a Mac runs, a failure ut-install tests for is not reported as the install stopping" \
         a_failure_tested_inside_a_substitution_stops_nothing_on_bash_3
     capability "a model on vLLM runs in place of NIM, with the same GPU and cache, and no port of its own" \

@@ -47,7 +47,7 @@ env_keys() {
 keys_the_installer_generates() {
     grep -o 'GENERATED_SECRET_KEYS=([^)]*)' "$REPO_ROOT/bin/ut-install" 2>/dev/null \
         | sed 's/.*(//; s/)//' | tr ' ' '\n'
-    printf 'MONGODB_USERNAME\nMONGODB_PASSWORD\nPOSTGRES_PASSWORD\n'
+    printf 'MONGODB_USERNAME\nMONGODB_PASSWORD\n'
 }
 
 keys_a_machine_will_have() {
@@ -562,6 +562,28 @@ check_no_client_auth_without_the_admitted_list() {
              END { exit !found }' "$file" \
             || report "client-auth-without-admitted-boxes:${file#"$REPO_ROOT"/}" \
                 "${file#"$REPO_ROOT"/} asks for a client certificate without importing the list ut-pair keeps: the system roots would decide who gets in"
+    done
+}
+
+# What another machine reaches is served under link.internal, the name of the
+# link identity. A site there that asks for no certificate, asks for one
+# without verifying it, or verifies it against anything but the pool ut-pair
+# keeps, lets whoever reaches the port stand in for a paired machine.
+check_every_site_serving_another_machine_verifies_its_client() {
+    local file site
+    for file in "$REPO_ROOT/Caddyfile" "$REPO_ROOT"/caddy/*.caddy; do
+        while read -r site; do
+            [[ -n "$site" ]] || continue
+            report "link-site-without-verified-client:${file#"$REPO_ROOT"/}:${site}" \
+                "${file#"$REPO_ROOT"/} serves ${site} to another machine without client_auth in mode require_and_verify against an explicit trust pool"
+        done <<< "$(awk '
+            /^[[:space:]]*#/ { next }
+            depth == 0 && $1 ~ /link\.internal/ && /\{[[:space:]]*$/ { site = $1; open = 1; loopback = 0; verified = 0; pooled = 0 }
+            open && /^[[:space:]]*bind[[:space:]]+127\.0\.0\.1/ { loopback = 1 }
+            open && /^[[:space:]]*mode[[:space:]]+require_and_verify/ { verified = 1 }
+            open && /^[[:space:]]*(import[[:space:]]+admitted_boxes|trust_pool)/ { pooled = 1 }
+            { depth += gsub(/\{/, "{"); depth -= gsub(/\}/, "}") }
+            open && depth == 0 { if (!loopback && !(verified && pooled)) print site; open = 0 }' "$file")"
     done
 }
 
@@ -1114,6 +1136,7 @@ main() {
     check_the_apps_docker_has_a_ceiling
     check_the_apps_traefik_calls_no_one
     check_no_client_auth_without_the_admitted_list
+    check_every_site_serving_another_machine_verifies_its_client
     check_the_relay_checks_its_token_inside_its_route
     check_the_relay_trusts_its_node_alone
     check_the_arbiter_relay_opens_to_root_alone

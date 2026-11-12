@@ -59,11 +59,6 @@ services:
     healthcheck:
       disable: true
 
-  # The image ut-postgres builds is private; pgvector's own, on the same
-  # PostgreSQL 18, is the public stand-in and answers the same healthcheck.
-  postgres:
-    image: pgvector/pgvector:0.8.7-pg18-trixie@sha256:5895949dfcdf308eb0cd31c950c93c14895c77f33fbedfecf1fa511ab1d4bcd2
-
   # Its healthcheck looks for an archive younger than two days, which a stub
   # cannot produce and a fresh install does not have either. Nothing depends on
   # it being healthy, so it is left out of the run rather than faked.
@@ -71,7 +66,4 @@ services:
     profiles: ["not-in-the-stub-run"]
 
   files-backup:
-    profiles: ["not-in-the-stub-run"]
-
-  postgres-backup:
     profiles: ["not-in-the-stub-run"]

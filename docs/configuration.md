@@ -34,10 +34,10 @@ Knowing which kind you are editing matters more than knowing the variable.
 **Generated at install, never edited.** `JWT_SECRET`, `STATE_SECRET`,
 `OPENID_SECRET_KEY`, `ADMIN_SETUP_PASSWORD`, `BACKUP_FILES_PASSWORD`,
 `GPU_VM_API_TOKEN`, `GATEWAY_METRICS_TOKEN`,
-`APP_BUILDER_TOKEN_ENCRYPTION_KEY`, the MongoDB credentials and `POSTGRES_PASSWORD`.
-Changing one by hand after the fact breaks something: editing `MONGODB_PASSWORD`
-or `POSTGRES_PASSWORD` on a database that already exists locks every service out,
-because each image only reads it when it creates the data directory. `ut-install --rotate-database-password` changes it
+`APP_BUILDER_TOKEN_ENCRYPTION_KEY`, and the MongoDB credentials. Changing one
+by hand after the fact breaks something: editing `MONGODB_PASSWORD` on a database
+that already exists locks every service out, because the image only reads it when
+it creates the data directory. `ut-install --rotate-database-password` changes it
 in the database as well, then everywhere it is read.
 
 **Required.** Six of them make the stack refuse to start when absent **or
@@ -514,6 +514,10 @@ relay at it; changing the destination means running the installer again.
 
 - **Give the destination by name.** An address such as `s3:https://192.0.2.10/…`
   is refused: the relay is reached under the destination's name.
+- **Give it over an encrypted transport.** `rest:http://…` and `s3:http://…` are
+  accepted with a warning at each run of the installer: the repository is
+  encrypted, the traffic that carries it is not. Prefer `rest:https://…`,
+  `s3:https://…` or `sftp:…`.
 - **On AWS, give the region's endpoint**, as in the example above. The relay
   stands for one host; a request that AWS redirects to another region fails.
 - **Two appliances on one Docker host** need two networks for their relays: set
@@ -571,36 +575,6 @@ WORKER_CUSTOMER_REPLICAS="2"
 
 Background document processing. More replicas, more parallel ingestion, more
 memory.
-
-### PostgreSQL
-
-```bash
-POSTGRES_MAINTENANCE_WORK_MEM="256MB"
-POSTGRES_SHM_SIZE="256m"
-POSTGRES_BACKUP_PROCESSES="2"
-POSTGRES_BACKUP_KEEP_DAYS="30"
-```
-
-The `postgres` service has 4 GB of memory, of which `shared_buffers` takes 1 GB: a quarter, as
-pgvector advises for a server's memory. `POSTGRES_MAINTENANCE_WORK_MEM` is the memory one index
-build may use, a sixteenth of the service's memory by default, PgTune's rule. A vector index
-(HNSW) builds much faster when its whole graph fits in it; Postgres warns in its log when it does
-not ("hnsw graph no longer fits into maintenance_work_mem"). Raise it for a large knowledge base, and
-raise `POSTGRES_SHM_SIZE` with it: the container's shared memory must be at least as large, or a
-parallel index build fails with "could not resize shared memory segment".
-
-`POSTGRES_BACKUP_PROCESSES` is how many processes pgBackRest uses, and the CPUs the
-`postgres-backup` service may use; its default of one is, by pgBackRest's own guide, almost never
-right. The write-ahead log is archived asynchronously, in batches, through a spool on the
-`ut-postgres-spool` volume. `POSTGRES_BACKUP_KEEP_DAYS` is how far back the
-database can be brought, 30 days by default, as for MongoDB's dumps: pgBackRest keeps full backups
-by age (`repo-retention-full-type=time`) and removes one only when another at least that old
-remains, so the window never shrinks below it; the write-ahead log follows the backups kept. With
-a full backup a week, about five are on disk at a time. The repository's encryption is set before the first backup and
-cannot change afterwards: `POSTGRES_BACKUP_PASSWORD` is kept across updates for that reason.
-
-Sources, read on 2026-11-03: [pgvector](https://github.com/pgvector/pgvector/blob/master/README.md),
-[PgTune](https://pgtune.leopard.in.ua/), [pgBackRest user guide](https://pgbackrest.org/user-guide.html).
 
 ### The embedding engine
 
@@ -734,7 +708,7 @@ services at its own Caddy and names the file `ut-pair join` writes:
 
 ```bash
 COMPOSE_FILE="compose.yaml:compose.remote-inference.yaml"
-VLLM_LLM_BASE_URL="http://caddy:8445/v1"
+VLLM_LLM_BASE_URL="http://inference-relay:8445/v1"
 UT_LINKED_NODE_FILE="/etc/understandtech/linked-node.caddy"
 ```
 

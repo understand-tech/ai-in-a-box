@@ -17,8 +17,7 @@ in the same pull request.
   buffers, effective cache size and the work memory for building an index follow the memory given to
   Postgres; the container's shared memory is at least the index build memory, or a parallel index
   build fails; index builds use the parallel workers the machine can give. Each value is meant to
-  be changeable in `local.env` and described in [docs/configuration.md](docs/configuration.md); the
-  service sets only its shared memory today, the rest is a rule for the settings to come.
+  be changeable in `local.env` and described in [docs/configuration.md](docs/configuration.md).
 - **A saturated service refuses or queues, it does not fail.** Under more load than it can serve, a
   service answers with a bounded wait or a clean refusal the caller can retry, never an internal
   error; a service that restarts on its own is seen by the supervision and raises an alert, never
@@ -34,6 +33,14 @@ in the same pull request.
 - **The inference engine is supervised** on its waiting requests, the filling of its KV cache, its
   preemptions and the time to the first token; its capacity settings (`gpu_memory_utilization`,
   `max_num_seqs`, `max_num_batched_tokens`) are measured per type of machine.
+- **Every link between two machines of the product is encrypted, with a certificate on each side,**
+  both signed by the `link` authority (see [docs/certificates-and-dns.md](docs/certificates-and-dns.md)); a
+  surface that serves another machine requires and verifies the client's certificate. A link to what
+  the product does not own (a browser, a backup destination, a public service) is HTTPS or SFTP;
+  a backup destination the operator gives over plain HTTP is accepted with a warning, its content
+  being encrypted in any case. Between containers of one machine, an internal network and signed tokens are enough,
+  unless a written decision says otherwise. A database connection that crosses a machine uses the
+  database's own TLS, and the client verifies the server's certificate and name in full.
 - **Each service has its own Postgres schema and role;** no role may create in `public`.
 
 These rules describe the target: a change brings the services it touches in line with them.

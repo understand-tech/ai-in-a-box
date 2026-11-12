@@ -123,6 +123,18 @@ discriminates "an arbiter surface that asks for a client certificate without the
     "client-auth-without-admitted-boxes:caddy/arbiter-surface.caddy" \
     "sed -i.bak '/import admitted_boxes/d' caddy/arbiter-surface.caddy"
 
+discriminates "a compute node's surface that asks for a certificate and verifies none" \
+    "link-site-without-verified-client:caddy/inference-surface.caddy" \
+    "sed -i.bak 's/mode require_and_verify/mode request/' caddy/inference-surface.caddy"
+
+discriminates "an arbiter's surface with no client_auth at all" \
+    "link-site-without-verified-client:caddy/arbiter-surface.caddy" \
+    "perl -0pi -e 's/        client_auth \\{.*?\\n        \\}\\n//s' caddy/arbiter-surface.caddy"
+
+discriminates "a new surface for another machine that checks nothing" \
+    "link-site-without-verified-client:caddy/new-surface.caddy" \
+    "printf 'https://link.internal:8450 {\\n    reverse_proxy somewhere:80\\n}\\n' > caddy/new-surface.caddy"
+
 discriminates "a socket to the arbiter any account can open" \
     "arbiter-relay-open-beyond-its-group" \
     "sed -i.bak 's/|0660/|0666/' caddy/arbiter-relay.caddy"
@@ -586,6 +598,14 @@ capability_discriminates "a vLLM engine checked where NIM answers" \
 capability_discriminates "a platform relay that starts without its token" \
     "a platform reaches its compute node through its own relay" \
     "sed -i.bak 's|VLLM_API_KEY: \${VLLM_API_KEY:?ut-install generates it}|VLLM_API_KEY: \${VLLM_API_KEY:-}|' compose.remote-inference.yaml"
+
+capability_discriminates "a service that never calls the relay, placed on its network" \
+    "the relay to a compute node is joined only by Caddy and the services that call it" \
+    "perl -0pi -e 's/(  llm:\\n    networks:\\n      - ut-inference-relay-network\\n)/\$1\\n  frontend:\\n    networks:\\n      - ut-inference-relay-network\\n/' compose.remote-inference.yaml"
+
+capability_discriminates "a relay network left open to the outside" \
+    "the relay to a compute node is joined only by Caddy and the services that call it" \
+    "perl -ni -e 'print unless /^    internal: true\$/' compose.remote-inference.yaml"
 
 if grep -q 'record_this_install' "$REPO_ROOT/bin/ut-install"; then
     capability_discriminates "an install run nobody keeps" \
@@ -1500,7 +1520,7 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
 
     install_walk_discriminates "a platform left calling the node itself" \
         "it calls its own relay" \
-        "sed -i.bak 's|^LINK_RELAY_URL=\"http://caddy:8445/v1\"\$|LINK_RELAY_URL=\"https://node.example.test:8444/v1\"|' bin/ut-install"
+        "sed -i.bak 's|^LINK_RELAY_URL=\"http://inference-relay:8445/v1\"\$|LINK_RELAY_URL=\"https://node.example.test:8444/v1\"|' bin/ut-install"
 
     install_walk_discriminates "a platform whose link file Docker would make a directory of" \
         "it calls its own relay" \
@@ -1852,6 +1872,10 @@ fi
         "two destinations stops the install, before" \
         "sed -i.bak '/^    die_on_two_backup_destinations \"\$local_file\"\$/d' bin/ut-install"
 
+    install_walk_discriminates "a backup destination over plain HTTP installed without a word" \
+        "a destination over plain HTTP is installed" \
+        "sed -i.bak '/^    warn_of_a_backup_destination_in_clear \"\$local_file\"\$/d' bin/ut-install"
+
     install_walk_discriminates "two backup destinations let through" \
         "naming two destinations stops the install" \
         "sed -i.bak '/both say where the backup goes/,/exit 1/ s/exit 1/:/' bin/ut-install"
@@ -1995,6 +2019,10 @@ if [[ -x "$REPO_ROOT/test/ingress.sh" ]]; then
     ingress_discriminates "an arbiter served to any client" \
         "the arbiter refuses a client without a certificate" \
         "sed -i.bak 's/mode require_and_verify/mode request/' caddy/arbiter-surface.caddy"
+
+    ingress_discriminates "a relay listening on every network its Caddy is on" \
+        "a container that does not call the relay cannot reach it" \
+        "sed -i.bak '/bind {\$INFERENCE_RELAY_ADDRESS}/d' caddy/link-relay.caddy"
 
     ingress_discriminates "the relay token handed on to the node" \
         "its token stays home" \

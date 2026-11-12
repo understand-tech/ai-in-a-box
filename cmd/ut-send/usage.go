@@ -6,7 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -43,19 +46,144 @@ func surface(host, domain string) string {
 	return "_other"
 }
 
-var hostLabel = regexp.MustCompile(`host="([^"]*)"`)
+var usageLine = regexp.MustCompile(`^([A-Za-z_:][A-Za-z0-9_:]*)(\{.*\})?[ \t]+([^ \t]+)[ \t]+([^ \t]+)$`)
+var usageNumber = regexp.MustCompile(`^(?:[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?|NaN|[+-]?Inf)$`)
+var usageLabel = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)="((?:[^"\\\r\n]|\\[\\n"])*)"(,|$)`)
 
-func rewriteSurfaces(dump, domain string) string {
-	lines := strings.SplitAfter(dump, "\n")
-	for i, line := range lines {
-		if !strings.HasPrefix(line, "caddy_") {
+var additiveCaddySeries = map[string]bool{
+	"caddy_http_requests_total":                  true,
+	"caddy_http_request_errors_total":            true,
+	"caddy_http_request_duration_seconds_bucket": true,
+	"caddy_http_request_duration_seconds_sum":    true,
+	"caddy_http_request_duration_seconds_count":  true,
+}
+
+type usageSample struct {
+	series, sourceHost, timeText, valueText string
+	timestamp                               int64
+	value                                   float64
+	additive                                bool
+}
+
+func parseUsageSample(line, domain string) (usageSample, error) {
+	parts := usageLine.FindStringSubmatch(line)
+	if parts == nil || !usageNumber.MatchString(parts[3]) || !usageNumber.MatchString(parts[4]) {
+		return usageSample{}, errors.New("unsupported scalar sample")
+	}
+	value, err := strconv.ParseFloat(parts[3], 64)
+	if err != nil {
+		return usageSample{}, errors.New("invalid sample value")
+	}
+	seconds, err := strconv.ParseFloat(parts[4], 64)
+	millis := seconds * 1000
+	if err != nil || math.IsNaN(millis) || math.IsInf(millis, 0) || millis < float64(math.MinInt64) || millis >= -float64(math.MinInt64) {
+		return usageSample{}, errors.New("invalid sample timestamp")
+	}
+	sample := usageSample{series: parts[1], timeText: parts[4], valueText: parts[3], value: value, timestamp: int64(millis)}
+	body := strings.TrimSuffix(strings.TrimPrefix(parts[2], "{"), "}")
+	labels := map[string]string{}
+	for body != "" {
+		label := usageLabel.FindStringSubmatch(body)
+		if label == nil || label[1] == "__name__" {
+			return usageSample{}, errors.New("unsupported sample labels")
+		}
+		if _, exists := labels[label[1]]; exists {
+			return usageSample{}, errors.New("duplicate sample label")
+		}
+		labels[label[1]] = label[2]
+		if label[1] == "host" && strings.HasPrefix(parts[1], "caddy_") {
+			host, err := strconv.Unquote(`"` + label[2] + `"`)
+			if err != nil {
+				return usageSample{}, errors.New("invalid host label")
+			}
+			sample.sourceHost = host
+			labels["host"] = surface(host, domain)
+			sample.additive = additiveCaddySeries[parts[1]] && (labels["host"] == "apps" || labels["host"] == "_other")
+		}
+		body = body[len(label[0]):]
+		if body == "" && label[3] == "," {
+			return usageSample{}, errors.New("trailing label separator")
+		}
+	}
+	if len(labels) > 0 {
+		names := make([]string, 0, len(labels))
+		for name := range labels {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		encoded := make([]string, 0, len(names))
+		for _, name := range names {
+			encoded = append(encoded, name+`="`+labels[name]+`"`)
+		}
+		sample.series += "{" + strings.Join(encoded, ",") + "}"
+	}
+	return sample, nil
+}
+
+func sameUsageValue(left, right float64) bool {
+	return left == right || math.IsNaN(left) && math.IsNaN(right)
+}
+
+func rewriteSurfaces(dump, domain string) (string, error) {
+	var samples []usageSample
+	ended := false
+	for number, line := range strings.Split(dump, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
 			continue
 		}
-		lines[i] = hostLabel.ReplaceAllStringFunc(line, func(label string) string {
-			return `host="` + surface(hostLabel.FindStringSubmatch(label)[1], domain) + `"`
-		})
+		if ended {
+			return "", errors.New("data after OpenMetrics EOF")
+		}
+		if line == "# EOF" {
+			ended = true
+			continue
+		}
+		sample, err := parseUsageSample(line, domain)
+		if err != nil {
+			return "", fmt.Errorf("usage line %d: %w", number+1, err)
+		}
+		samples = append(samples, sample)
 	}
-	return strings.Join(lines, "")
+	if !ended {
+		return "", errors.New("missing OpenMetrics EOF")
+	}
+	sort.SliceStable(samples, func(i, j int) bool {
+		if samples[i].series != samples[j].series {
+			return samples[i].series < samples[j].series
+		}
+		return samples[i].timestamp < samples[j].timestamp
+	})
+	var output strings.Builder
+	for i := 0; i < len(samples); {
+		first := samples[i]
+		values := map[string]float64{first.sourceHost: first.value}
+		sum := first.value
+		j := i + 1
+		for j < len(samples) && samples[j].series == first.series && samples[j].timestamp == first.timestamp {
+			next := samples[j]
+			if previous, exists := values[next.sourceHost]; exists {
+				if !sameUsageValue(previous, next.value) {
+					return "", errors.New("conflicting samples from one source")
+				}
+			} else {
+				if !first.additive && !sameUsageValue(first.value, next.value) {
+					return "", errors.New("conflicting non-additive samples")
+				}
+				values[next.sourceHost] = next.value
+				sum += next.value
+			}
+			j++
+		}
+		value := first.valueText
+		if first.additive && len(values) > 1 {
+			value = strconv.FormatFloat(sum, 'g', -1, 64)
+		}
+		fmt.Fprintf(&output, "%s %s %s\n", first.series, value, first.timeText)
+		i = j
+	}
+	output.WriteString("# EOF\n")
+	return output.String(), nil
 }
 
 type window struct{ from, to int64 }
@@ -133,8 +261,12 @@ func collectUsage(place Place, m machine) error {
 		if err != nil {
 			return fmt.Errorf("the recorder could not be read: %w", err)
 		}
-		if holdsSamples(dump) {
-			if err := enqueue(queueDir(place.State), "usage", gzipped(rewriteSurfaces(dump, domain)), place.Now()); err != nil {
+		normalized, err := rewriteSurfaces(dump, domain)
+		if err != nil {
+			return fmt.Errorf("the recorder export could not be normalized: %w", err)
+		}
+		if holdsSamples(normalized) {
+			if err := enqueue(queueDir(place.State), "usage", gzipped(normalized), place.Now()); err != nil {
 				return err
 			}
 		}
