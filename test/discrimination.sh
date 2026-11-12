@@ -587,6 +587,14 @@ capability_discriminates "a platform relay that starts without its token" \
     "a platform reaches its compute node through its own relay" \
     "sed -i.bak 's|VLLM_API_KEY: \${VLLM_API_KEY:?ut-install generates it}|VLLM_API_KEY: \${VLLM_API_KEY:-}|' compose.remote-inference.yaml"
 
+capability_discriminates "a service that never calls the relay, placed on its network" \
+    "the relay to a compute node is joined only by Caddy and the services that call it" \
+    "perl -0pi -e 's/(  llm:\\n    networks:\\n      - ut-inference-relay-network\\n)/\$1\\n  frontend:\\n    networks:\\n      - ut-inference-relay-network\\n/' compose.remote-inference.yaml"
+
+capability_discriminates "a relay network left open to the outside" \
+    "the relay to a compute node is joined only by Caddy and the services that call it" \
+    "perl -ni -e 'print unless /^    internal: true\$/' compose.remote-inference.yaml"
+
 if grep -q 'record_this_install' "$REPO_ROOT/bin/ut-install"; then
     capability_discriminates "an install run nobody keeps" \
         "every install run is kept, from its first step" \
@@ -1492,7 +1500,7 @@ if [[ -x "$REPO_ROOT/test/fresh-install.sh" ]]; then
 
     install_walk_discriminates "a platform left calling the node itself" \
         "it calls its own relay" \
-        "sed -i.bak 's|^LINK_RELAY_URL=\"http://caddy:8445/v1\"\$|LINK_RELAY_URL=\"https://node.example.test:8444/v1\"|' bin/ut-install"
+        "sed -i.bak 's|^LINK_RELAY_URL=\"http://inference-relay:8445/v1\"\$|LINK_RELAY_URL=\"https://node.example.test:8444/v1\"|' bin/ut-install"
 
     install_walk_discriminates "a platform whose link file Docker would make a directory of" \
         "it calls its own relay" \
@@ -1987,6 +1995,10 @@ if [[ -x "$REPO_ROOT/test/ingress.sh" ]]; then
     ingress_discriminates "an arbiter served to any client" \
         "the arbiter refuses a client without a certificate" \
         "sed -i.bak 's/mode require_and_verify/mode request/' caddy/arbiter-surface.caddy"
+
+    ingress_discriminates "a relay listening on every network its Caddy is on" \
+        "a container that does not call the relay cannot reach it" \
+        "sed -i.bak '/bind {\$INFERENCE_RELAY_ADDRESS}/d' caddy/link-relay.caddy"
 
     ingress_discriminates "the relay token handed on to the node" \
         "its token stays home" \

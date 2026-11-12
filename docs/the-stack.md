@@ -60,7 +60,14 @@ which means the containers attached only to those have no route off the box.
 | `ut-data-network` | **yes** | `mongodb`, `mongodb-backup`, `api`, `api-customer`, the workers, `app-llms`, `app-assistants`, `llm` |
 | `ut-metrics-network` | **yes** | `caddy`, `metrics` — the recorder reads Caddy's counters on `:2020`, which no compose file publishes |
 
-Two more, for the add-on only:
+Three more, each for one overlay only:
+
+- **`ut-inference-relay-network`** (internal, a platform that takes its inference
+  from a compute node) — `caddy`, `api`, `api-customer` and `llm`: the services
+  that send inference requests, and the relay that carries them to the node,
+  which listens at `inference-relay:8445` on this network and no other. Its range
+  is `198.18.255.240/29`; `INFERENCE_RELAY_SUBNET` and `INFERENCE_RELAY_ADDRESS`
+  in `local.env` change it for a second appliance on the same Docker host.
 
 - **`ut-app-builder-network`** (internal, App Builder) — `caddy`, `app-builder`,
   `api-customer` and `app-builder-docker`: what the generated apps reach by name,

@@ -5,14 +5,46 @@ name: ${COMPOSE_PROJECT_NAME:-understandtech}
 #   UT_LINKED_NODE_FILE=<the file ut-pair writes once the platform is paired>
 #
 # ut-install adds it with --inference-from, and points VLLM_LLM_BASE_URL at
-# http://caddy:8445/v1. The services keep calling a plain address with
+# http://inference-relay:8445/v1. The services keep calling a plain address with
 # VLLM_API_KEY; this box's Caddy carries the request to the node under its link
-# certificate, and trusts the node's root alone for the answer.
+# certificate, and trusts the node's root alone for the answer. The relay listens
+# on a network of its own, joined by the services that call it and by no other.
+#
+#   INFERENCE_RELAY_SUBNET, INFERENCE_RELAY_ADDRESS: the network's range and the
+#   address Caddy takes in it; change them in local.env for a second appliance
+#   on the same Docker host.
 
 services:
   caddy:
     environment:
       VLLM_API_KEY: ${VLLM_API_KEY:?ut-install generates it}
+      INFERENCE_RELAY_ADDRESS: ${INFERENCE_RELAY_ADDRESS:-198.18.255.242}
+    networks:
+      ut-inference-relay-network:
+        ipv4_address: ${INFERENCE_RELAY_ADDRESS:-198.18.255.242}
+        aliases:
+          - inference-relay
     volumes:
       - ${UT_LINKED_NODE_FILE:-./caddy/no-link.caddy}:/etc/caddy/link.caddy:ro
       - ./caddy/link-relay.caddy:/etc/caddy/link-relay.caddy:ro
+
+  api:
+    networks:
+      - ut-inference-relay-network
+
+  api-customer:
+    networks:
+      - ut-inference-relay-network
+
+  llm:
+    networks:
+      - ut-inference-relay-network
+
+networks:
+  ut-inference-relay-network:
+    name: ${RESOURCE_PREFIX:-ut}-inference-relay-network
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: ${INFERENCE_RELAY_SUBNET:-198.18.255.240/29}

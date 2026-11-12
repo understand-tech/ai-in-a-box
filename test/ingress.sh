@@ -8,6 +8,8 @@ source "$SCRIPT_DIR/images.sh"
 WORK_DIR="$(mktemp -d)"
 DOMAIN="box.example.test"
 NETWORK="ut-ingress-check"
+RELAY_NETWORK="ut-ingress-relay-check"
+RELAY_ADDRESS="198.18.255.242"
 PROBE_IMAGE=$ALPINE_IMAGE
 
 # Every other suite stops before `docker compose up`, because the application
@@ -17,7 +19,7 @@ PROBE_IMAGE=$ALPINE_IMAGE
 cleanup() {
     docker rm -f ut-ingress-caddy ut-ingress-platform ut-ingress-pairbox ut-ingress-hold ut-ingress-stub ut-ingress-probe ut-ingress-recorder >/dev/null 2>&1
     docker volume rm ut-ingress-run >/dev/null 2>&1
-    docker network rm "$NETWORK" >/dev/null 2>&1
+    docker network rm "$NETWORK" "$RELAY_NETWORK" >/dev/null 2>&1
     rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
@@ -197,8 +199,10 @@ start_the_pair_box() {
 # with the relay ut-pair links once the two are paired.
 start_the_platform() {
     : > "$WORK_DIR/linked-node.caddy"
-    docker run -d --name ut-ingress-platform --network "$NETWORK" \
-        -e UT_DOMAIN="$PLATFORM_DOMAIN" -e VLLM_API_KEY="$RELAY_TOKEN" \
+    docker network create --internal --subnet 198.18.255.240/29 "$RELAY_NETWORK" >/dev/null 2>&1
+    docker create --name ut-ingress-platform --network "$RELAY_NETWORK" --ip "$RELAY_ADDRESS" \
+        --network-alias inference-relay \
+        -e UT_DOMAIN="$PLATFORM_DOMAIN" -e VLLM_API_KEY="$RELAY_TOKEN" -e INFERENCE_RELAY_ADDRESS="$RELAY_ADDRESS" \
         -v "$REPO_ROOT/Caddyfile":/etc/caddy/Caddyfile:ro \
         -v "$REPO_ROOT/caddy/ingress-internal.caddy":/etc/caddy/ingress.caddy:ro \
         -v "$REPO_ROOT/caddy/no-inference-surface.caddy":/etc/caddy/inference.caddy:ro \
@@ -206,6 +210,9 @@ start_the_platform() {
         -v "$REPO_ROOT/caddy/link-relay.caddy":/etc/caddy/link-relay.caddy:ro \
         -v "$REPO_ROOT/caddy/no-link.caddy":/etc/caddy/arbiter-link.caddy:ro \
         "$CADDY_IMAGE" >/dev/null
+    docker network connect "$NETWORK" ut-ingress-platform
+    docker start ut-ingress-platform >/dev/null
+    docker network connect "$RELAY_NETWORK" ut-ingress-probe
 }
 
 restart_the_front_door_in() {
@@ -640,7 +647,7 @@ relay_curl() {
 the_platform_reaches_the_engine_through_its_relay() {
     local body waited=0
     while (( waited < 60 )); do
-        body=$(relay_curl -H "Authorization: Bearer ${RELAY_TOKEN}" "http://ut-ingress-platform:8445/v1/models")
+        body=$(relay_curl -H "Authorization: Bearer ${RELAY_TOKEN}" "http://inference-relay:8445/v1/models")
         [[ "$body" == "stub 8000"* ]] && break
         sleep 2; waited=$((waited + 2))
     done
@@ -651,10 +658,23 @@ the_platform_reaches_the_engine_through_its_relay() {
 
 the_relay_answers() {
     local want=$1 path=$2 code; shift 2
-    code=$(relay_curl -o /dev/null -w '%{http_code}' "$@" "http://ut-ingress-platform:8445${path}")
+    code=$(relay_curl -o /dev/null -w '%{http_code}' "$@" "http://inference-relay:8445${path}")
     [[ "$code" == "$want" ]] && return 0
     echo "the relay answered ${code:-nothing} on ${path} instead of ${want}"
     return 1
+}
+
+the_relay_is_out_of_reach_of_a_container_that_does_not_call_it() {
+    local platform_ip target
+    platform_ip=$(docker inspect -f "{{(index .NetworkSettings.Networks \"${NETWORK}\").IPAddress}}" ut-ingress-platform)
+    for target in inference-relay "$platform_ip" "$RELAY_ADDRESS"; do
+        if docker run --rm --network "$NETWORK" "$PROBE_IMAGE" wget -S -T 5 -O /dev/null \
+            --header "Authorization: Bearer ${RELAY_TOKEN}" "http://${target}:8445/v1/models" 2>&1 | grep -q 'HTTP/'; then
+            echo "a container outside the relay network reached the relay at ${target}"
+            return 1
+        fi
+    done
+    return 0
 }
 
 printf '\n%sMode compute — the engine, for the platforms it admits%s\n' "$BOLD" "$NC"
@@ -683,6 +703,8 @@ surface "the relay refuses a caller with another token" \
     the_relay_answers 401 /v1/models -H "Authorization: Bearer not-${RELAY_TOKEN}"
 surface "the relay carries nothing outside /v1/" \
     the_relay_answers 404 /metrics -H "Authorization: Bearer ${RELAY_TOKEN}"
+surface "a container that does not call the relay cannot reach it, by name or by address" \
+    the_relay_is_out_of_reach_of_a_container_that_does_not_call_it
 link_the_platform_to "$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ut-ingress-caddy)"
 surface "the platform reaches the engine by its IP too, which carries no name" \
     the_platform_reaches_the_engine_through_its_relay

@@ -294,11 +294,11 @@ state_setup() {
         # same stand-in for Hugging Face.
         # The preflight reads the settings an earlier run rendered, as on an update.
         relay_platform_on_a_smaller_disk|relay_platform_taking_it_back_on_a_smaller_disk)
-            echo 'install -d -m 750 /etc/understandtech && printf '"'"'COMPOSE_FILE="compose.yaml:compose.remote-inference.yaml"\nCOMPOSE_PROFILES=""\nVLLM_LLM_BASE_URL="http://caddy:8445/v1"\n'"'"' > /etc/understandtech/local.env && cp /etc/understandtech/local.env /etc/understandtech/.env' ;;
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'COMPOSE_FILE="compose.yaml:compose.remote-inference.yaml"\nCOMPOSE_PROFILES=""\nVLLM_LLM_BASE_URL="http://inference-relay:8445/v1"\n'"'"' > /etc/understandtech/local.env && cp /etc/understandtech/local.env /etc/understandtech/.env' ;;
         relay_platform_updated|relay_platform_given_its_inference_back)
-            echo 'install -d -m 750 /etc/understandtech && printf '"'"'COMPOSE_FILE="compose.yaml:compose.remote-inference.yaml"\nCOMPOSE_PROFILES=""\nVLLM_LLM_BASE_URL="http://caddy:8445/v1"\nVLLM_VLM_BASE_URL="http://caddy:8445/v1"\nUT_LINKED_NODE_FILE="/etc/understandtech/linked-node.caddy"\n'"'"' > /etc/understandtech/local.env && : > /etc/understandtech/linked-node.caddy && printf '"'"'{"links": [{"address": "node.example.test:8444"}]}\n'"'"' > /etc/understandtech/links.json && rm -f /var/lib/understandtech/weights-placed.txt && cp /w/weights/lists/*.txt /usr/share/understandtech/models/weights/ && cp /w/weights/curl /stub/curl' ;;
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'COMPOSE_FILE="compose.yaml:compose.remote-inference.yaml"\nCOMPOSE_PROFILES=""\nVLLM_LLM_BASE_URL="http://inference-relay:8445/v1"\nVLLM_VLM_BASE_URL="http://inference-relay:8445/v1"\nUT_LINKED_NODE_FILE="/etc/understandtech/linked-node.caddy"\n'"'"' > /etc/understandtech/local.env && : > /etc/understandtech/linked-node.caddy && printf '"'"'{"links": [{"address": "node.example.test:8444"}]}\n'"'"' > /etc/understandtech/links.json && rm -f /var/lib/understandtech/weights-placed.txt && cp /w/weights/lists/*.txt /usr/share/understandtech/models/weights/ && cp /w/weights/curl /stub/curl' ;;
         relay_platform_without_its_gpu)
-            echo 'rm -f /stub/nvidia-smi && install -d -m 750 /etc/understandtech && printf '"'"'COMPOSE_FILE="compose.yaml:compose.remote-inference.yaml"\nCOMPOSE_PROFILES=""\nVLLM_LLM_BASE_URL="http://caddy:8445/v1"\nVLLM_VLM_BASE_URL="http://caddy:8445/v1"\nUT_LINKED_NODE_FILE="/etc/understandtech/linked-node.caddy"\n'"'"' > /etc/understandtech/local.env && : > /etc/understandtech/linked-node.caddy && printf '"'"'{"links": [{"address": "node.example.test:8444"}]}\n'"'"' > /etc/understandtech/links.json' ;;
+            echo 'rm -f /stub/nvidia-smi && install -d -m 750 /etc/understandtech && printf '"'"'COMPOSE_FILE="compose.yaml:compose.remote-inference.yaml"\nCOMPOSE_PROFILES=""\nVLLM_LLM_BASE_URL="http://inference-relay:8445/v1"\nVLLM_VLM_BASE_URL="http://inference-relay:8445/v1"\nUT_LINKED_NODE_FILE="/etc/understandtech/linked-node.caddy"\n'"'"' > /etc/understandtech/local.env && : > /etc/understandtech/linked-node.caddy && printf '"'"'{"links": [{"address": "node.example.test:8444"}]}\n'"'"' > /etc/understandtech/links.json' ;;
         weights_altered_on_the_way)
             echo 'rm -f /var/lib/understandtech/weights-placed.txt && cp /w/weights/lists/*.txt /usr/share/understandtech/models/weights/ && cp /w/weights/curl /stub/curl && sed -i "s/^[0-9a-f]* /0000000000000000000000000000000000000000000000000000000000000000 /" /usr/share/understandtech/models/weights/platform.txt' ;;
         orphan_volume) echo ': # the volume is asserted through the stub' ;;
@@ -809,8 +809,8 @@ a_model_nobody_listed_is_refused_before_anything_is_written() {
 a_control_plane_calls_its_own_relay() {
     local settings
     settings=$(of_state pointed_at_a_compute_node local-env)
-    grep -qx 'VLLM_LLM_BASE_URL="http://caddy:8445/v1"' <<< "$settings" \
-        && grep -qx 'VLLM_VLM_BASE_URL="http://caddy:8445/v1"' <<< "$settings" \
+    grep -qx 'VLLM_LLM_BASE_URL="http://inference-relay:8445/v1"' <<< "$settings" \
+        && grep -qx 'VLLM_VLM_BASE_URL="http://inference-relay:8445/v1"' <<< "$settings" \
         && grep -qx 'UT_LINKED_NODE_FILE="/etc/understandtech/linked-node.caddy"' <<< "$settings" \
         && grep -qx '/etc/understandtech/linked-node.caddy' <<< "$(of_state pointed_at_a_compute_node link-files)" \
         && grep -q '^COMPOSE_FILE=.*compose.remote-inference.yaml' <<< "$settings" && return 0
@@ -824,7 +824,7 @@ a_platform_linked_by_key_moves_to_its_relay() {
     local settings output
     settings=$(of_state linked_by_key_before local-env)
     output=$(output_of linked_by_key_before)
-    grep -qx 'VLLM_LLM_BASE_URL="http://caddy:8445/v1"' <<< "$settings" \
+    grep -qx 'VLLM_LLM_BASE_URL="http://inference-relay:8445/v1"' <<< "$settings" \
         && grep -qx 'UT_LINKED_NODE_FILE="/etc/understandtech/linked-node.caddy"' <<< "$settings" \
         && ! grep -q 'UT_INFERENCE_CA_BUNDLE' <<< "$settings" \
         && ! grep -q 'inference-ca-bundle' <<< "$(of_state linked_by_key_before link-files)" \

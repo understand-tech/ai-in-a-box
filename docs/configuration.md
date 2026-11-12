@@ -704,7 +704,7 @@ services at its own Caddy and names the file `ut-pair join` writes:
 
 ```bash
 COMPOSE_FILE="compose.yaml:compose.remote-inference.yaml"
-VLLM_LLM_BASE_URL="http://caddy:8445/v1"
+VLLM_LLM_BASE_URL="http://inference-relay:8445/v1"
 UT_LINKED_NODE_FILE="/etc/understandtech/linked-node.caddy"
 ```
 

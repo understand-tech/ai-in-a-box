@@ -331,9 +331,11 @@ authorities, sealed with that code. From then on the node serves the platform's
 certificate, and the platform trusts the node's root and no other. The pairing
 port, 8447, is open for those 15 minutes only.
 
-The platform's services call its own Caddy, at `http://caddy:8445/v1`, with
+The platform's services call its own Caddy, at `http://inference-relay:8445/v1`, with
 `VLLM_API_KEY`, which never leaves the platform. Caddy carries each call to the
-node under the platform's certificate.
+node under the platform's certificate. The relay listens on a network of its
+own, joined by Caddy and by the services that send inference requests, and by
+no other container.
 
 Give the control plane a GPU if its users chat over their documents: `llm` runs
 there, and does not start without one.
