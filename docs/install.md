@@ -67,17 +67,16 @@ engine is installed here.
 
 ```bash
 VERSION=2026.09.1
-read -rs UT_LICENSE && export UT_LICENSE
-curl -fsSLO -K <(printf 'user = "license:%s"\n' "$UT_LICENSE") \
-    "https://raw.pkg.keygen.sh/cdfe8998-3b6e-4f86-8f9f-c51a7cb642e0/856fd43a-b015-4e0f-9f45-f0c4353b69a8/@understandtech/$VERSION/ut-get"
-sudo --preserve-env=UT_LICENSE bash ut-get --version "$VERSION" --domain box.example.com
+curl -fsSLO "https://get.understand.tech/$VERSION/ut-get"
+sudo bash ut-get --version "$VERSION" --domain box.example.com
 ```
 
-`read -rs` waits for the license key: paste it, then Enter. It is not shown, and
-stays out of the shell's history; `curl` reads it from a file descriptor rather
-than its command line, and `sudo` hands it on to `ut-get` and `ut-install`
-without one either. Every file of a release is downloaded from Keygen with this
-key — the same key the install activates.
+`ut-get` asks for the license key: paste it, then Enter. It is not shown, stays
+out of the shell's history and never reaches a command line. `ut-get` and the
+key that verifies a release are the only two files published without a
+license, at `get.understand.tech`; every other file of a release is downloaded
+from Keygen with the license key — the same key the install activates. To give
+the key without being asked, pass `--license-file <file>`.
 
 `ut-get` downloads the package and its signature into
 `/var/cache/understandtech/releases/<version>/`, checks the signature with the
@@ -176,8 +175,8 @@ ssh -N -L <port>:127.0.0.1:<port> <user>@<box>
 Then open the printed address in your browser and press **Continue**. Keep the
 tunnel open until the page shows the two passwords.
 
-`ut-get` itself comes from GitHub over HTTPS and nothing checks it before it
-runs. To check every file before running anything, follow the steps below
+`ut-get` itself comes from `get.understand.tech` over HTTPS and nothing checks
+it before it runs. To check every file before running anything, follow the steps below
 instead.
 
 ## 1 · Get the release

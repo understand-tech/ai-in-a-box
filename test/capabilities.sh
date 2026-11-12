@@ -4008,6 +4008,89 @@ if [[ -x "$REPO_ROOT/bin/ut-get" ]]; then
         the_install_page_downloads_every_file_the_sums_list
 fi
 
+a_bootstrap_to_publish() {
+    local work="$WORK_DIR/bootstrap-$1"
+    rm -rf "$work"
+    mkdir -p "$work/bin" "$work/dist" "$work/published"
+    printf 'the launcher, as built\n' > "$work/dist/ut-get"
+    printf 'the key that verifies a release\n' > "$work/dist/release.pub"
+    cat > "$work/bin/aws" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$AWS_CALLS"
+key="" body="" only_if_absent=""
+while (( $# )); do
+    case "$1" in
+        --key) key=$2; shift ;;
+        --body) body=$2; shift ;;
+        --if-none-match) only_if_absent=$2; shift ;;
+    esac
+    shift
+done
+if [[ "$only_if_absent" == "*" && -e "$PUBLISHED/$key" ]]; then
+    echo "An error occurred (PreconditionFailed) when calling the PutObject operation: At least one of the pre-conditions you specified did not hold" >&2
+    exit 254
+fi
+mkdir -p "$(dirname "$PUBLISHED/$key")"
+cp "$body" "$PUBLISHED/$key"
+EOF
+    chmod +x "$work/bin/aws"
+    printf '%s' "$work"
+}
+
+publish_the_bootstrap() {
+    local work=$1; shift
+    PATH="$work/bin:$PATH" AWS_CALLS="$work/aws-calls" PUBLISHED="$work/published" \
+        OUT_DIR="$work/dist" BOOTSTRAP_BUCKET="${BOOTSTRAP_BUCKET-the-bucket}" BOOTSTRAP_URL="file://$work/published" \
+        "$REPO_ROOT/packaging/publish-bootstrap.sh" "$@"
+}
+
+the_bootstrap_is_published_under_its_version() {
+    local work; work=$(a_bootstrap_to_publish first)
+    publish_the_bootstrap "$work" 2026.99.1 >/dev/null || { echo "the publication failed"; return 1; }
+    cmp -s "$work/dist/ut-get" "$work/published/2026.99.1/ut-get" \
+        && cmp -s "$work/dist/release.pub" "$work/published/2026.99.1/release.pub" \
+        || { echo "published:"; find "$work/published" -type f; return 1; }
+    [[ $(grep -c -- '--bucket the-bucket .*--if-none-match \*' "$work/aws-calls") == 2 ]] \
+        || { echo "the uploads were:"; cat "$work/aws-calls"; return 1; }
+}
+
+publishing_the_same_bootstrap_again_changes_nothing() {
+    local work said; work=$(a_bootstrap_to_publish again)
+    publish_the_bootstrap "$work" 2026.99.1 >/dev/null || { echo "the first publication failed"; return 1; }
+    said=$(publish_the_bootstrap "$work" 2026.99.1 2>&1) || { echo "the second publication failed: $said"; return 1; }
+    [[ $(grep -c '^already published ' <<< "$said") == 2 ]] || { echo "it said: $said"; return 1; }
+}
+
+a_published_bootstrap_is_never_replaced() {
+    local work said; work=$(a_bootstrap_to_publish replaced)
+    publish_the_bootstrap "$work" 2026.99.1 >/dev/null || { echo "the first publication failed"; return 1; }
+    printf 'another launcher\n' > "$work/dist/ut-get"
+    if said=$(publish_the_bootstrap "$work" 2026.99.1 2>&1); then
+        echo "another launcher was published over the first: $said"; return 1
+    fi
+    grep -q 'the launcher, as built' "$work/published/2026.99.1/ut-get" || { echo "the published launcher changed"; return 1; }
+    grep -q 'never replaced' <<< "$said" || { echo "it said: $said"; return 1; }
+}
+
+without_a_bucket_or_a_version_nothing_is_published() {
+    local work; work=$(a_bootstrap_to_publish refused)
+    BOOTSTRAP_BUCKET="" publish_the_bootstrap "$work" 2026.99.1 >/dev/null 2>&1 && { echo "published without a bucket"; return 1; }
+    publish_the_bootstrap "$work" ../2026.99.1 >/dev/null 2>&1 && { echo "published a version that is not one"; return 1; }
+    [[ ! -s "$work/aws-calls" ]] || { echo "the bucket was called:"; cat "$work/aws-calls"; return 1; }
+}
+
+if [[ -x "$REPO_ROOT/packaging/publish-bootstrap.sh" ]]; then
+    group "What a machine downloads before it has shown a license"
+    capability "the launcher and the key that verifies a release are published under their version" \
+        the_bootstrap_is_published_under_its_version
+    capability "publishing the same release again changes nothing" \
+        publishing_the_same_bootstrap_again_changes_nothing
+    capability "a published launcher is never replaced by another" \
+        a_published_bootstrap_is_never_replaced
+    capability "without a bucket, or with a version that is not one, nothing is published" \
+        without_a_bucket_or_a_version_nothing_is_published
+fi
+
 if [[ -x "$REPO_ROOT/bin/ut-license" ]]; then
     group "License keys"
     capability "a license file Keygen signed for this machine is accepted" \

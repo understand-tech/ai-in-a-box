@@ -87,13 +87,22 @@ In order, on `ubuntu-24.04`:
 8. **Checksums**: `sha256sum` over the package, its signature, the bill of
    materials, `ut-verify`, `ut-get` and `release.pub`, written to
    `SHA256SUMS`.
-9. **Publish to Keygen**: `packaging/publish-to-keygen.sh "$VERSION"` puts
+9. **Publish the launcher**: `packaging/publish-bootstrap.sh "$VERSION"` puts
+   `ut-get` and `release.pub` under the release's version at
+   `get.understand.tech`, the only two files a machine downloads before it has
+   shown a license. A published file is never replaced: the same release run
+   again changes nothing, and a tag moved to another commit after its launcher
+   was published is refused — the change takes the next version. It needs
+   `BOOTSTRAP_ROLE_ARN` and `BOOTSTRAP_BUCKET`, variables of the `release`
+   environment; the job assumes that role with GitHub's identity token, and
+   holds no key of its own.
+10. **Publish to Keygen**: `packaging/publish-to-keygen.sh "$VERSION"` puts
    the same seven files in the raw package `understandtech`, under the
    release's version, where a box downloads them with its license key alone.
    A version already published is left as it is: a release stopped half way
    is run again. It needs `KEYGEN_PRODUCT_TOKEN` in the `release`
    environment. The images still come from the registry.
-10. **Publish**: `gh release create` on the tag, titled with the version,
+11. **Publish**: `gh release create` on the tag, titled with the version,
    marked a pre-release when the version carries a suffix, with all seven
    files attached. What they are and how to check them before installing is in
    [installing — get the release](install.md#1--get-the-release) and

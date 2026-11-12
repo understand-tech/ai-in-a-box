@@ -841,6 +841,10 @@ capability_discriminates "two license files in a folder, one taken at random" \
     "the license file carried in a folder goes to ut-install" \
     "sed -i.bak 's#(( \${\#found\[@\]} <= 1 )) ||#true ||#' bin/ut-get"
 
+capability_discriminates "publish-bootstrap.sh uploading without requiring that the name is free" \
+    "a published launcher is never replaced by another" \
+    "sed -i.bak 's/--if-none-match .\\*. //' packaging/publish-bootstrap.sh"
+
 capability_discriminates "ut-get preparing with another tool than ut-install loads with" \
     "ut-get prepares with the tools ut-install loads with" \
     "sed -i.bak 's|^FOLDER_SKOPEO_TOOL=.*|FOLDER_SKOPEO_TOOL=\"quay.io/skopeo/stable:v1.19.0@sha256:0000000000000000000000000000000000000000000000000000000000000000\"|' bin/ut-get"

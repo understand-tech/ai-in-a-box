@@ -111,6 +111,28 @@ jobs:
           cp bin/ut-verify bin/ut-get packaging/release.pub dist/
           ( cd dist && sha256sum understandtech_*.deb understandtech_*.deb.sig understandtech_*.cdx.json ut-verify ut-get release.pub > SHA256SUMS )
 
+      # The role assumed below may add a file that does not exist yet, and nothing
+      # else: a published launcher cannot be replaced.
+      - name: Check where the launcher is published
+        env:
+          BOOTSTRAP_ROLE_ARN: ${{ vars.BOOTSTRAP_ROLE_ARN }}
+          BOOTSTRAP_BUCKET: ${{ vars.BOOTSTRAP_BUCKET }}
+        run: |
+          [ -n "$BOOTSTRAP_ROLE_ARN" ] && [ -n "$BOOTSTRAP_BUCKET" ] || {
+            echo "::error::BOOTSTRAP_ROLE_ARN or BOOTSTRAP_BUCKET is not set in the release environment — no machine could download ut-get for this release"
+            exit 1
+          }
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.BOOTSTRAP_ROLE_ARN }}
+          aws-region: eu-central-1
+
+      - name: Publish the launcher
+        env:
+          BOOTSTRAP_BUCKET: ${{ vars.BOOTSTRAP_BUCKET }}
+        run: ./packaging/publish-bootstrap.sh "$VERSION"
+
       - name: Publish to Keygen
         env:
           KEYGEN_PRODUCT_TOKEN: ${{ secrets.KEYGEN_PRODUCT_TOKEN }}
