@@ -98,12 +98,13 @@ upgrades an installed package as readily as it installs a new one.
 
 ```bash
 VERSION=2026.09.2
-BASE=https://github.com/understand-tech/ai-in-a-box/releases/download/v$VERSION
+BASE=https://raw.pkg.keygen.sh/cdfe8998-3b6e-4f86-8f9f-c51a7cb642e0/856fd43a-b015-4e0f-9f45-f0c4353b69a8/@understandtech/$VERSION
+UT_LICENSE=$(sudo cat /etc/understandtech/license)
 
 mkdir ut-update && cd ut-update
 for f in understandtech_${VERSION}_all.deb understandtech_${VERSION}_all.deb.sig \
          ut-verify release.pub SHA256SUMS; do
-    curl -fsSLO "$BASE/$f"
+    curl -fsSLO -K <(printf 'user = "license:%s"\n' "$UT_LICENSE") "$BASE/$f"
 done
 chmod +x ut-verify
 ./ut-verify understandtech_${VERSION}_all.deb
@@ -111,6 +112,10 @@ chmod +x ut-verify
 sudo apt-get install ./understandtech_${VERSION}_all.deb
 sudo ut-install
 ```
+
+The files come from Keygen with the license key the box already stores.
+`sudo ut-get --version "$VERSION"` does all of this in one command, with the
+same key.
 
 **The verification is not a formality here either.** `dpkg` ships with
 `no-debsig`, so it installs whatever it is given — see
@@ -149,6 +154,10 @@ sudo ./bin/ut-install --update
 `--update` is what fast-forwards the checkout. Without it the installer leaves
 the working tree alone, on purpose: a support fix applied on the machine should
 not disappear silently.
+
+To move a checkout to the package, install the release as on a new machine —
+[in one command](install.md#in-one-command), with the box's license key: the
+package takes the checkout's settings over, as the sections below describe.
 
 The installer then does what it always does — and that is the point. It **adds
 what is missing** rather than failing on it.

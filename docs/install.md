@@ -67,9 +67,16 @@ engine is installed here.
 
 ```bash
 VERSION=2026.09.1
-curl -fsSLO "https://github.com/understand-tech/ai-in-a-box/releases/download/v${VERSION}/ut-get"
+curl -fsSLO "https://get.understand.tech/$VERSION/ut-get"
 sudo bash ut-get --version "$VERSION" --domain box.example.com
 ```
+
+`ut-get` asks for the license key: paste it, then Enter. It is not shown, stays
+out of the shell's history and never reaches a command line. `ut-get` and the
+key that verifies a release are the only two files published without a
+license, at `get.understand.tech`; every other file of a release is downloaded
+from Keygen with the license key — the same key the install activates. To give
+the key without being asked, pass `--license-file <file>`.
 
 `ut-get` downloads the package and its signature into
 `/var/cache/understandtech/releases/<version>/`, checks the signature with the
@@ -80,6 +87,8 @@ step 5. Nothing is installed from a package it cannot verify.
 
 - A download that stops resumes when the same command is run again, and a
   release already downloaded installs again with no network.
+- Without `--license-file` or `UT_LICENSE`, `ut-get` takes the key the machine
+  already stores, then asks for it.
 - Without `--version`, it takes the latest release. A pre-release — a version
   with a suffix, such as `2026.10.0-rc3` — is never the latest, so installing one
   takes `--version`.
@@ -166,25 +175,25 @@ ssh -N -L <port>:127.0.0.1:<port> <user>@<box>
 Then open the printed address in your browser and press **Continue**. Keep the
 tunnel open until the page shows the two passwords.
 
-`ut-get` itself comes from GitHub over HTTPS and nothing checks it before it
-runs. To check every file before running anything, follow the steps below
+`ut-get` itself comes from `get.understand.tech` over HTTPS and nothing checks
+it before it runs. To check every file before running anything, follow the steps below
 instead.
 
 ## 1 · Get the release
 
-Releases are published at
-`https://github.com/understand-tech/ai-in-a-box/releases`. **Take all seven
+Releases are downloaded from Keygen with the license key. **Take all seven
 files**, not just the package:
 
 ```bash
 VERSION=2026.09.1
-BASE=https://github.com/understand-tech/ai-in-a-box/releases/download/v$VERSION
+BASE=https://raw.pkg.keygen.sh/cdfe8998-3b6e-4f86-8f9f-c51a7cb642e0/856fd43a-b015-4e0f-9f45-f0c4353b69a8/@understandtech/$VERSION
+read -rs UT_LICENSE
 
 mkdir ut-release && cd ut-release
 for f in understandtech_${VERSION}_all.deb understandtech_${VERSION}_all.deb.sig \
          understandtech_${VERSION}.cdx.json \
          ut-verify ut-get release.pub SHA256SUMS; do
-    curl -fsSLO "$BASE/$f"
+    curl -fsSLO -K <(printf 'user = "license:%s"\n' "$UT_LICENSE") "$BASE/$f"
 done
 chmod +x ut-verify
 ```

@@ -45,6 +45,11 @@ approved merge, on no fixed schedule; `ci.yml` still runs on pushes to
 service, or who approves a merge to `main`. Not verified: not seen rendered —
 no Mermaid engine is installed here.
 
+Only an administrator can create, move or delete a `v*` tag (the ruleset
+*Release tags by admins only*). `release.yml` runs in the `release`
+environment, which only `v*` tags may use: its secrets — the signing key and
+the tokens that publish — reach no workflow started from a branch.
+
 A tag with a suffix, such as `v2026.10.0-rc3`, is a pre-release candidate: it
 is published but never shown as *Latest*, and installing one by version
 requires naming it explicitly — see
@@ -82,7 +87,22 @@ In order, on `ubuntu-24.04`:
 8. **Checksums**: `sha256sum` over the package, its signature, the bill of
    materials, `ut-verify`, `ut-get` and `release.pub`, written to
    `SHA256SUMS`.
-9. **Publish**: `gh release create` on the tag, titled with the version,
+9. **Publish the launcher**: `packaging/publish-bootstrap.sh "$VERSION"` puts
+   `ut-get` and `release.pub` under the release's version at
+   `get.understand.tech`, the only two files a machine downloads before it has
+   shown a license. A published file is never replaced: the same release run
+   again changes nothing, and a tag moved to another commit after its launcher
+   was published is refused — the change takes the next version. It needs
+   `BOOTSTRAP_ROLE_ARN` and `BOOTSTRAP_BUCKET`, variables of the `release`
+   environment; the job assumes that role with GitHub's identity token, and
+   holds no key of its own.
+10. **Publish to Keygen**: `packaging/publish-to-keygen.sh "$VERSION"` puts
+   the same seven files in the raw package `understandtech`, under the
+   release's version, where a box downloads them with its license key alone.
+   A version already published is left as it is: a release stopped half way
+   is run again. It needs `KEYGEN_PRODUCT_TOKEN` in the `release`
+   environment. The images still come from the registry.
+11. **Publish**: `gh release create` on the tag, titled with the version,
    marked a pre-release when the version carries a suffix, with all seven
    files attached. What they are and how to check them before installing is in
    [installing — get the release](install.md#1--get-the-release) and

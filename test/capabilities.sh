@@ -1521,31 +1521,47 @@ download_verdicts() {
         cp "$WORK_DIR/launcher/ut-get" "$work/ut-get"
         cp "$WORK_DIR/launcher/bin/apt-get" "$WORK_DIR/launcher/bin/ut-install" "$work/bin/"
 
-        for version in 2026.99.1 2026.98.1 2026.97.1; do
-            dir="$work/site/releases/download/v${version}"
+        for version in 2026.99.1 2026.98.1 2026.97.1 2026.95.1; do
+            dir="$work/site/${version}"
             mkdir -p "$dir"
             cp "$signing/package.deb" "$dir/understandtech_${version}_all.deb"
             cp "$signing/package.deb.sig" "$dir/understandtech_${version}_all.deb.sig"
         done
-        printf 'x' >> "$work/site/releases/download/v2026.97.1/understandtech_2026.97.1_all.deb"
-        printf 'v2026.99.1' > "$work/latest"
+        printf 'x' >> "$work/site/2026.97.1/understandtech_2026.97.1_all.deb"
+        printf '%s' "$DOWNLOAD_TEST_KEY" > "$work/license.key"
+        published_as_keygen_lists_them 2026.97.1 2026.99.1 2026.98.1 > "$work/releases.json"
+        printf '#!/bin/sh\nprintf "%%s\\n" "curl $*" >> /w/curl-argv\nexec /usr/bin/curl "$@"\n' > "$work/bin/curl"
+        chmod 755 "$work/bin/curl"
 
         cat > "$work/serve.py" <<'SERVE'
-import http.server, pathlib, ssl
-class Releases(http.server.SimpleHTTPRequestHandler):
+import base64, http.server, pathlib, ssl
+KEY = pathlib.Path("/w/license.key").read_text().strip()
+LICENSED = "Basic " + base64.b64encode(("license:" + KEY).encode()).decode()
+class Keygen(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory="/w/site", **kwargs)
     def do_GET(self):
-        if self.path == "/releases/latest":
-            tag = pathlib.Path("/w/latest").read_text().strip()
-            self.send_response(302)
-            self.send_header("Location", "https://releases.test/releases" + ("/tag/" + tag if tag else ""))
+        if self.headers.get("Authorization") != LICENSED:
+            self.send_response(401)
             self.end_headers()
             return
+        if self.path == "/v1/accounts/test/releases?package=understandtech&channel=stable&limit=100":
+            body = pathlib.Path("/w/releases.json").read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/vnd.api+json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if not self.path.startswith("/raw/"):
+            self.send_response(404)
+            self.end_headers()
+            return
+        self.path = self.path[len("/raw"):]
         super().do_GET()
     def log_message(self, *args):
         pass
-server = http.server.ThreadingHTTPServer(("", 443), Releases)
+server = http.server.ThreadingHTTPServer(("", 443), Keygen)
 context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 context.load_cert_chain("/w/tls/server.pem", "/w/tls/server.key")
 server.socket = context.wrap_socket(server.socket, server_side=True)
@@ -1556,7 +1572,7 @@ SERVE
         docker run -d --name "$client" --network "$net" -v "$work":/w "$DEBIAN_IMAGE" sleep 600 >/dev/null
         docker exec "$client" bash -c '
             for attempt in 1 2 3; do
-                apt-get update -qq && apt-get install -y -qq --no-install-recommends curl openssl ca-certificates && break
+                apt-get update -qq && apt-get install -y -qq --no-install-recommends curl jq openssl ca-certificates && break
                 sleep 5
             done >/dev/null 2>&1
             cd /w/tls
@@ -1571,29 +1587,48 @@ SERVE
             "$PYTHON_IMAGE" python3 /w/serve.py >/dev/null
         sleep 2
 
-        launch() {
-            local case=$1; shift
-            docker exec -e CASE="$case" -e PATH=/w/bin:/usr/bin:/bin \
-                -e UT_RELEASES_URL=https://releases.test/releases -e CURL_CA_BUNDLE=/w/tls/ca.pem \
+        launch_with() {
+            local key=$1 case=$2; shift 2
+            docker exec -e CASE="$case" -e PATH=/w/bin:/usr/bin:/bin ${key:+-e UT_LICENSE="$key"} \
+                -e UT_DOWNLOADS_URL=https://releases.test/raw -e UT_KEYGEN_API=https://releases.test/v1/accounts/test \
+                -e CURL_CA_BUNDLE=/w/tls/ca.pem \
                 "$client" /w/ut-get "$@" > "$work/said-$case" 2>&1
             printf '%s=%s\n' "$case" "$(tr '\n' ';' < "$work/calls-$case" 2>/dev/null || echo nothing)"
         }
+        launch() { launch_with "$DOWNLOAD_TEST_KEY" "$@"; }
         {
             launch latest --domain box.test
             launch pinned --version 2026.98.1 --domain box.test
             launch tampered --version 2026.97.1 --domain box.test
-            printf '' > "$work/latest"
+            launch_with TEST-SOMEONE-ELSE refused --version 2026.96.1 --domain box.test
+            docker exec "$client" sh -c "mkdir -p /etc/understandtech && cp /w/license.key /etc/understandtech/license"
+            launch_with "" stored --version 2026.95.1 --domain box.test
+            docker exec "$client" rm -f /etc/understandtech/license
+            published_as_keygen_lists_them > "$work/releases.json"
             launch unpublished --domain box.test
             launch notaversion --version ../2026.98.1 --domain box.test
             docker rm -f "$server" >/dev/null 2>&1
             launch offline --version 2026.98.1 --domain box.test
             grep -q 'has published no release yet' "$work/said-unpublished" && echo 'unpublished_said=no release yet'
             grep -q 'is not a release version' "$work/said-notaversion" && echo 'notaversion_said=not a version'
+            grep -q 'refused the license key' "$work/said-refused" && echo 'refused_said=key refused'
+            grep -qF "$DOWNLOAD_TEST_KEY" "$work/curl-argv" || echo 'key_on_a_command_line=never'
         } > "$work/verdicts.txt"
         docker rm -f "$client" "$server" >/dev/null 2>&1
         docker network rm "$net" >/dev/null 2>&1
     fi
     cat "$work/verdicts.txt"
+}
+
+DOWNLOAD_TEST_KEY="TEST-DOWNLOAD-KEY-0123"
+
+# Keygen lists releases newest first: the latest published need not be the highest.
+published_as_keygen_lists_them() {
+    local version data=""
+    for version in "$@"; do
+        data+="${data:+,}{\"attributes\":{\"version\":\"${version}\",\"channel\":\"stable\"}}"
+    done
+    printf '{"data":[%s]}\n' "$data"
 }
 
 download_verdict_is() {
@@ -1625,6 +1660,20 @@ with_no_release_published_or_no_version_nothing_is_fetched() {
         && download_verdict_is unpublished_said "no release yet" \
         && download_verdict_is notaversion nothing \
         && download_verdict_is notaversion_said "not a version"
+}
+
+a_refused_license_key_downloads_and_installs_nothing() {
+    download_verdict_is refused nothing \
+        && download_verdict_is refused_said "key refused"
+}
+
+the_license_key_this_box_stores_downloads_its_update() {
+    download_verdict_is stored \
+        "apt-get install -y ${DOWNLOADED}/2026.95.1/understandtech_2026.95.1_all.deb;ut-install --domain box.test;"
+}
+
+the_license_key_is_never_on_a_command_line() {
+    download_verdict_is key_on_a_command_line never
 }
 
 a_release_already_downloaded_installs_again_offline() {
@@ -3945,12 +3994,101 @@ if [[ -x "$REPO_ROOT/bin/ut-get" ]]; then
         a_downloaded_release_that_was_altered_installs_nothing
     capability "with no release published, or a version that is not one, nothing is fetched and the reason is said" \
         with_no_release_published_or_no_version_nothing_is_fetched
+    capability "a license key Keygen refuses downloads nothing and installs nothing, and says why" \
+        a_refused_license_key_downloads_and_installs_nothing
+    capability "an update downloads with the license key the box already stores" \
+        the_license_key_this_box_stores_downloads_its_update
+    capability "the license key never appears on a command line" \
+        the_license_key_is_never_on_a_command_line
     capability "a release already downloaded installs again with its server gone" \
         a_release_already_downloaded_installs_again_offline
     capability "every release publishes ut-get beside the package" \
         the_release_publishes_the_launcher
     capability "the manual install downloads every file SHA256SUMS lists" \
         the_install_page_downloads_every_file_the_sums_list
+fi
+
+a_bootstrap_to_publish() {
+    local work="$WORK_DIR/bootstrap-$1"
+    rm -rf "$work"
+    mkdir -p "$work/bin" "$work/dist" "$work/published"
+    printf 'the launcher, as built\n' > "$work/dist/ut-get"
+    printf 'the key that verifies a release\n' > "$work/dist/release.pub"
+    cat > "$work/bin/aws" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$AWS_CALLS"
+key="" body="" only_if_absent=""
+while (( $# )); do
+    case "$1" in
+        --key) key=$2; shift ;;
+        --body) body=$2; shift ;;
+        --if-none-match) only_if_absent=$2; shift ;;
+    esac
+    shift
+done
+if [[ "$only_if_absent" == "*" && -e "$PUBLISHED/$key" ]]; then
+    echo "An error occurred (PreconditionFailed) when calling the PutObject operation: At least one of the pre-conditions you specified did not hold" >&2
+    exit 254
+fi
+mkdir -p "$(dirname "$PUBLISHED/$key")"
+cp "$body" "$PUBLISHED/$key"
+EOF
+    chmod +x "$work/bin/aws"
+    printf '%s' "$work"
+}
+
+publish_the_bootstrap() {
+    local work=$1; shift
+    PATH="$work/bin:$PATH" AWS_CALLS="$work/aws-calls" PUBLISHED="$work/published" \
+        OUT_DIR="$work/dist" BOOTSTRAP_BUCKET="${BOOTSTRAP_BUCKET-the-bucket}" BOOTSTRAP_URL="file://$work/published" \
+        "$REPO_ROOT/packaging/publish-bootstrap.sh" "$@"
+}
+
+the_bootstrap_is_published_under_its_version() {
+    local work; work=$(a_bootstrap_to_publish first)
+    publish_the_bootstrap "$work" 2026.99.1 >/dev/null || { echo "the publication failed"; return 1; }
+    cmp -s "$work/dist/ut-get" "$work/published/2026.99.1/ut-get" \
+        && cmp -s "$work/dist/release.pub" "$work/published/2026.99.1/release.pub" \
+        || { echo "published:"; find "$work/published" -type f; return 1; }
+    [[ $(grep -c -- '--bucket the-bucket .*--if-none-match \*' "$work/aws-calls") == 2 ]] \
+        || { echo "the uploads were:"; cat "$work/aws-calls"; return 1; }
+}
+
+publishing_the_same_bootstrap_again_changes_nothing() {
+    local work said; work=$(a_bootstrap_to_publish again)
+    publish_the_bootstrap "$work" 2026.99.1 >/dev/null || { echo "the first publication failed"; return 1; }
+    said=$(publish_the_bootstrap "$work" 2026.99.1 2>&1) || { echo "the second publication failed: $said"; return 1; }
+    [[ $(grep -c '^already published ' <<< "$said") == 2 ]] || { echo "it said: $said"; return 1; }
+}
+
+a_published_bootstrap_is_never_replaced() {
+    local work said; work=$(a_bootstrap_to_publish replaced)
+    publish_the_bootstrap "$work" 2026.99.1 >/dev/null || { echo "the first publication failed"; return 1; }
+    printf 'another launcher\n' > "$work/dist/ut-get"
+    if said=$(publish_the_bootstrap "$work" 2026.99.1 2>&1); then
+        echo "another launcher was published over the first: $said"; return 1
+    fi
+    grep -q 'the launcher, as built' "$work/published/2026.99.1/ut-get" || { echo "the published launcher changed"; return 1; }
+    grep -q 'never replaced' <<< "$said" || { echo "it said: $said"; return 1; }
+}
+
+without_a_bucket_or_a_version_nothing_is_published() {
+    local work; work=$(a_bootstrap_to_publish refused)
+    BOOTSTRAP_BUCKET="" publish_the_bootstrap "$work" 2026.99.1 >/dev/null 2>&1 && { echo "published without a bucket"; return 1; }
+    publish_the_bootstrap "$work" ../2026.99.1 >/dev/null 2>&1 && { echo "published a version that is not one"; return 1; }
+    [[ ! -s "$work/aws-calls" ]] || { echo "the bucket was called:"; cat "$work/aws-calls"; return 1; }
+}
+
+if [[ -x "$REPO_ROOT/packaging/publish-bootstrap.sh" ]]; then
+    group "What a machine downloads before it has shown a license"
+    capability "the launcher and the key that verifies a release are published under their version" \
+        the_bootstrap_is_published_under_its_version
+    capability "publishing the same release again changes nothing" \
+        publishing_the_same_bootstrap_again_changes_nothing
+    capability "a published launcher is never replaced by another" \
+        a_published_bootstrap_is_never_replaced
+    capability "without a bucket, or with a version that is not one, nothing is published" \
+        without_a_bucket_or_a_version_nothing_is_published
 fi
 
 if [[ -x "$REPO_ROOT/bin/ut-license" ]]; then
