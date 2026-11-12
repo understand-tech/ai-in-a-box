@@ -123,6 +123,18 @@ discriminates "an arbiter surface that asks for a client certificate without the
     "client-auth-without-admitted-boxes:caddy/arbiter-surface.caddy" \
     "sed -i.bak '/import admitted_boxes/d' caddy/arbiter-surface.caddy"
 
+discriminates "a compute node's surface that asks for a certificate and verifies none" \
+    "link-site-without-verified-client:caddy/inference-surface.caddy" \
+    "sed -i.bak 's/mode require_and_verify/mode request/' caddy/inference-surface.caddy"
+
+discriminates "an arbiter's surface with no client_auth at all" \
+    "link-site-without-verified-client:caddy/arbiter-surface.caddy" \
+    "perl -0pi -e 's/        client_auth \\{.*?\\n        \\}\\n//s' caddy/arbiter-surface.caddy"
+
+discriminates "a new surface for another machine that checks nothing" \
+    "link-site-without-verified-client:caddy/new-surface.caddy" \
+    "printf 'https://link.internal:8450 {\\n    reverse_proxy somewhere:80\\n}\\n' > caddy/new-surface.caddy"
+
 discriminates "a socket to the arbiter any account can open" \
     "arbiter-relay-open-beyond-its-group" \
     "sed -i.bak 's/|0660/|0666/' caddy/arbiter-relay.caddy"
