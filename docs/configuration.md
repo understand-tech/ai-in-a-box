@@ -572,33 +572,6 @@ WORKER_CUSTOMER_REPLICAS="2"
 Background document processing. More replicas, more parallel ingestion, more
 memory.
 
-### PostgreSQL
-
-```bash
-POSTGRES_MAINTENANCE_WORK_MEM="256MB"
-POSTGRES_SHM_SIZE="256m"
-POSTGRES_BACKUP_PROCESSES="2"
-POSTGRES_BACKUP_KEEP_FULL="2"
-```
-
-The `postgres` service has 4 GB of memory, of which `shared_buffers` takes 1 GB: a quarter, as
-pgvector advises for a server's memory. `POSTGRES_MAINTENANCE_WORK_MEM` is the memory one index
-build may use, a sixteenth of the service's memory by default, PgTune's rule. A vector index
-(HNSW) builds much faster when its whole graph fits in it; Postgres warns in its log when it does
-not ("hnsw graph no longer fits into maintenance_work_mem"). Raise it for a large knowledge base, and
-raise `POSTGRES_SHM_SIZE` with it: the container's shared memory must be at least as large, or a
-parallel index build fails with "could not resize shared memory segment".
-
-`POSTGRES_BACKUP_PROCESSES` is how many processes pgBackRest uses, and the CPUs the
-`postgres-backup` service may use; its default of one is, by pgBackRest's own guide, almost never
-right. The write-ahead log is archived asynchronously, in batches, through a spool on the
-`ut-postgres-spool` volume. `POSTGRES_BACKUP_KEEP_FULL` is how many full backups are kept; the
-oldest goes when one more is taken. The repository's encryption is set before the first backup and
-cannot change afterwards: `POSTGRES_BACKUP_PASSWORD` is kept across updates for that reason.
-
-Sources, read on 2026-11-03: [pgvector](https://github.com/pgvector/pgvector/blob/master/README.md),
-[PgTune](https://pgtune.leopard.in.ua/), [pgBackRest user guide](https://pgbackrest.org/user-guide.html).
-
 ### The embedding engine
 
 `EMBEDDINGS_THREADS` (4) is how many CPU cores the `embeddings` service computes with, and its CPU

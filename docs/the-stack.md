@@ -88,7 +88,6 @@ internet is kept off it.
 | `ut-postgres-data` | PostgreSQL database files |
 | `ut-postgres-socket` | PostgreSQL's socket, shared with `postgres-backup` |
 | `ut-postgres-backup` | pgBackRest repository: the archived write-ahead log and the backups, encrypted |
-| `ut-postgres-spool` | pgBackRest's spool: write-ahead log segments waiting to be archived in a batch |
 | `ut-uploads-data` | Shared upload scratch space (API + workers) |
 | `ut-llm-models` | LLM model files |
 | `ut-vllm-models` | Hugging Face cache for the LLM service |
