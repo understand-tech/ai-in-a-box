@@ -346,13 +346,6 @@ instead.
 on disk, empty or unused: `docker volume rm ut-llm-ollama ut-vllm-llm-cache`
 frees them.
 
-**Postgres is not part of the release.** Only 2026.10.0-rc24 started it, and no
-service used it. On a box that ran that candidate, the update removes the
-`ut-postgres` and `ut-postgres-backup` containers; their four volumes stay on
-disk: `docker volume rm ut-postgres-data ut-postgres-socket ut-postgres-backup
-ut-postgres-spool` frees them. `POSTGRES_PASSWORD` and
-`POSTGRES_BACKUP_PASSWORD` stay in `local.env`, where nothing reads them.
-
 **The TLS settings are given to the installer.** `ut-install --certificate-dir`
 and `--behind-proxy` replace editing `UT_INGRESS_MODE`, `UT_CADDY_SCHEME` and
 `UT_TRUSTED_PROXIES` by hand; settings already in `local.env` keep working.

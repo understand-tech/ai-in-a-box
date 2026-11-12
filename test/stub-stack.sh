@@ -54,6 +54,7 @@ UT_HTTP_PORT="18080"
 UT_HTTPS_PORT="18443"
 MONGODB_USERNAME="stubadmin"
 MONGODB_PASSWORD="$(head -c 18 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9')"
+POSTGRES_PASSWORD="$(head -c 18 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9')"
 MONGODB_DATABASE="stub"
 MONGODB_HOST="mongodb"
 MONGODB_PORT="27017"
@@ -96,7 +97,7 @@ cannot_reach_redis() {
     ! reaches_redis "$1"
 }
 
-printf '%sThe stack, brought up on public stand-ins%s %s(mongodb, redis and caddy are real)%s\n\n' \
+printf '%sThe stack, brought up on public stand-ins%s %s(mongodb, postgres, redis and caddy are real)%s\n\n' \
     "$BOLD" "$NC" "$BOLD" "$NC"
 
 write_settings
@@ -112,6 +113,8 @@ PASSED=$((PASSED + 1))
 
 check "the database answers its own healthcheck, not a stub's" \
     a_real_service_answers mongodb mongosh --quiet --eval 'db.adminCommand("ping").ok'
+check "postgres serves pgvector's extension" \
+    a_real_service_answers postgres psql -U postgres -tAc "SELECT 1 FROM pg_available_extensions WHERE name = 'vector'"
 check "redis answers" \
     a_real_service_answers redis redis-cli ping
 check "the workers reach Redis on its own network" \

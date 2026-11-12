@@ -90,7 +90,7 @@ Builder's generated apps is not shown. Not verified: not seen rendered.
 | `ut-frontend-network` | no | `caddy`, `frontend`, `api`, `api-customer`, the workers, `app-llms`, `app-assistants`, `admin-portal`, `llm` |
 | `ut-backend-network` | **yes** | `api`, `api-customer`, the workers, `app-assistants`, `admin-portal`, `llm`, `nim-llm`, `metrics`, `files-backup` |
 | `ut-redis-network` | **yes** | `redis`, and the four services that use it: `api`, `api-customer` and their workers |
-| `ut-data-network` | **yes** | `mongodb`, `mongodb-backup`, `api`, `api-customer`, the workers, `app-llms`, `app-assistants`, `llm` |
+| `ut-data-network` | **yes** | `mongodb`, `mongodb-backup`, `postgres`, `api`, `api-customer`, the workers, `app-llms`, `app-assistants`, `llm` |
 | `ut-metrics-network` | **yes** | `caddy`, `metrics` |
 
 Read that table the other way round and it says what matters: `mongodb` is on
@@ -112,6 +112,7 @@ boundary are the ones that have to answer a browser.
 | What | Where | Carried by a backup |
 |---|---|---|
 | The databases | `ut-mongodb-data` volume | through `mongodb-backup`, which dumps them |
+| PostgreSQL | `ut-postgres-data` volume | through `postgres` and `postgres-backup`, with pgBackRest: the write-ahead log as it is written, and nightly backups into the `ut-postgres-backup` volume |
 | Uploaded documents and generated artefacts | `/var/lib/understandtech/app-data` | yes, directly |
 | The App Builder's projects | `/var/lib/understandtech/appbuilder` | yes, directly |
 | The certificate authority's root | `ut-caddy-data` volume | yes, directly |

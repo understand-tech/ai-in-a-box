@@ -34,6 +34,17 @@ jobs:
           | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
       - run: ./test/database-restore.sh
 
+  postgres-restore:
+    name: postgres comes back to an instant
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Sign in to the registry that holds the postgres image
+        run: echo "${{ secrets.GITHUB_TOKEN }}" \
+          | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - run: ./test/postgres-restore.sh
+
   # Belongs here for the reason above: it brings mongo, redis and caddy up for
   # real, and those three move without this repository changing. The price
   # of the schedule is that a compose.yaml change which breaks the stack is found
@@ -47,7 +58,7 @@ jobs:
       - run: ./test/stub-stack.sh
 
   tell:
-    needs: [database-restore, stub-stack]
+    needs: [database-restore, postgres-restore, stub-stack]
     if: ${{ always() && github.event_name == 'schedule' }}
     uses: ./.github/workflows/tell-when-red.yml
     with:

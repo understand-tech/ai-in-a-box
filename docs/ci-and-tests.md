@@ -11,7 +11,7 @@ this page is the trigger map, that one is the reference.
 | Workflow | Trigger | Runs | Takes |
 |---|---|---|---|
 | `ci.yml` | every pull request, and a push to `main`, `hotfix/**` or `2026-**` | `invariants.sh`, `capabilities.sh`, `migration.sh`, the installer models with `database-rotation-cuts.sh` and `settings-migration-cuts.sh` | under a minute |
-| `nightly.yml` | 3 a.m. and manual — **neither works yet**, see below | `database-restore.sh` | about a minute |
+| `nightly.yml` | 3 a.m. and manual — **neither works yet**, see below | `database-restore.sh`, `postgres-restore.sh` | about a minute each |
 | `release.yml` | a tag matching `v*` | the checks, then a fresh install walked end to end, then the package is built, signed and published | longer |
 
 <!-- Scope: which event starts which workflow. Not what the checks assert, and
@@ -70,7 +70,7 @@ GitHub only reads `schedule` and `workflow_dispatch` from the repository's
 `ci.yml` is unaffected, because `push` and `pull_request` are evaluated on
 the branch being pushed, not on the default branch.
 
-Until that is resolved, `database-restore.sh` is run by hand — see
+Until that is resolved, `database-restore.sh` and `postgres-restore.sh` are run by hand — see
 [test/README.md](https://github.com/understand-tech/ai-in-a-box/blob/2026-Q4/test/README.md#running-the-nightly-check).
 
 ## Running the suites locally
