@@ -8,6 +8,16 @@ Two questions that look like one and are not: **what a browser must trust**, and
 **what one machine proves to another**. The first depends on what you choose.
 The second never does.
 
+## Which links are encrypted
+
+| Link | Encrypted | How each side is authenticated |
+|---|---|---|
+| A browser to the box | yes: TLS at Caddy, with the certificate of the [mode](#choosing-how-tls-is-terminated) chosen (behind an `edge` load balancer, the balancer terminates it) | the box by its certificate; the user by signing in; the browser holds no certificate |
+| One machine to another (a platform and its compute node, a box and its arbiter) | yes: TLS, and a certificate on each side | both by a certificate of their [link authority](#the-link-authority); each trusts the root of the other, exchanged when they paired, and no other. The platform's calls to its node also carry a token that never leaves the platform |
+| The box to the outside (licence, images, model downloads, a service the operator configures) | HTTPS | the server by the system's trusted roots; the box by the credential of that service |
+| The backup to its destination | yes: HTTPS or SFTP; `http://` is refused | the server by its certificate, or by the SSH host key the operator pins; the box by the key or secret the destination knows. The repository is also encrypted by `restic` |
+| Containers of one machine | no: they share internal Docker networks that no other machine reaches | a signed token between services, and a password where a database asks for one |
+
 ## The names to publish
 
 Every address derives from `UT_DOMAIN`. Six names have to resolve to the
