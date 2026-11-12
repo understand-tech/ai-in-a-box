@@ -8,6 +8,16 @@ Two questions that look like one and are not: **what a browser must trust**, and
 **what one machine proves to another**. The first depends on what you choose.
 The second never does.
 
+## Which links are encrypted
+
+| Link | Encrypted | How each side is authenticated |
+|---|---|---|
+| A browser to the box | yes: TLS at Caddy, with the certificate of the [mode](#choosing-how-tls-is-terminated) chosen (behind an `edge` load balancer, the balancer terminates it) | the box by its certificate; the user by signing in; the browser holds no certificate |
+| One machine to another (a platform and its compute node, a box and its arbiter) | yes: TLS, and a certificate on each side | both by a certificate of their [link authority](#the-link-authority); each trusts the root of the other, exchanged when they paired, and no other. The platform's calls to its node also carry a token that never leaves the platform |
+| The box to the outside (licence, images, model downloads, a service the operator configures) | HTTPS | the server by the system's trusted roots; the box by the credential of that service |
+| The backup to its destination | yes over HTTPS or SFTP; over `http://` the repository stays encrypted but its traffic is not, and the installer warns | the server by its certificate, or by the SSH host key the operator pins; the box by the key or secret the destination knows. The repository is also encrypted by `restic` |
+| Containers of one machine | no: they share internal Docker networks that no other machine reaches | a signed token between services, and a password where a database asks for one |
+
 ## The names to publish
 
 Every address derives from `UT_DOMAIN`. Six names have to resolve to the
@@ -331,9 +341,11 @@ authorities, sealed with that code. From then on the node serves the platform's
 certificate, and the platform trusts the node's root and no other. The pairing
 port, 8447, is open for those 15 minutes only.
 
-The platform's services call its own Caddy, at `http://caddy:8445/v1`, with
+The platform's services call its own Caddy, at `http://inference-relay:8445/v1`, with
 `VLLM_API_KEY`, which never leaves the platform. Caddy carries each call to the
-node under the platform's certificate.
+node under the platform's certificate. The relay listens on a network of its
+own, joined by Caddy and by the services that send inference requests, and by
+no other container.
 
 Give the control plane a GPU if its users chat over their documents: `llm` runs
 there, and does not start without one.

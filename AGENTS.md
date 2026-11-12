@@ -33,6 +33,14 @@ in the same pull request.
 - **The inference engine is supervised** on its waiting requests, the filling of its KV cache, its
   preemptions and the time to the first token; its capacity settings (`gpu_memory_utilization`,
   `max_num_seqs`, `max_num_batched_tokens`) are measured per type of machine.
+- **Every link between two machines of the product is encrypted, with a certificate on each side,**
+  both signed by the `link` authority (see [docs/certificates-and-dns.md](docs/certificates-and-dns.md)); a
+  surface that serves another machine requires and verifies the client's certificate. A link to what
+  the product does not own (a browser, a backup destination, a public service) is HTTPS or SFTP;
+  a backup destination the operator gives over plain HTTP is accepted with a warning, its content
+  being encrypted in any case. Between containers of one machine, an internal network and signed tokens are enough,
+  unless a written decision says otherwise. A database connection that crosses a machine uses the
+  database's own TLS, and the client verifies the server's certificate and name in full.
 - **Each service has its own Postgres schema and role;** no role may create in `public`.
 
 These rules describe the target: a change brings the services it touches in line with them.

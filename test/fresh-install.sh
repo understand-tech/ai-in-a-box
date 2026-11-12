@@ -294,11 +294,11 @@ state_setup() {
         # same stand-in for Hugging Face.
         # The preflight reads the settings an earlier run rendered, as on an update.
         relay_platform_on_a_smaller_disk|relay_platform_taking_it_back_on_a_smaller_disk)
-            echo 'install -d -m 750 /etc/understandtech && printf '"'"'COMPOSE_FILE="compose.yaml:compose.remote-inference.yaml"\nCOMPOSE_PROFILES=""\nVLLM_LLM_BASE_URL="http://caddy:8445/v1"\n'"'"' > /etc/understandtech/local.env && cp /etc/understandtech/local.env /etc/understandtech/.env' ;;
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'COMPOSE_FILE="compose.yaml:compose.remote-inference.yaml"\nCOMPOSE_PROFILES=""\nVLLM_LLM_BASE_URL="http://inference-relay:8445/v1"\n'"'"' > /etc/understandtech/local.env && cp /etc/understandtech/local.env /etc/understandtech/.env' ;;
         relay_platform_updated|relay_platform_given_its_inference_back)
-            echo 'install -d -m 750 /etc/understandtech && printf '"'"'COMPOSE_FILE="compose.yaml:compose.remote-inference.yaml"\nCOMPOSE_PROFILES=""\nVLLM_LLM_BASE_URL="http://caddy:8445/v1"\nVLLM_VLM_BASE_URL="http://caddy:8445/v1"\nUT_LINKED_NODE_FILE="/etc/understandtech/linked-node.caddy"\n'"'"' > /etc/understandtech/local.env && : > /etc/understandtech/linked-node.caddy && printf '"'"'{"links": [{"address": "node.example.test:8444"}]}\n'"'"' > /etc/understandtech/links.json && rm -f /var/lib/understandtech/weights-placed.txt && cp /w/weights/lists/*.txt /usr/share/understandtech/models/weights/ && cp /w/weights/curl /stub/curl' ;;
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'COMPOSE_FILE="compose.yaml:compose.remote-inference.yaml"\nCOMPOSE_PROFILES=""\nVLLM_LLM_BASE_URL="http://inference-relay:8445/v1"\nVLLM_VLM_BASE_URL="http://inference-relay:8445/v1"\nUT_LINKED_NODE_FILE="/etc/understandtech/linked-node.caddy"\n'"'"' > /etc/understandtech/local.env && : > /etc/understandtech/linked-node.caddy && printf '"'"'{"links": [{"address": "node.example.test:8444"}]}\n'"'"' > /etc/understandtech/links.json && rm -f /var/lib/understandtech/weights-placed.txt && cp /w/weights/lists/*.txt /usr/share/understandtech/models/weights/ && cp /w/weights/curl /stub/curl' ;;
         relay_platform_without_its_gpu)
-            echo 'rm -f /stub/nvidia-smi && install -d -m 750 /etc/understandtech && printf '"'"'COMPOSE_FILE="compose.yaml:compose.remote-inference.yaml"\nCOMPOSE_PROFILES=""\nVLLM_LLM_BASE_URL="http://caddy:8445/v1"\nVLLM_VLM_BASE_URL="http://caddy:8445/v1"\nUT_LINKED_NODE_FILE="/etc/understandtech/linked-node.caddy"\n'"'"' > /etc/understandtech/local.env && : > /etc/understandtech/linked-node.caddy && printf '"'"'{"links": [{"address": "node.example.test:8444"}]}\n'"'"' > /etc/understandtech/links.json' ;;
+            echo 'rm -f /stub/nvidia-smi && install -d -m 750 /etc/understandtech && printf '"'"'COMPOSE_FILE="compose.yaml:compose.remote-inference.yaml"\nCOMPOSE_PROFILES=""\nVLLM_LLM_BASE_URL="http://inference-relay:8445/v1"\nVLLM_VLM_BASE_URL="http://inference-relay:8445/v1"\nUT_LINKED_NODE_FILE="/etc/understandtech/linked-node.caddy"\n'"'"' > /etc/understandtech/local.env && : > /etc/understandtech/linked-node.caddy && printf '"'"'{"links": [{"address": "node.example.test:8444"}]}\n'"'"' > /etc/understandtech/links.json' ;;
         weights_altered_on_the_way)
             echo 'rm -f /var/lib/understandtech/weights-placed.txt && cp /w/weights/lists/*.txt /usr/share/understandtech/models/weights/ && cp /w/weights/curl /stub/curl && sed -i "s/^[0-9a-f]* /0000000000000000000000000000000000000000000000000000000000000000 /" /usr/share/understandtech/models/weights/platform.txt' ;;
         orphan_volume) echo ': # the volume is asserted through the stub' ;;
@@ -381,6 +381,10 @@ state_setup() {
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_REPOSITORY="s3:https://s3.example.test/appliance-backups"\n'"'"' > /etc/understandtech/local.env' ;;
         backup_relay_on_another_subnet)
             echo 'install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_REPOSITORY="s3:https://s3.example.test/appliance-backups"\nBACKUP_RELAY_SUBNET="198.19.0.0/24"\n'"'"' > /etc/understandtech/local.env' ;;
+        backup_over_plain_http)
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_REPOSITORY="rest:http://backup.example.test:8000/appliance"\n'"'"' > /etc/understandtech/local.env' ;;
+        backup_over_plain_http_on_an_update)
+            echo 'install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_REPOSITORY="s3:http://s3.example.test/appliance-backups"\nCOMPOSE_FILE="compose.yaml:compose.backup-relay.yaml"\nBACKUP_RELAY_HOST="s3.example.test"\nBACKUP_RELAY_PORT="80"\nBACKUP_RELAY_ADDRESS="198.18.255.250"\n'"'"' > /etc/understandtech/local.env' ;;
         backup_in_two_places)
             echo 'install -d /w/backup_in_two_places/nas && install -d -m 750 /etc/understandtech && printf '"'"'BACKUP_FILES_DESTINATION="/w/backup_in_two_places/nas"\nBACKUP_FILES_REPOSITORY="s3:https://s3.example.test/appliance"\n'"'"' > /etc/understandtech/local.env' ;;
         # The App Builder enabled, with two apps: app-a running, with a volume,
@@ -809,8 +813,8 @@ a_model_nobody_listed_is_refused_before_anything_is_written() {
 a_control_plane_calls_its_own_relay() {
     local settings
     settings=$(of_state pointed_at_a_compute_node local-env)
-    grep -qx 'VLLM_LLM_BASE_URL="http://caddy:8445/v1"' <<< "$settings" \
-        && grep -qx 'VLLM_VLM_BASE_URL="http://caddy:8445/v1"' <<< "$settings" \
+    grep -qx 'VLLM_LLM_BASE_URL="http://inference-relay:8445/v1"' <<< "$settings" \
+        && grep -qx 'VLLM_VLM_BASE_URL="http://inference-relay:8445/v1"' <<< "$settings" \
         && grep -qx 'UT_LINKED_NODE_FILE="/etc/understandtech/linked-node.caddy"' <<< "$settings" \
         && grep -qx '/etc/understandtech/linked-node.caddy' <<< "$(of_state pointed_at_a_compute_node link-files)" \
         && grep -q '^COMPOSE_FILE=.*compose.remote-inference.yaml' <<< "$settings" && return 0
@@ -824,7 +828,7 @@ a_platform_linked_by_key_moves_to_its_relay() {
     local settings output
     settings=$(of_state linked_by_key_before local-env)
     output=$(output_of linked_by_key_before)
-    grep -qx 'VLLM_LLM_BASE_URL="http://caddy:8445/v1"' <<< "$settings" \
+    grep -qx 'VLLM_LLM_BASE_URL="http://inference-relay:8445/v1"' <<< "$settings" \
         && grep -qx 'UT_LINKED_NODE_FILE="/etc/understandtech/linked-node.caddy"' <<< "$settings" \
         && ! grep -q 'UT_INFERENCE_CA_BUNDLE' <<< "$settings" \
         && ! grep -q 'inference-ca-bundle' <<< "$(of_state linked_by_key_before link-files)" \
@@ -1216,6 +1220,19 @@ a_host_restic_does_not_name_stops_the_install() {
         && ! grep -q 'Starting services' <<< "$output" && return 0
     echo "$output"
     return 1
+}
+
+a_destination_over_plain_http_is_installed_with_a_warning() {
+    local state output
+    for state in backup_over_plain_http backup_over_plain_http_on_an_update; do
+        output=$(output_of "$state")
+        grep -q 'over plain HTTP' <<< "$output" \
+            && grep -q 'rest:https://host/path' <<< "$output" \
+            && grep -q 'sftp:user@host:/path' <<< "$output" \
+            && grep -q 'Downloading images' <<< "$output" \
+            && grep -q '^BACKUP_FILES_REPOSITORY=.*:http://' <<< "$(of_state "$state" local-env)" \
+            || { echo "${state}:"; echo "$output"; return 1; }
+    done
 }
 
 two_destinations_stop_the_install() {
@@ -2469,6 +2486,8 @@ run_install_from_state backup_on_its_own_network_before_the_relay
 run_install_from_state backup_relay_on_another_subnet
 PULL_EXIT=0 run_install_from_state backup_relay_pointed_where_restic_dials
 PULL_EXIT=0 run_install_from_state backup_relay_restic_names_nothing
+run_install_from_state backup_over_plain_http
+run_install_from_state backup_over_plain_http_on_an_update
 run_install_from_state backup_in_two_places
 PULL_EXIT=0 run_install_from_state app_builder_moved_to_its_docker
 PULL_EXIT=0 run_install_from_state app_builder_already_moved
@@ -2751,6 +2770,8 @@ property "an install restic names no host for stops before starting, and says wh
     a_host_restic_does_not_name_stops_the_install
 property "the default destination adds no way out" \
     the_default_destination_adds_no_way_out
+property "a destination over plain HTTP is installed, fresh or left by an earlier one, with a warning that says what to give" \
+    a_destination_over_plain_http_is_installed_with_a_warning
 property "naming two destinations stops the install, before anything is written" \
     two_destinations_stop_the_install
 property "a destination gone during an update holds the update back no more than it says so" \

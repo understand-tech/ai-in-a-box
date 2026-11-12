@@ -104,6 +104,10 @@ checked. The appliance provides part of it; the destination provides the rest.
 | **1 immutable** | — | snapshots of the destination taken by its owner, that the appliance cannot delete |
 | **0 errors** | `restic check` after every run | a restore exercise, as in [restoring](restore.md) |
 
+**Give the destination over HTTPS or SFTP.** The `restic` repository is
+encrypted in any case; over `rest:http://…` or `s3:http://…` the traffic that
+carries it is not, and the installer says so each time it runs.
+
 **The repository on the machine takes room on its disk.** No run writes once
 less than `BACKUP_MIN_FREE_PERCENT` of that disk is free, so a backup never
 stops the database by filling it. On a machine with a disk to spare, the

@@ -514,6 +514,10 @@ relay at it; changing the destination means running the installer again.
 
 - **Give the destination by name.** An address such as `s3:https://192.0.2.10/…`
   is refused: the relay is reached under the destination's name.
+- **Give it over an encrypted transport.** `rest:http://…` and `s3:http://…` are
+  accepted with a warning at each run of the installer: the repository is
+  encrypted, the traffic that carries it is not. Prefer `rest:https://…`,
+  `s3:https://…` or `sftp:…`.
 - **On AWS, give the region's endpoint**, as in the example above. The relay
   stands for one host; a request that AWS redirects to another region fails.
 - **Two appliances on one Docker host** need two networks for their relays: set
@@ -704,7 +708,7 @@ services at its own Caddy and names the file `ut-pair join` writes:
 
 ```bash
 COMPOSE_FILE="compose.yaml:compose.remote-inference.yaml"
-VLLM_LLM_BASE_URL="http://caddy:8445/v1"
+VLLM_LLM_BASE_URL="http://inference-relay:8445/v1"
 UT_LINKED_NODE_FILE="/etc/understandtech/linked-node.caddy"
 ```
 

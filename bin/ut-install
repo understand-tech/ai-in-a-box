@@ -68,7 +68,7 @@ BEHIND_PROXY=""
 IMAGES_FROM=""
 MODEL_ID=""
 ENGINE_CHOICE=""
-LINK_RELAY_URL="http://caddy:8445/v1"
+LINK_RELAY_URL="http://inference-relay:8445/v1"
 UT_SEND="${UT_SEND:-ut-send}"
 CURRENT_STEP=""
 INFERENCE_STILL_LOADING=""
@@ -1701,6 +1701,22 @@ die_on_two_backup_destinations() {
     exit 1
 }
 
+the_backup_repository_is_in_clear() {
+    case "$1" in
+        *:[Hh][Tt][Tt][Pp]://*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+warn_of_a_backup_destination_in_clear() {
+    local local_file=$1 repository
+    repository=$(env_get "$local_file" BACKUP_FILES_REPOSITORY 2>/dev/null || true)
+    the_backup_repository_is_in_clear "$repository" || return 0
+    log_warn "BACKUP_FILES_REPOSITORY is a ${repository%%:*} repository over plain HTTP: the backup is encrypted, the traffic that carries it is not."
+    log_warn "To encrypt the traffic too, give the destination over HTTPS (rest:https://host/path, s3:https://host/bucket) or"
+    log_warn "over SFTP (sftp:user@host:/path), in $(settings_directory "$INSTALL_DIR/.env")/local.env, then run ut-install again."
+}
+
 # A destination on the root disk, or on the one holding DATA_ROOT, is either a
 # mount point with nothing mounted yet or no destination at all: the backup
 # would die with the machine. The marker is what files-backup looks for before
@@ -2094,6 +2110,7 @@ step_configure() {
     fi
     write_the_settings_the_app_builder_s_docker_needs "$local_file"
     die_on_two_backup_destinations "$local_file"
+    warn_of_a_backup_destination_in_clear "$local_file"
     write_the_settings_a_backup_destination_needs "$local_file"
     write_the_settings_a_local_backup_disk_needs "$local_file"
     write_the_settings_a_backup_over_the_network_needs "$local_file"
