@@ -99,6 +99,18 @@ image that is not pinned, or pinned to a digest the tag no longer resolves to,
 without changing anything. It is a tool run on this repository before cutting
 a release, not a step `release.yml` runs itself.
 
+An image built by the new stack's shared workflow is also signed with the
+organisation key, without any public transparency log, and carries its
+provenance and its SBOM. `test/signed-images.sh` checks every such image
+`release.env` pins against `images.pub`, in the CI of every push and of every
+pull request opened from this repository; one that is unsigned, or lacks its
+provenance or SBOM, fails the check. Pinning a new image of the new stack adds
+its variable to the list in that script. By hand:
+
+```bash
+cosign verify --key images.pub --insecure-ignore-tlog <image>@<digest>
+```
+
 ## Verifying what was published
 
 ```bash
