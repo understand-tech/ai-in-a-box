@@ -610,6 +610,8 @@ services:
       - VLLM_ENGINE_MODEL=${VLLM_ENGINE_MODEL:-}
       - LLM_MODEL=${LLM_MODEL:-}
       - VLLM_ENGINE_ARGS=${VLLM_ENGINE_ARGS:-}
+      # 600 is vLLM's own default: the engine gives up when its weights take longer to load.
+      - VLLM_ENGINE_READY_TIMEOUT_S=${VLLM_ENGINE_READY_TIMEOUT_S:-600}
     ports:
       - "8001:8000"
     volumes:
