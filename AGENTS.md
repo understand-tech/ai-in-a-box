@@ -45,3 +45,18 @@ in the same pull request.
 
 These rules describe the target: a change brings the services it touches in line with them.
 - **Workflows and jobs:** `ci.yml` holds the checks of a pull request; a job is named by the guarantee it gives, a sentence in lower case ("the front door actually serves"); one job, `every check passed`, needs every other job of its workflow and is the only one branch protection requires, so that a job is renamed or added without touching the protection.
+
+## API boundaries
+
+Every new HTTP operation declares whether it serves product callers, other services or
+operators. Publish only its intended methods and paths; keep service and operations access
+off product listeners. Browser and integration identities do not grant resource access by
+themselves. Keep the receiving service’s authorization checks, the private container networks
+and the existing mutual TLS between machines. A URL prefix, hidden documentation or CORS is
+not an access control.
+
+A proxy change updates [API boundaries](docs/api-boundaries.md) and `test/ingress.sh` in the
+same PR. Test accepted product calls and refused requests against the pinned Caddy with fake
+upstreams; a rejection must reach no upstream. Preserve the supported application routes and
+qualify an upgrade from `origin/main` with `test/migration.sh`. Generated applications have
+their own contracts; do not impose the platform’s reserved paths on them.
