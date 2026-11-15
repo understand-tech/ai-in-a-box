@@ -17,7 +17,7 @@ PROBE_IMAGE=$ALPINE_IMAGE
 # them: caddy:2-alpine is public, and stubs answer for the eight upstreams. So
 # the one surface a browser actually meets is the one that can be checked here.
 cleanup() {
-    docker rm -f ut-ingress-caddy ut-ingress-platform ut-ingress-pairbox ut-ingress-hold ut-ingress-stub ut-ingress-probe ut-ingress-recorder >/dev/null 2>&1
+    docker rm -f ut-ingress-caddy ut-ingress-platform ut-ingress-pairbox ut-ingress-hold ut-ingress-stub ut-ingress-customer-stub ut-ingress-probe ut-ingress-recorder >/dev/null 2>&1
     docker volume rm ut-ingress-run >/dev/null 2>&1
     docker network rm "$NETWORK" "$RELAY_NETWORK" >/dev/null 2>&1
     rm -rf "$WORK_DIR"
@@ -49,7 +49,7 @@ surface() {
     fi
 }
 
-UPSTREAMS="frontend api api-customer app-llms admin-portal app-assistants app-builder app-builder-traefik app-builder-docker nim-llm arbiter"
+UPSTREAMS="frontend api app-llms admin-portal app-assistants app-builder app-builder-traefik app-builder-docker nim-llm arbiter"
 SURFACES="${DOMAIN} llms.${DOMAIN} admin.${DOMAIN} assistants.${DOMAIN} builder.${DOMAIN} demo.apps.${DOMAIN}"
 
 aliases_for() {
@@ -58,9 +58,6 @@ aliases_for() {
 }
 
 start_the_upstreams() {
-    # One container answers for all eight names. It cannot tell them apart, and
-    # that is the limit of this check: it proves every surface is served, not
-    # that each reaches the service it should.
     # A site block on one line is not Caddyfile syntax: the closing brace has to
     # stand alone, and `caddy` exits 1 on the whole file rather than skip it.
     cat > "$WORK_DIR/stub.caddy" <<'STUB'
@@ -68,13 +65,22 @@ start_the_upstreams() {
 	admin off
 	auto_https off
 }
+(record_boundary_probes) {
+	log {
+		output file /tmp/upstream-requests.json
+		format json
+	}
+}
 :80 {
+	import record_boundary_probes
 	respond "stub 80 proto={http.request.header.X-Forwarded-Proto}" 200
 }
 :8501 {
-	respond "stub 8501" 200
+	import record_boundary_probes
+	respond "stub {$STUB_API_ID:api}" 200
 }
 :8080 {
+	import record_boundary_probes
 	respond "stub 8080" 200
 }
 :8001 {
@@ -93,6 +99,10 @@ STUB
     local args=()
     while IFS= read -r line; do args+=("$line"); done < <(aliases_for "$UPSTREAMS")
     docker run -d --name ut-ingress-stub --network "$NETWORK" "${args[@]}" \
+        -v "$WORK_DIR/stub.caddy":/etc/caddy/Caddyfile:ro \
+        "$CADDY_IMAGE" >/dev/null
+    docker run -d --name ut-ingress-customer-stub --network "$NETWORK" \
+        --network-alias api-customer -e STUB_API_ID=api-customer \
         -v "$WORK_DIR/stub.caddy":/etc/caddy/Caddyfile:ro \
         "$CADDY_IMAGE" >/dev/null
 }
@@ -287,6 +297,94 @@ a_path_reaches_its_upstream() {
     return 1
 }
 
+upstream_boundary_probes() {
+    local container count total=0
+    for container in ut-ingress-stub ut-ingress-customer-stub; do
+        count=$(docker exec "$container" sh -c '
+            if [ -f /tmp/upstream-requests.json ]; then
+                grep -c boundary-check /tmp/upstream-requests.json || true
+            else
+                echo 0
+            fi
+        ') || return 1
+        total=$((total + count))
+    done
+    printf '%s\n' "$total"
+}
+
+product_entries_keep_private_routes_private() {
+    local before after result
+    before=$(upstream_boundary_probes) || return 1
+    result=$(docker exec -e TEST_SCHEME="$SCHEME" -e TEST_DOMAIN="$DOMAIN" ut-ingress-probe sh -c '
+        for host in "$TEST_DOMAIN" "admin.$TEST_DOMAIN"; do
+            for method in GET HEAD POST PUT PATCH DELETE OPTIONS TRACE; do
+                if [ "$method" = HEAD ]; then
+                    set -- --head
+                else
+                    set -- -X "$method"
+                fi
+                for path in /internal /internal/example /operator /operator/ /operator/example /api/operator /api/operator/example /api/internal/example /api/v3/internal /api/v3/internal/example /api/v3/operator/example /api/v3/metrics /metrics /api/metrics /api/docs /api/docs/ /api/openapi.json /api/openapi.json/ /api/v3/docs /api/v3/openapi.json; do
+                    code=$(curl -sk --path-as-is --max-time 10 -o /dev/null -w "%{http_code}" \
+                        "$@" -H "Authorization: Bearer boundary-check" \
+                        -H "X-Boundary-Probe: boundary-check" "$TEST_SCHEME://$host$path") || exit 1
+                    if [ "$code" != 404 ]; then
+                        printf "%s %s returned %s\n" "$method" "$path" "$code"
+                        exit 1
+                    fi
+                done
+            done
+        done
+    ') || { printf '%s\n' "$result"; return 1; }
+    after=$(upstream_boundary_probes) || return 1
+    [[ "$after" == "$before" ]] && return 0
+    echo "a request outside the published surface reached an upstream"
+    return 1
+}
+
+product_entries_refuse_ambiguous_api_paths() {
+    local before after result
+    before=$(upstream_boundary_probes) || return 1
+    result=$(docker exec -e TEST_SCHEME="$SCHEME" -e TEST_DOMAIN="$DOMAIN" ut-ingress-probe sh -c '
+        for host in "$TEST_DOMAIN" "admin.$TEST_DOMAIN"; do
+            for path in /api/../internal /api/../operator /api/v3/../operator/example /api/%69nternal/example /api/%6fperator/example /api/v3/%69nternal/example /api/%2569nternal/example /api/workspace/../internal/example /api/workspace/%2e%2e/internal/example /api/workspace%2f..%2finternal/example /api//workspace/modelsName //api/workspace/modelsName /API/workspace/../internal/example; do
+                code=$(curl -sk --path-as-is --max-time 10 -o /dev/null -w "%{http_code}" \
+                    -H "Authorization: Bearer boundary-check" -H "X-Boundary-Probe: boundary-check" \
+                    "$TEST_SCHEME://$host$path") || exit 1
+                if [ "$code" != 404 ]; then
+                    printf "%s returned %s\n" "$path" "$code"
+                    exit 1
+                fi
+            done
+        done
+    ') || { printf '%s\n' "$result"; return 1; }
+    after=$(upstream_boundary_probes) || return 1
+    [[ "$after" == "$before" ]] && return 0
+    echo "an ambiguous API path reached an upstream"
+    return 1
+}
+
+product_routes_keep_their_existing_destinations() {
+    local path before after body expected
+    for path in /api/account /api/v3/models; do
+        case "$path" in
+            /api/account) expected="stub api" ;;
+            /api/v3/models) expected="stub api-customer" ;;
+        esac
+        before=$(upstream_boundary_probes) || return 1
+        body=$(body_of "$DOMAIN" "$path" -H "X-Boundary-Probe: boundary-check") || return 1
+        [[ "$body" == "$expected" ]] || { echo "$path returned '$body', expected '$expected'"; return 1; }
+        after=$(upstream_boundary_probes) || return 1
+        [[ "$after" -gt "$before" ]] || { echo "upstream request recording is unavailable for $path"; return 1; }
+    done
+    for path in /api/authentication/session /api/account /api/workspace/modelsName /api/workspace/models/Assistant%20Name /api/metrics/check-quota '/api/account?return=path%2Fname%20example'; do
+        a_path_reaches_its_upstream "$DOMAIN" "$path" "stub api" || return 1
+    done
+    for path in /api/v3/models /api/llm/v1/models; do
+        a_path_reaches_its_upstream "$DOMAIN" "$path" "stub api-customer" || return 1
+        a_path_reaches_its_upstream "admin.$DOMAIN" "$path" "stub api" || return 1
+    done
+}
+
 # An identity provider only ever sends people back to the URI it was given, so a
 # documented URI that reaches the frontend instead of the API makes sign-on fail
 # for everyone who followed the documentation — with nothing in the product
@@ -304,7 +402,7 @@ the_documented_callback_reaches_the_api() {
         return 1
     fi
     body=$(body_of "$DOMAIN" "$path")
-    [[ "$body" == "stub 8501" ]] && return 0
+    [[ "$body" == "stub api" ]] && return 0
     echo "the documented URI ${path} is served by '${body:-nothing}', not the platform API"
     echo "an identity provider sent there would never reach the callback"
     return 1
@@ -459,13 +557,17 @@ printf '\n%sThe routes inside the platform%s\n' "$BOLD" "$NC"
 surface "the apex serves the frontend" \
     a_path_reaches_its_upstream "$DOMAIN" / "stub 80 proto=https"
 surface "/api goes to the platform API, not the frontend" \
-    a_path_reaches_its_upstream "$DOMAIN" /api/anything "stub 8501"
+    a_path_reaches_its_upstream "$DOMAIN" /api/anything "stub api"
 surface "the administration portal is not the API" \
     a_path_reaches_its_upstream "admin.${DOMAIN}" / "stub 8080"
 surface "the App Builder answers on its own port" \
     a_path_reaches_its_upstream "builder.${DOMAIN}" / "stub 8001"
 surface "a generated application reaches the App Builder's Traefik" \
     a_path_reaches_its_upstream "demo.apps.${DOMAIN}" / "stub 80 proto=https"
+
+surface "product entries keep service and operations routes private" product_entries_keep_private_routes_private
+surface "product entries refuse ambiguous API paths" product_entries_refuse_ambiguous_api_paths
+surface "existing product routes retain their destinations" product_routes_keep_their_existing_destinations
 
 printf '\n%sWhat the documentation tells a customer to register%s\n' "$BOLD" "$NC"
 surface "the documented OIDC redirect URI reaches the platform API" \
@@ -499,6 +601,7 @@ surface "custom mode comes up" wait_for_the_front_door
 surface "it serves the certificate it was given, not one of its own" \
     the_supplied_certificate_is_the_one_served
 surface "the apex still answers" a_surface_answers "$DOMAIN"
+surface "custom TLS keeps the same API boundary" product_entries_keep_private_routes_private
 surface "a generated application still answers" a_surface_answers "demo.apps.${DOMAIN}"
 
 engine_curl() {
@@ -787,6 +890,7 @@ printf '\n%sMode edge — TLS is terminated upstream%s\n' "$BOLD" "$NC"
 restart_the_front_door_in edge
 SCHEME="http"
 surface "edge mode comes up on plain HTTP" wait_for_the_front_door
+surface "edge TLS keeps the same API boundary" product_entries_keep_private_routes_private
 surface "it holds no certificate on 443" caddy_holds_no_certificate_in_edge_mode
 surface "it believes a trusted proxy about the scheme" \
     a_trusted_proxy_is_believed_about_the_scheme
