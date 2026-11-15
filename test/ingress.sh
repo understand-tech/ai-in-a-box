@@ -376,7 +376,7 @@ product_routes_keep_their_existing_destinations() {
         after=$(upstream_boundary_probes) || return 1
         [[ "$after" -gt "$before" ]] || { echo "upstream request recording is unavailable for $path"; return 1; }
     done
-    for path in /api/authentication/session /api/account /api/workspace/modelsName /api/workspace/models/Assistant%20Name /api/metrics/check-quota; do
+    for path in /api/authentication/session /api/account /api/workspace/modelsName /api/workspace/models/Assistant%20Name /api/metrics/check-quota '/api/account?return=path%2Fname%20example'; do
         a_path_reaches_its_upstream "$DOMAIN" "$path" "stub api" || return 1
     done
     for path in /api/v3/models /api/llm/v1/models; do
