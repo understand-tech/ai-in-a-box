@@ -269,6 +269,8 @@ unencrypted is worse than a stack that will not start.
 
 ## 3 · Verify
 
+When the release changes routing, also complete the [API boundary checks](api-boundaries.md#qualifying-a-routing-change) before returning the installation to users. A healthy container alone does not establish that sign-in, integration calls and monitoring still work.
+
 ```bash
 docker compose ps
 ```

@@ -12,6 +12,8 @@ nav:
   - The stack: the-stack.md
   - Configuring: configuration.md
   - Licensing: license.md
+  - API boundaries: api-boundaries.md
+  - Frontières des API: api-boundaries.fr.md
   - Certificates and DNS: certificates-and-dns.md
   - Updating: update.md
   - Backing up: backup.md

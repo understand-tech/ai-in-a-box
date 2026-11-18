@@ -6,13 +6,14 @@
 |---|---|
 | `capabilities.sh` | Checks what the deployment can do, one line per capability. Needs Docker; renders configurations and exercises the backup, starts no application service. |
 | `invariants.sh` | Checks the repository against ten invariants. No dependencies beyond bash and coreutils, runs in under a second. |
-| `ingress.sh` | Starts Caddy on the real `Caddyfile` with stubs behind it, and asks every name `UT_DOMAIN` derives for an answer — including one generated application. The only suite that reaches a running service; `caddy:2-alpine` is public, so it needs no registry. Needs Docker; about a minute. |
+| `ingress.sh` | Starts Caddy on the real `Caddyfile` with stubs behind it, and asks every name `UT_DOMAIN` derives for an answer — including one generated application. It also checks the product API boundary in all TLS modes, with methods, encoded paths and a fake upstream request log. The only suite that reaches a running service; `caddy:2-alpine` is public, so it needs no registry. Needs Docker; about a minute. |
 | `fresh-install.sh` | Walks the installer from each state a machine is really found in, up to the image pull. Needs Docker; about two minutes. See [starting states](../docs/starting-states.md). |
 | `discrimination.sh` | Breaks each check on purpose, on a copy, and expects it to say so. A check that survives its own mutation is decoration. |
 | `migration.sh` | Asks what an upgrade does to an install that already runs, starting from the environment file the earlier version shipped. Needs Docker and the git history. |
 | `migration-on-data.sh` | Runs that upgrade on a real database and document tree, beside whatever else the machine runs. Manual, not in CI. |
 | `database-restore.sh` | Proves a backup archive restores, end to end. Nightly. |
 | `postgres-restore.sh` | Proves PostgreSQL comes back to an instant from its pgBackRest repository, with the release's image. Nightly. |
+| `signed-images.sh` | Checks that every image of the new stack `release.env` pins is signed with the organisation key and carries its provenance and SBOM. Needs cosign and read access to the private packages; runs in CI on every push and on pull requests opened from this repository. |
 | `database-rotation-cuts.sh` | Cuts the database password rotation before each step on the real installer functions, runs the recovery, and compares the result with the formal model in [`formal/`](../formal/README.md). Linux, no Docker; a few seconds. |
 | `engine-memory-share.sh` | Checks, on the real installer functions, the share of the machine's memory the engines may take where the GPU has none of its own and how it is read from the settings in effect. bash and awk; under a second. |
 | `settings-migration-cuts.sh` | Cuts the split of main's `.env` into `local.env` before each step on the real installer functions, runs the next split, and compares the settings compose reads with the formal model in [`formal/`](../formal/README.md). Linux, no Docker; a few seconds. |

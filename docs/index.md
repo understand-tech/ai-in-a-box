@@ -18,6 +18,7 @@ documentation; this repository does not repeat either.
 | [The stack](the-stack.md) | What runs, on which network, in which volume, and how to act on it. |
 | [Configuring](configuration.md) | Changing the address, the ports, the backup schedule, the load. |
 | [Licensing](license.md) | What a license governs, how it is activated and checked, and what happens when it ends. |
+| [API boundaries](api-boundaries.md) | Product, service and operations access, and the checks required when routing changes. |
 | [Certificates and DNS](certificates-and-dns.md) | Which names to publish, who terminates TLS, and what the local authority does. |
 | [Updating](update.md) | A new version. What it adds to an existing `.env`, and what changes that you will notice. |
 | [Backing up](backup.md) | What is backed up and what is not, how much a loss can cost, what the destination must provide, and who checks what. |
