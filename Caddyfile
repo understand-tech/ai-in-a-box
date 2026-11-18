@@ -10,21 +10,33 @@
 # below — it is the one place where the TLS mode is decided.
 import /etc/caddy/ingress.caddy
 
+(product_api_boundary) {
+    @reserved_api path_regexp (?i)^/((internal|operator)(/.*)?|metrics/?|api/(v3/)?((internal|operator)(/.*)?|metrics/?|docs(/.*)?|redoc(/.*)?|openapi[.]json(/.*)?))$
+    @ambiguous_api {
+        path /api/*
+        expression `{http.request.orig_uri}.split('?', 2)[0].matches('(?i)%(2f|5c|25|2e)') || {path}.matches('(^|/)[.]{1,2}(/|$)|//')`
+    }
+}
+
 (platform_routes) {
-    handle {
-        reverse_proxy frontend:80
-    }
+    import product_api_boundary
 
-    handle /api/* {
-        reverse_proxy api:8501
-    }
+    route {
+        respond @reserved_api 404
+        respond @ambiguous_api 404
 
-    handle /api/v3/* {
-        reverse_proxy api-customer:8501
-    }
-
-    handle /api/llm/* {
-        reverse_proxy api-customer:8501
+        handle /api/v3/* {
+            reverse_proxy api-customer:8501
+        }
+        handle /api/llm/* {
+            reverse_proxy api-customer:8501
+        }
+        handle /api/* {
+            reverse_proxy api:8501
+        }
+        handle {
+            reverse_proxy frontend:80
+        }
     }
 }
 
@@ -63,12 +75,18 @@ import /etc/caddy/arbiter-link.caddy
 }
 
 {$UT_CADDY_SCHEME:https}://admin.{$UT_DOMAIN:understand.local} {
-    handle {
-        reverse_proxy admin-portal:8080
-    }
+    import product_api_boundary
 
-    handle /api/* {
-        reverse_proxy api:8501
+    route {
+        respond @reserved_api 404
+        respond @ambiguous_api 404
+
+        handle /api/* {
+            reverse_proxy api:8501
+        }
+        handle {
+            reverse_proxy admin-portal:8080
+        }
     }
 
     import tls
